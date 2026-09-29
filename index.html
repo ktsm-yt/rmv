@@ -85,6 +85,17 @@
   #cact .q:disabled { opacity: .35; cursor: default; }
   #csend { align-self: flex-end; flex: none; font: inherit; color: #fff; background: var(--red); border: 1px solid var(--red); border-radius: 6px; padding: 2px 12px; cursor: pointer; }
   #ctext:disabled, #csend:disabled { opacity: .35; cursor: default; }
+  #cmedia { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 6px; align-content: start; } /* 右下: 使った画像・PDF。欄の幅で 2〜3 列 */
+  #cmedia:empty { display: none; }
+  #cmedia .mt { display: flex; flex-direction: column; justify-content: center; aspect-ratio: 1; padding: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--fg); font: inherit; font-size: 11px; text-decoration: none; cursor: zoom-in; }
+  #cmedia .mt img { width: 100%; height: 100%; object-fit: cover; }
+  #cmedia .pdf { cursor: pointer; align-items: center; gap: 4px; padding: 6px; }
+  #cmedia .pdf b { color: var(--red); font-size: 14px; }
+  #cmedia .pdf span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+  #cimgs:not([hidden]) { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 6px; }
+  .cimg { position: relative; }
+  .cimg img { display: block; height: 56px; max-width: 120px; object-fit: cover; border-radius: 6px; border: 1px solid var(--line); }
+  .cimg button { position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; padding: 0; border-radius: 50%; border: 1px solid var(--line); background: var(--panel); color: var(--fg); font-size: 11px; line-height: 1; cursor: pointer; }
   #cwhy { color: var(--muted); }
   #cmsg { color: var(--red); overflow-wrap: anywhere; }
   #cwhy:empty, #cmsg:empty { display: none; }
@@ -100,7 +111,7 @@
     body { grid-template-rows: auto minmax(0, 1fr); }
     #proj { grid-row: 1 / -1; }
     main { grid-row: 2; }
-    #tstat { display: none; }
+    #tstat, #cmedia { display: none; }
     #chat { grid-column: 2; grid-row: 1; gap: 4px; padding: 6px 12px; border-left: 0; border-bottom: 1px solid var(--line); }
     body.chat-closed #chat { padding: 4px 12px; }
     #cform { flex-direction: row; align-items: flex-end; }
@@ -253,9 +264,11 @@ try { document.body.classList.toggle("chat-closed", localStorage.getItem("rmx.ch
   <div id="cwhy"></div>
   <nav id="cchips"></nav>
   <div id="sug" hidden></div>
+  <div id="cimgs" hidden></div>
   <div id="cform"><textarea id="ctext" rows="3" maxlength="4000" placeholder="端末へ送る (⌘+Enter)"></textarea><div id="cact"><button class="q" data-t="ok" title="ok を送る (1)">ok<sup>1</sup></button><button class="q" data-t="continue" title="continue を送る (2)">cont<sup>2</sup></button><button class="q" data-t="A" title="A を送る (3)">A<sup>3</sup></button><button class="q" data-t="B" title="B を送る (4)">B<sup>4</sup></button><button class="q" data-t="C" title="C を送る (5)">C<sup>5</sup></button><button class="q" data-t="land" title="land を送る (6)">land<sup>6</sup></button><button class="q" data-t="/compact" title="/compact を送る">/compact</button><button class="q" data-t="/exit" title="/exit を送る">/exit</button><button id="csend">送信</button></div></div>
   <div id="cmsg"></div>
   <div id="tstat"></div>
+  <div id="cmedia"></div>
 </aside>
 <div id="mmzoom" hidden><button title="閉じる (Esc)">×</button><span>ホイール / ピンチ = 拡大縮小 · ドラッグ = 移動 · ダブルクリック = 全体</span></div>
 <script src="https://cdn.jsdelivr.net/npm/marked@14.1.2/lib/marked.umd.js"></script>
@@ -354,7 +367,7 @@ function renderLowLoad(md) {
   const blocks = [];
   const foot = [];
   let cur = null;
-  const open = (num) => { cur = { num, html: [], pri: new Set() }; blocks.push(cur); };
+  const open = (num, label = null) => { cur = { num, label, html: [], pri: new Set() }; blocks.push(cur); };
   const push = (h) => { if (!cur) open(null); cur.html.push(h); };
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i];
@@ -378,13 +391,18 @@ function renderLowLoad(md) {
     if (/^(検証|DECIDE)\s*[:：]/.test(t)) { foot.push(`<div>${marked.parseInline(lt)}</div>`); continue; }
     if (!t) { if (cur && cur.html.length) cur.html.push('<div class="gap"></div>'); continue; }
     const m = ind === 0 && raw.match(/^(\d+)\.\s+(.*)$/);
-    const h = !m && ind === 0 && /^#{1,6}\s/.test(t);
+    // 太字だけの行・# 見出しも段の区切りにする (番号段落を使わない返事でも段ごとにピンが付く)
+    const h = !m && ind === 0 && (t.match(/^\*\*(.+)\*\*$/) ?? t.match(/^#{1,6}\s+(.+)$/));
     // パスだけの行 (「ⅱ /b.png」等) が画像の直後に続いたら、行を出さずに前の格子へ足す (画像 1・2・3 を 1 つの格子に)
     const pathOnly = media.length && !t.replace(RAWPATH, "").replace(/^[ⅰ-ⅿ]/, "").trim();
     const last = cur?.html.at(-1) ?? "";
     if (!m && !h && pathOnly && last.startsWith('<div class="media">')) { cur.html[cur.html.length - 1] = last.replace(/<\/div>$/, mediaHTML(media).slice('<div class="media">'.length)); continue; }
     if (m) { open(m[1]); if (m[2].trim()) push(`<div class="ln head">${marked.parseInline(linkPaths(m[2]).md)}</div>`); }
-    else if (h) push(marked.parse(lt));
+    else if (h) {
+      const s = h[1].replace(/\*\*/g, "").trim();
+      open(null, s.match(/^\d+(?:-[ⅰ-ⅿ]+)*(?=\s|$)/)?.[0] ?? cut(s, 12)); // "3-ⅴ 🟢 ui-design" → 3-ⅴ
+      push(`<div class="ln head">${marked.parseInline(linkPaths(h[1]).md)}</div>`);
+    }
     else push(`<div class="ln${ROMAN.test(t) ? " item" : ""}" style="--ind:${ind}">${marked.parseInline(lt)}</div>`);
     if (!h && media.length) push(mediaHTML(media)); // .ln 行の直後に出す。見出し・表・フェンスは対象外
     const lead = m ? m[2].trim() : t; // "1. 🔴 …" の段見出しも拾う
@@ -392,7 +410,7 @@ function renderLowLoad(md) {
   }
   const body = blocks.map((b) => {
     const pri = PRI.map(([, c]) => c).find((c) => b.pri.has(c)); // 赤 > 黄 > 緑
-    return `<section class="blk${b.num ? "" : " nonum"}${pri ? " pri-" + pri : ""}"><div class="num">${esc(b.num ?? "")}</div><div class="body">${b.html.join("")}</div></section>`;
+    return `<section class="blk${b.num ? "" : " nonum"}${pri ? " pri-" + pri : ""}"${b.label ? ` data-label="${esc(b.label)}"` : ""}><div class="num">${esc(b.num ?? "")}</div><div class="body">${b.html.join("")}</div></section>`;
   }).join("");
   return body + (foot.length ? `<div class="foot">${foot.join("")}</div>` : "");
 }
@@ -488,7 +506,16 @@ function zoomImage(im) {
   s.append(i);
   openZoom(s);
 }
-const closeZoom = () => { zoom.hidden = true; zoom.querySelector("svg")?.remove(); };
+// ギャラリー (右下) から開いた時だけ ← → で前後の画像へ送る (端は反対側へ回る)。一覧の img は loading=lazy で
+// 未読込のことがあるので、src から読み直してから開く
+let zoomSet = null, zoomAt = 0;
+function zoomGallery(i) {
+  zoomAt = (i + zoomSet.length) % zoomSet.length;
+  const im = new Image();
+  im.onload = () => zoomImage(im);
+  im.src = zoomSet[zoomAt].src;
+}
+const closeZoom = () => { zoom.hidden = true; zoom.querySelector("svg")?.remove(); zoomSet = null; };
 zoom.querySelector("button").onclick = closeZoom;
 zoom.addEventListener("wheel", (ev) => {
   ev.preventDefault(); // trackpad のピンチは ctrl+wheel として届く
@@ -521,7 +548,12 @@ addEventListener("resize", () => { if (!zoom.hidden) fitZoom(); }); // 縦横比
 
 // ← = 前 (古い) / → = 次 (新しい)。修飾キー無しだけ拾い、赤ペンの入力欄にいる間は拾わない。全画面の図を開いている間は Esc で閉じるだけ。
 document.addEventListener("keydown", (ev) => {
-  if (!zoom.hidden) { if (ev.key === "Escape") closeZoom(); else if (ev.key.startsWith("Arrow")) ev.preventDefault(); return; }
+  if (!zoom.hidden) {
+    if (ev.key === "Escape") closeZoom();
+    else if (zoomSet && (ev.key === "ArrowLeft" || ev.key === "ArrowRight")) { ev.preventDefault(); zoomGallery(zoomAt + (ev.key === "ArrowLeft" ? -1 : 1)); }
+    else if (ev.key.startsWith("Arrow")) ev.preventDefault();
+    return;
+  }
   if (ev.key === "Enter" && (ev.metaKey || ev.ctrlKey)) { ev.preventDefault(); return document.getElementById(ev.target === ctext ? "csend" : "send").click(); } // Cmd+Enter = 送信 (入力欄の中でも。チャット欄にいる時はチャット欄の送信)
   if (ev.altKey || ev.ctrlKey || ev.metaKey || ev.shiftKey) return;
   const qb = /^[1-6]$/.test(ev.key) && document.querySelectorAll("#cact .q")[+ev.key - 1];
@@ -562,9 +594,12 @@ const hhmm = (d) => d.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-
 
 // 描画後の DOM に錨を付ける: data-anchor = 表示名 (2 / 2-ⅱ / 表 A)、data-pin = 返事内の通し番号 (本文は不変なので番号で同定できる)
 function decorate(el) {
-  el.querySelectorAll(".blk:not(.nonum)").forEach((b) => { b.dataset.anchor = b.querySelector(".num").textContent; });
+  el.querySelectorAll(".blk").forEach((b) => {
+    const a = b.classList.contains("nonum") ? b.dataset.label : b.querySelector(".num").textContent;
+    if (a) b.dataset.anchor = a; // 見出しの無い番号なし段 (返事冒頭など) は従来どおり対象外
+  });
   el.querySelectorAll(".ln.item").forEach((it) => {
-    const n = it.closest(".blk:not(.nonum)")?.querySelector(".num").textContent;
+    const n = it.closest(".blk")?.dataset.anchor;
     const r = it.textContent.trim()[0];
     it.dataset.anchor = n ? `${n}-${r}` : r;
   });
@@ -706,9 +741,31 @@ const cchips = document.getElementById("cchips");
 let chatPins = {}, cchipsHtml = null, chipEntries = new Map();
 try { chatPins = JSON.parse(localStorage.getItem("rmx.chat.pin")) || {}; } catch {}
 const chatPin = () => chatPins[REPO.toLowerCase()] ?? "";
+// 右下: 送り先セッションで使った画像・PDF (server の /media)。返事が変わった時だけ取り直す。押すと画像は全画面、PDF は別タブ
+const cmedia = document.getElementById("cmedia");
+let mediaFor;
+async function loadMedia(name) {
+  if (name === mediaFor) return;
+  mediaFor = name;
+  let list = [];
+  try { if (name) list = await (await fetch("/media?name=" + encodeURIComponent(name))).json(); } catch {}
+  if (mediaFor !== name) return; // 取っている間に送り先が変わった
+  cmedia.innerHTML = list.map((p) => {
+    const u = "/file?p=" + encodeURIComponent(p), n = esc(p.split("/").pop());
+    return /\.pdf$/i.test(p) ? `<a class="mt pdf" href="${u}" target="_blank" title="${esc(p)}"><b>PDF</b><span>${n}</span></a>`
+      : `<button class="mt" title="${esc(p)}"><img src="${u}" alt="${n}" loading="lazy"></button>`;
+  }).join("");
+}
+cmedia.addEventListener("click", (ev) => {
+  const im = ev.target.closest("button.mt")?.querySelector("img");
+  if (!im) return;
+  zoomSet = [...cmedia.querySelectorAll("button.mt img")]; // PDF は画像送りに入れない
+  zoomGallery(zoomSet.indexOf(im));
+});
 const chatTo = () => { const p = chatPin(); return p ? all.find((e) => e.session === p) ?? null : cur; };
 function renderChat() {
   const pin = chatPin(), to = chatTo();
+  loadMedia(to?.name ?? null);
   const lbl = to ? chipLabels.get(to.session) ?? `${to.repo || "?"} · ${to.session}` : pin;
   document.getElementById("cto").textContent = lbl ? `${pin ? "📌 " : ""}→ ${lbl}` : "→ (送り先なし)";
   const why = !to ? (pin ? "固定先のセッションの返事が一覧に無い (送れない)" : "表示中の返事が無い (送れない)")
@@ -755,20 +812,51 @@ async function pickChip(s) {
 }
 async function sendText(text, clear) {
   const to = chatTo(), say = document.getElementById("cmsg");
-  if (!to?.terminal || chatBusy || !text.trim()) return;
+  const images = clear ? pending.map((p) => p.path) : []; // 定型ボタン (ok / A …) は画像を連れていかない
+  if (!to?.terminal || chatBusy || (!text.trim() && !images.length)) return;
   chatBusy = true;
   say.textContent = "";
   renderChat();
   try {
-    const r = await fetch("/send", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: to.name, text, focus: false }) });
+    const r = await fetch("/send", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: to.name, text, images, focus: false }) });
     if (!r.ok) throw new Error((await r.text()) || String(r.status)); // server の本文 (409 terminal closed: … 等) をそのまま出す
-    if (clear) ctext.value = "";
+    if (clear) { ctext.value = ""; pending.forEach((p) => URL.revokeObjectURL(p.url)); pending = []; renderImgs(); }
   } catch (e) { say.textContent = e.message ?? String(e); }
   chatBusy = false;
   renderChat();
   ctext.focus();
 }
 csend.onclick = () => sendText(ctext.value, true);
+// 画像の貼り付け (⌘V): server が state/paste/ に保存し、欄の上に縮小表示で並べる。
+// 送信時に server が 1 枚ずつクリップボード経由で端末に貼る (Claude Code の欄に [Image #N] で入る)
+const cimgs = document.getElementById("cimgs");
+let pending = []; // [{ path, url }]
+function renderImgs() {
+  cimgs.hidden = !pending.length;
+  cimgs.innerHTML = pending.map((p, i) => `<span class="cimg"><img src="${p.url}" alt=""><button data-i="${i}" title="外す">×</button></span>`).join("");
+}
+cimgs.addEventListener("click", (ev) => {
+  const b = ev.target.closest("button[data-i]");
+  if (!b) return;
+  URL.revokeObjectURL(pending[+b.dataset.i].url);
+  pending.splice(+b.dataset.i, 1);
+  renderImgs();
+});
+ctext.addEventListener("paste", async (ev) => {
+  const fs = [...(ev.clipboardData?.files ?? [])].filter((x) => x.type.startsWith("image/"));
+  if (!fs.length) return; // 文字の貼り付けは既定動作のまま
+  ev.preventDefault();
+  const say = document.getElementById("cmsg");
+  for (const f of fs) {
+    try {
+      const r = await fetch("/paste", { method: "POST", headers: { "content-type": f.type }, body: f });
+      if (!r.ok) throw new Error((await r.text()) || String(r.status));
+      pending.push({ path: (await r.json()).path, url: URL.createObjectURL(f) });
+      say.textContent = "";
+    } catch (e) { say.textContent = `画像を貼れませんでした: ${e.message ?? e}`; }
+  }
+  renderImgs();
+});
 document.getElementById("cact").addEventListener("click", (ev) => { const b = ev.target.closest(".q"); if (b) sendText(b.dataset.t, false); });
 // "/" 補完: 入力が ^/(\S*)$ の間だけ候補 (server /skills) を出す。取得は送り先 (cwd) が変わった時か 60 秒経過で 1 回。
 const sug = document.getElementById("sug");

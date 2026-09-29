@@ -1,6 +1,6 @@
 // 実験 A: 固定シェル (index.html) + AI 断片 (state/latest.html, state/history/) を配る最小サーバ。Bun 専用、依存なし。
 // ponytail: 127.0.0.1 固定・認証なし。上限 = 単一ユーザのローカル実験。LAN や他人に見せる段階で認証と bind 設定を足す。
-import { readdir } from "node:fs/promises";
+import { appendFile, readdir } from "node:fs/promises";
 import { extname, normalize } from "node:path";
 
 const DIR = import.meta.dir;
@@ -8,6 +8,8 @@ const STATE = process.env.RMX_STATE_DIR || `${DIR}/state`; // RMX_STATE_DIR は�
 const FRAGMENT = `${STATE}/latest.html`;
 const HIST = `${STATE}/history`;
 const ORCA = process.env.RMX_ORCA_BIN || "orca"; // env はテストの stub 差し替え用
+const OSASCRIPT = process.env.RMX_OSASCRIPT_BIN || "osascript"; // 同上
+const PROJECTS = process.env.RMX_PROJECTS_DIR || `${process.env.HOME}/.claude/projects`; // transcript の置き場 (同上)
 const NAME = /^[\w.-]+\.md$/; // [\w.-] のみ: "/" を含まないので state/history の外は読めない
 const TEXT = { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" };
 
@@ -129,6 +131,47 @@ async function resolveTerminal(meta: { terminal: string; cwd?: unknown }): Promi
 }
 
 // 赤ペン: 返事を出した Orca 端末へ text を打ち込む。
+// GET /media?name=<history の .md>: その返事のセッションで使った画像・PDF (新しく出た順、実在するものだけ最大 60 件)。
+// 出所 = transcript に出てくる絶対パス (端末に貼った画像の source・Read したファイル・返事で示したパス)
+//   + チャット欄から貼った画像 (クリップボード経由なので transcript にパスが残らない。send が state/paste/<session_id>.txt に書く)
+// ponytail: 毎回 transcript を全文なめる。上限 = 数 MB の transcript で数十 ms。重くなったら mtime で memo する。空白を含むパスは途中で切れて拾えない
+const MEDIA = /\/(?:Users|private|tmp|var)\/[^\s"'`<>()[\]\\]+?\.(?:png|jpe?g|gif|webp|pdf)\b/gi;
+async function media(name: string | null): Promise<Response> {
+  if (!name || !NAME.test(name)) return new Response("bad name", { status: 400 });
+  const meta = await Bun.file(`${HIST}/${name.slice(0, -3)}.json`).json().catch(() => null);
+  const sid = String(meta?.session_id ?? "");
+  if (!/^[\w-]+$/.test(sid)) return Response.json([]);
+  const texts: string[] = [];
+  try {
+    for await (const rel of new Bun.Glob(`*/${sid}.jsonl`).scan({ cwd: PROJECTS })) texts.push(await Bun.file(`${PROJECTS}/${rel}`).text());
+  } catch {} // projects 置き場が無い = transcript なし
+  texts.push(await Bun.file(`${STATE}/paste/${sid}.txt`).text().catch(() => ""));
+  const found = texts.flatMap((t) => [...t.matchAll(MEDIA)].map((m) => m[0])).reverse();
+  const out: string[] = [];
+  for (const p of new Set(found)) {
+    if (out.length >= 60) break;
+    if (!p.split("/").includes("..") && FILE_ROOTS.some((r) => p.startsWith(r)) && (await Bun.file(p).exists())) out.push(p);
+  }
+  return Response.json(out, { headers: { "cache-control": "no-store" } });
+}
+
+// POST /paste: チャット欄に貼った画像を state/paste/ に保存し、絶対パスを返す。端末へは /send が images で貼る。
+// Origin 必須は /send と同じ理由 (他サイトからディスクに書かせない)。
+// ponytail: 古い画像は消さない。上限 = state/paste/ が貼った分だけ増える。溜まったら日数で消す掃除を足す
+const PASTE_EXT: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif" }; // osascript でクリップボードに載せられる型だけ
+const CLIP_CLASS: Record<string, string> = { png: "PNGf", jpg: "JPEG", gif: "GIFf" };
+const PASTED = /^\d+-[0-9a-f]{8}\.(png|jpg|gif)$/; // /paste が付けた名前だけ (任意ファイルをクリップボードに載せさせない)
+async function paste(req: Request): Promise<Response> {
+  if (!ORIGINS.has(req.headers.get("origin") ?? "")) return new Response("forbidden origin", { status: 403 });
+  const ext = PASTE_EXT[req.headers.get("content-type") ?? ""];
+  if (!ext) return new Response("png / jpeg / gif / webp only", { status: 415 });
+  const buf = await req.arrayBuffer();
+  if (!buf.byteLength || buf.byteLength > 20_000_000) return new Response("image must be 1 B..20 MB", { status: 413 });
+  const path = `${STATE}/paste/${Date.now()}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
+  await Bun.write(path, buf); // 親 dir は Bun.write が作る
+  return Response.json({ path });
+}
+
 // Origin 必須 + 一致: 無いと任意の web ページが fetch POST で端末にキー入力を流し込める (CSRF)。
 async function send(req: Request): Promise<Response> {
   if (!ORIGINS.has(req.headers.get("origin") ?? "")) return new Response("forbidden origin", { status: 403 });
@@ -136,8 +179,10 @@ async function send(req: Request): Promise<Response> {
   const name = typeof body?.name === "string" ? body.name : "";
   const text = typeof body?.text === "string" ? body.text : "";
   const focus = body?.focus !== false; // チャット欄は false: viewer に留まって続けて打つので端末タブへ切り替えない
+  const images: unknown[] = Array.isArray(body?.images) ? body.images : [];
   if (!NAME.test(name)) return new Response("bad name", { status: 400 });
-  if (!text.trim() || text.length > 4000) return new Response("text must be 1..4000 chars", { status: 400 });
+  if (images.length > 10 || !images.every((p) => typeof p === "string" && p.startsWith(`${STATE}/paste/`) && PASTED.test(p.slice(STATE.length + 7)))) return new Response("bad images", { status: 400 });
+  if ((!text.trim() && !images.length) || text.length > 4000) return new Response("text must be 1..4000 chars", { status: 400 });
   const meta = await Bun.file(`${HIST}/${name.slice(0, -3)}.json`).json().catch(() => null);
   if (!meta) return new Response("not found", { status: 404 });
   if (typeof meta.terminal !== "string" || !meta.terminal) return new Response("entry has no terminal", { status: 409 });
@@ -150,8 +195,38 @@ async function send(req: Request): Promise<Response> {
     const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
     return { out, err, code };
   };
+  // 端末の下書き欄にある [Image #N] の数。読めない時は -1
+  const drafted = async () => {
+    const p = Bun.spawn([ORCA, "terminal", "read", "--terminal", handle, "--json"], { stdout: "pipe", stderr: "ignore" });
+    const [out, code] = await Promise.all([new Response(p.stdout).text(), p.exited]);
+    try { return code === 0 ? (String(JSON.parse(out)?.result?.terminal?.draft ?? "").match(/\[Image #\d+\]/g) ?? []).length : -1; } catch { return -1; }
+  };
+  // 画像はクリップボード経由で貼る: パスを文字で送っても Claude Code は画像にしない (文字のまま残る)。
+  // クリップボードに画像を載せて Ctrl+V (\x16) を送ると [Image #N] で入る (2026-09-29 実測)。
+  // 次の画像でクリップボードを上書きする前に、下書きの [Image #N] が増えるのを待つ (最大 3 秒)。
+  // ponytail: user のクリップボードは最後の画像のまま戻さない
+  const attach = async (path: string): Promise<string | null> => {
+    if (!(await Bun.file(path).exists())) return `image not found: ${path}`;
+    const before = await drafted();
+    const o = Bun.spawn([OSASCRIPT, "-e", `set the clipboard to (read (POSIX file "${path}") as «class ${CLIP_CLASS[path.split(".").pop()!]}»)`], { stdout: "ignore", stderr: "pipe" });
+    const [oerr, ocode] = await Promise.all([new Response(o.stderr).text(), o.exited]);
+    if (ocode !== 0) return `osascript exit ${ocode}: ${oerr.trim()}`;
+    const v = await typed("\x16");
+    if (v.code !== 0) return `orca exit ${v.code}: ${v.err.trim() || v.out.trim()}`;
+    for (let i = 0; i < 20; i++) {
+      if ((await drafted()) > before) return null;
+      await Bun.sleep(150);
+    }
+    return "画像が端末に入らなかった (3 秒待っても [Image #N] が増えない)";
+  };
   try {
-    let { out, err, code } = await typed(text);
+    for (const img of images as string[]) {
+      const why = await attach(img);
+      if (why) return new Response(why, { status: 502 });
+    }
+    // /media 用: クリップボード経由の画像は transcript にパスが残らないので、セッションごとに控える
+    if (images.length && /^[\w-]+$/.test(String(meta.session_id ?? ""))) await appendFile(`${STATE}/paste/${meta.session_id}.txt`, images.join("\n") + "\n");
+    let { out, err, code } = text ? await typed(text) : { out: "", err: "", code: 0 };
     // orca は失敗理由を stdout の JSON に出し stderr が空のことがある (terminal_not_writable、2026-09-29 実測)
     if (code === 0) ({ out, err, code } = await typed("\r"));
     if (code !== 0) return new Response(`orca exit ${code}: ${err.trim() || out.trim()}`, { status: 502 });
@@ -219,6 +294,8 @@ Bun.serve({
       return r;
     }
     if (pathname === "/send" && req.method === "POST") return send(req);
+    if (pathname === "/paste" && req.method === "POST") return paste(req);
+    if (pathname === "/media") return media(searchParams.get("name"));
     if (pathname === "/skills") return skills(searchParams.get("cwd"));
     if (pathname === "/file") return file(searchParams.get("p"));
     const m = pathname.match(/^\/history\/(.+)$/);

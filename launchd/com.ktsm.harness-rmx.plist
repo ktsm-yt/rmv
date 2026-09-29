@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.ktsm.harness-rmx</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/i/Dev/rmv/launchd/harness-rmx</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/i/Dev/rmv</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>LANG</key>
+    <string>ja_JP.UTF-8</string>
+    <!-- server が spawn する orca (/opt/homebrew/bin) を launchd の最小 PATH でも見つけるため -->
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/i/Library/Logs/harness-rmx.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/i/Library/Logs/harness-rmx.log</string>
+</dict>
+</plist>

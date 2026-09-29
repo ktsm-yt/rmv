@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# ログイン項目に job 名で並べるための wrapper (BTM の Name = 起動バイナリの basename)。
+exec /Users/i/.bun/bin/bun run /Users/i/Dev/rmv/server.ts "$@"

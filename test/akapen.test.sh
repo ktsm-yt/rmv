@@ -71,6 +71,9 @@ check "hook: entrypoint が未知の値 (IDE 等) → 記録" "$(rec other CLAUD
 cat > "$STUB" <<EOF
 #!/usr/bin/env bash
 if [ "\$2" = list ]; then echo list >> "$TMP/lists"; cat "$TMP/list.json" 2>/dev/null || exit 1; exit 0; fi
+# read: 下書き欄の [Image #N] = これまでに届いた Ctrl+V の数 ($TMP/noimg があれば増やさない = 貼れなかった)
+if [ "\$2" = read ]; then n=\$(cat "$TMP/ctrlv" 2>/dev/null | wc -l | tr -d ' '); d=""; for ((i = 1; i <= n; i++)); do d="\$d[Image #\$i] "; done; printf '{"ok":true,"result":{"terminal":{"draft":"%s"}}}' "\$d"; exit 0; fi
+[ "\$2" = send ] && [ "\$6" = \$'\x16' ] && [ ! -e "$TMP/noimg" ] && echo v >> "$TMP/ctrlv"
 echo "\$1 \$2 \$4" >> "$TMP/calls"
 [ "\$2" = send ] && printf '%s\n' "\$@" >> "$TMP/argv"
 if [ -e "$TMP/fail" ]; then echo "stub boom" >&2; exit 1; fi
@@ -92,7 +95,10 @@ cat "$TMP/ps-env-\$5" 2>/dev/null || exit 1
 EOF
 chmod +x "$PSSTUB"
 
-RMX_STATE_DIR="$STATE" RMX_PORT="$PORT" RMX_ORCA_BIN="$STUB" RMX_PS_BIN="$PSSTUB" RMX_LIVE_TTL_MS=0 bun run "$SERVER" > "$TMP/server.log" 2>&1 &
+OSASTUB="$TMP/osa-stub"
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$2" >> "%s/osa"\n' "$TMP" > "$OSASTUB"
+chmod +x "$OSASTUB"
+RMX_PROJECTS_DIR="$TMP/projects" RMX_STATE_DIR="$STATE" RMX_PORT="$PORT" RMX_ORCA_BIN="$STUB" RMX_OSASCRIPT_BIN="$OSASTUB" RMX_PS_BIN="$PSSTUB" RMX_LIVE_TTL_MS=0 bun run "$SERVER" > "$TMP/server.log" 2>&1 &
 SRV=$!
 trap 'kill $SRV 2>/dev/null' EXIT
 for _ in $(seq 50); do curl -s -o /dev/null "$BASE/history" && break; sleep 0.1; done
@@ -232,6 +238,47 @@ check "file: .. で root 外へ出る → 403" "$(fget "$F/../../../../../../etc
 check "file: 存在しない png → 404" "$(fget "$F/none.png")" 404
 check "file: p 無し → 400" "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/file")" 400
 check "host: 127.0.0.1 以外の Host (DNS rebinding) → 403" "$(curl -s -o /dev/null -w '%{http_code}' -H "Host: rebind:$PORT" "$BASE/history")" 403
+
+# --- /paste: チャット欄の画像貼り付け ---
+printf '\x89PNG\r\n\x1a\nfake' > "$TMP/p.png"
+pst() { local o=(); [ "$1" != "-" ] && o=(-H "Origin: $1"); curl -s -o "$TMP/body" -w '%{http_code}' -X POST "${o[@]}" -H "content-type: $2" --data-binary "@$3" "$BASE/paste"; }
+check "paste: 正しい Origin + png → 200" "$(pst "$GOOD" image/png "$TMP/p.png")" 200
+PP="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["path"])' "$TMP/body")"
+case "$PP" in "$STATE"/paste/*.png) ok "paste: state/paste/ 配下の png パスを返す" ;; *) ng "paste: 返ったパスが想定外: $PP" ;; esac
+check "paste: 保存した中身が貼った画像と同じ" "$(cmp -s "$PP" "$TMP/p.png" && echo same || echo diff)" same
+check "paste: 別 Origin → 403" "$(pst "https://evil.example" image/png "$TMP/p.png")" 403
+check "paste: Origin 無し → 403" "$(pst - image/png "$TMP/p.png")" 403
+check "paste: 画像以外 (text/plain) → 415" "$(pst "$GOOD" text/plain "$TMP/p.png")" 415
+: > "$TMP/empty.png"
+check "paste: 空 → 413" "$(pst "$GOOD" image/png "$TMP/empty.png")" 413
+check "paste: webp (クリップボードに載せられない型) → 415" "$(pst "$GOOD" image/webp "$TMP/p.png")" 415
+
+# --- /send + images: クリップボード経由で端末に貼ってから本文 ---
+simg() { printf '{"name":"%s","text":"%s","images":%s,"focus":false}' "$WITH" "$1" "$2"; }
+rm -f "$TMP/calls" "$TMP/argv" "$TMP/osa" "$TMP/ctrlv" "$TMP/fail" "$TMP/failout"
+check "send+images: 画像 1 枚 + 本文 → 200" "$(post "$GOOD" "$(simg 'これ見て' "[\"$PP\"]")")" 200
+case "$(cat "$TMP/osa" 2>/dev/null)" in *"POSIX file \"$PP\""*"«class PNGf»"*) ok "send+images: osascript が貼った png をクリップボードへ" ;; *) ng "send+images: osascript の引数が想定外: $(cat "$TMP/osa" 2>/dev/null)" ;; esac
+check "send+images: Ctrl+V → 本文 → Enter の順" "$(sed -n '6p;13p;20p' "$TMP/argv" | tr '\026\r' 'VR' | tr '\n' ',')" "V,これ見て,R,"
+rm -f "$TMP/ctrlv"
+check "send+images: 本文なしで画像だけ → 200" "$(post "$GOOD" "$(simg '' "[\"$PP\"]")")" 200
+check "send+images: paste/ の外のパス → 400" "$(post "$GOOD" "$(simg x '["/etc/hosts"]')")" 400
+check "send+images: paste/ 内でも /paste が付けた名前でない → 400" "$(post "$GOOD" "$(simg x "[\"$STATE/paste/../latest.json\"]")")" 400
+check "send+images: 画像も本文も無し → 400" "$(post "$GOOD" "$(simg '' '[]')")" 400
+touch "$TMP/noimg"
+check "send+images: 端末に画像が入らない → 502 (本文は送らない)" "$(post "$GOOD" "$(simg 'これ見て' "[\"$PP\"]")")" 502
+rm -f "$TMP/noimg"
+
+# --- /media: その返事のセッションで使った画像・PDF ---
+SID="$(field "$STATE/history/${WITH%.md}.json" session_id)"
+mkdir -p "$TMP/projects/-x-repo" "$TMP/m"
+printf 'png' > "$TMP/m/a.png"; printf 'pdf' > "$TMP/m/b.pdf"; printf 'jpg' > "$TMP/m/c.jpg"
+# 出た順: a.png → b.pdf → 無いファイル → 許可外 (/etc) → c.jpg → a.png (2 度目)。JSON の \n 直前でも切れること
+printf '%s\n' "{\"text\":\"[Image: source: $TMP/m/a.png]\"}" "{\"file_path\":\"$TMP/m/b.pdf\"}" "{\"t\":\"$TMP/m/none.png\"}" '{"t":"/etc/x.png"}' "{\"t\":\"see $TMP/m/c.jpg\\\\nnext\"}" "{\"t\":\"$TMP/m/a.png\"}" > "$TMP/projects/-x-repo/$SID.jsonl"
+mget() { curl -s "$BASE/media?name=$1" | python3 -c 'import json,sys; print(",".join(p.rsplit("/",1)[-1] for p in json.load(sys.stdin)))'; }
+check "media: 新しく出た順・重複なし・実在のみ・許可外なし (チャット欄から貼った画像も含む)" "$(mget "$WITH")" "$(basename "$PP"),a.png,c.jpg,b.pdf"
+check "media: 不正な name → 400" "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/media?name=../x.md")" 400
+printf 'x' > "$STATE/history/20000101T000000000-nosuch00.md"; printf '{"session_id":"nosuch00"}' > "$STATE/history/20000101T000000000-nosuch00.json"
+check "media: transcript の無い session → 空" "$(mget 20000101T000000000-nosuch00.md)" ""
 
 echo "checked $N cases ($FAIL failed)"
 [ "$FAIL" -eq 0 ]
