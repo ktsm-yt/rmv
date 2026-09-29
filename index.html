@@ -750,15 +750,16 @@ let mediaFor, mmSeq = 0;
 // 図は返事の本文にしか無いので、同じセッションの本体の返事 (新しい順、直近 30 件) から ```mermaid を拾って描く (同じ図は 1 枚)
 // ponytail: 送り先が変わるたびに最大 30 本 fetch + 描画。重くなったら server 側で抜き出して memo する
 async function sessionDiagrams(to) {
-  const names = all.filter((e) => e.session === to.session && !e.agent).slice(0, 30).map((e) => e.name);
-  const texts = await Promise.all(names.map((n) => fetch(`/history/${encodeURIComponent(n)}`).then((r) => r.text()).catch(() => "")));
-  const codes = [...new Set(texts.flatMap((t) => [...t.matchAll(/^```mermaid[^\n]*\n([\s\S]*?)^```/gm)].map((m) => m[1])))].slice(0, 20);
-  const svgs = [];
-  for (const code of codes) {
+  const es = all.filter((e) => e.session === to.session && !e.agent).slice(0, 30);
+  const texts = await Promise.all(es.map((e) => fetch(`/history/${encodeURIComponent(e.name)}`).then((r) => r.text()).catch(() => "")));
+  const byCode = new Map(); // 図の code → 出た時刻 (es は新しい順なので最初に見た = 最新)
+  texts.forEach((t, i) => { for (const m of t.matchAll(/^```mermaid[^\n]*\n([\s\S]*?)^```/gm)) if (!byCode.has(m[1])) byCode.set(m[1], Date.parse(es[i].ts) || 0); });
+  const items = [];
+  for (const [code, t] of [...byCode].slice(0, 20)) {
     const id = `mmg${++mmSeq}`;
-    try { svgs.push((await mermaid.render(id, code)).svg); } catch { document.getElementById("d" + id)?.remove(); } // 壊れた図は飛ばす
+    try { items.push({ svg: (await mermaid.render(id, code)).svg, t }); } catch { document.getElementById("d" + id)?.remove(); } // 壊れた図は飛ばす
   }
-  return svgs;
+  return items;
 }
 async function loadMedia(to) {
   const name = to?.name ?? null;
@@ -767,11 +768,13 @@ async function loadMedia(to) {
   let list = [], svgs = [];
   try { if (name) [list, svgs] = await Promise.all([fetch("/media?name=" + encodeURIComponent(name)).then((r) => r.json()), sessionDiagrams(to)]); } catch {}
   if (mediaFor !== name) return; // 取っている間に送り先が変わった
-  cmedia.innerHTML = svgs.map((s) => `<button class="mt mm" title="mermaid 図">${s}</button>`).join("") + list.map((p) => {
+  // 図と画像・PDF を、セッションで出た順 (新しい順) に混ぜる。時刻が同じ・無い (0) 時は図が先 (sort は安定)
+  const cards = [...svgs.map(({ svg, t }) => ({ t, html: `<button class="mt mm" title="mermaid 図">${svg}</button>` })), ...list.map(({ p, t }) => {
     const u = "/file?p=" + encodeURIComponent(p), n = esc(p.split("/").pop());
-    return /\.pdf$/i.test(p) ? `<a class="mt pdf" href="${u}" target="_blank" title="${esc(p)}"><b>PDF</b><span>${n}</span></a>`
-      : `<button class="mt" title="${esc(p)}"><img src="${u}" alt="${n}" loading="lazy"></button>`;
-  }).join("");
+    return { t, html: /\.pdf$/i.test(p) ? `<a class="mt pdf" href="${u}" target="_blank" title="${esc(p)}"><b>PDF</b><span>${n}</span></a>`
+      : `<button class="mt" title="${esc(p)}"><img src="${u}" alt="${n}" loading="lazy"></button>` };
+  })];
+  cmedia.innerHTML = cards.sort((a, b) => b.t - a.t).map((c) => c.html).join("");
 }
 cmedia.addEventListener("click", (ev) => {
   const t = ev.target.closest("button.mt")?.querySelector(":scope > img, :scope > svg");

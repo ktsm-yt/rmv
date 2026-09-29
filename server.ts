@@ -131,7 +131,9 @@ async function resolveTerminal(meta: { terminal: string; cwd?: unknown }): Promi
 }
 
 // 赤ペン: 返事を出した Orca 端末へ text を打ち込む。
-// GET /media?name=<history の .md>: その返事のセッションで使った画像・PDF (新しく出た順、実在するものだけ最大 60 件)。
+// GET /media?name=<history の .md>: その返事のセッションで使った画像・PDF を [{p, t}] で (新しく出た順、実在するものだけ最大 60 件)。
+// t = そのパスが最後に出た時刻 (epoch ms)。transcript は該当行の "timestamp"、貼った画像は basename の Date.now() 接頭辞。取れなければ 0。
+// 画面側が t で mermaid 図と混ぜて並べる
 // 出所 = transcript に出てくる絶対パス (端末に貼った画像の source・Read したファイル・返事で示したパス)
 //   + チャット欄から貼った画像 (クリップボード経由なので transcript にパスが残らない。send が state/paste/<session_id>.txt に書く)
 // ponytail: 毎回 transcript を全文なめる。上限 = 数 MB の transcript で数十 ms。重くなったら mtime で memo する。空白を含むパスは途中で切れて拾えない
@@ -145,12 +147,25 @@ async function media(name: string | null): Promise<Response> {
   try {
     for await (const rel of new Bun.Glob(`*/${sid}.jsonl`).scan({ cwd: PROJECTS })) texts.push(await Bun.file(`${PROJECTS}/${rel}`).text());
   } catch {} // projects 置き場が無い = transcript なし
-  texts.push(await Bun.file(`${STATE}/paste/${sid}.txt`).text().catch(() => ""));
-  const found = texts.flatMap((t) => [...t.matchAll(MEDIA)].map((m) => m[0])).reverse();
-  const out: string[] = [];
-  for (const p of new Set(found)) {
+  const found: { p: string; t: number }[] = [];
+  for (const text of texts) {
+    for (const line of text.split("\n")) {
+      const ms = [...line.matchAll(MEDIA)];
+      if (!ms.length) continue;
+      const t = Date.parse(line.match(/"timestamp":"([^"]+)"/)?.[1] ?? "") || 0;
+      for (const m of ms) found.push({ p: m[0], t });
+    }
+  }
+  for (const m of (await Bun.file(`${STATE}/paste/${sid}.txt`).text().catch(() => "")).matchAll(MEDIA)) {
+    found.push({ p: m[0], t: Number(m[0].match(/(\d{13})-[0-9a-f]{8}\.\w+$/)?.[1] ?? 0) });
+  }
+  found.reverse();
+  const seen = new Set<string>(), out: { p: string; t: number }[] = [];
+  for (const { p, t } of found) {
     if (out.length >= 60) break;
-    if (!p.split("/").includes("..") && FILE_ROOTS.some((r) => p.startsWith(r)) && (await Bun.file(p).exists())) out.push(p);
+    if (seen.has(p)) continue;
+    seen.add(p);
+    if (!p.split("/").includes("..") && FILE_ROOTS.some((r) => p.startsWith(r)) && (await Bun.file(p).exists())) out.push({ p, t });
   }
   return Response.json(out, { headers: { "cache-control": "no-store" } });
 }

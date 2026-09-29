@@ -272,10 +272,12 @@ rm -f "$TMP/noimg"
 SID="$(field "$STATE/history/${WITH%.md}.json" session_id)"
 mkdir -p "$TMP/projects/-x-repo" "$TMP/m"
 printf 'png' > "$TMP/m/a.png"; printf 'pdf' > "$TMP/m/b.pdf"; printf 'jpg' > "$TMP/m/c.jpg"
-# 出た順: a.png → b.pdf → 無いファイル → 許可外 (/etc) → c.jpg → a.png (2 度目)。JSON の \n 直前でも切れること
-printf '%s\n' "{\"text\":\"[Image: source: $TMP/m/a.png]\"}" "{\"file_path\":\"$TMP/m/b.pdf\"}" "{\"t\":\"$TMP/m/none.png\"}" '{"t":"/etc/x.png"}' "{\"t\":\"see $TMP/m/c.jpg\\\\nnext\"}" "{\"t\":\"$TMP/m/a.png\"}" > "$TMP/projects/-x-repo/$SID.jsonl"
-mget() { curl -s "$BASE/media?name=$1" | python3 -c 'import json,sys; print(",".join(p.rsplit("/",1)[-1] for p in json.load(sys.stdin)))'; }
+# 出た順: a.png → b.pdf → 無いファイル → 許可外 (/etc) → c.jpg → a.png (2 度目)。JSON の \n 直前でも切れること。行ごとの "timestamp" が t になる
+ts() { printf '"timestamp":"2026-01-01T00:00:%02d+09:00",' "$1"; }
+printf '%s\n' "{$(ts 1)\"text\":\"[Image: source: $TMP/m/a.png]\"}" "{$(ts 2)\"file_path\":\"$TMP/m/b.pdf\"}" "{$(ts 3)\"t\":\"$TMP/m/none.png\"}" "{$(ts 4)\"t\":\"/etc/x.png\"}" "{$(ts 5)\"t\":\"see $TMP/m/c.jpg\\\\nnext\"}" "{$(ts 6)\"t\":\"$TMP/m/a.png\"}" > "$TMP/projects/-x-repo/$SID.jsonl"
+mget() { curl -s "$BASE/media?name=$1" | python3 -c 'import json,sys; print(",".join(o["p"].rsplit("/",1)[-1] for o in json.load(sys.stdin)))'; }
 check "media: 新しく出た順・重複なし・実在のみ・許可外なし (チャット欄から貼った画像も含む)" "$(mget "$WITH")" "$(basename "$PP"),a.png,c.jpg,b.pdf"
+check "media: 各要素の t は数値で、新しい順に厳密減少 (貼った画像は basename の時刻、transcript は行の timestamp)" "$(curl -s "$BASE/media?name=$WITH" | python3 -c 'import json,sys; t=[o["t"] for o in json.load(sys.stdin)]; print(all(isinstance(x,(int,float)) for x in t) and t[0]>t[1]>t[2]>t[3]>0)')" True
 check "media: 不正な name → 400" "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/media?name=../x.md")" 400
 printf 'x' > "$STATE/history/20000101T000000000-nosuch00.md"; printf '{"session_id":"nosuch00"}' > "$STATE/history/20000101T000000000-nosuch00.json"
 check "media: transcript の無い session → 空" "$(mget 20000101T000000000-nosuch00.md)" ""
