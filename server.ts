@@ -252,6 +252,53 @@ async function send(req: Request): Promise<Response> {
   }
 }
 
+// POST /speak {text}: 読み上げの声を Gemini の TTS で作り、WAV (RIFF ヘッダ付き 24kHz mono) をそのまま返す。
+// キーは env GEMINI_API_KEY → 無ければ macOS キーチェーンを毎回引く。キーはログにもレスポンスにも出さない。
+// Origin 必須は /send と同じ理由 (他サイトから有料 API を叩かせない)。
+const TTS_SERVICE = process.env.RMX_TTS_KEYCHAIN_SERVICE || "rmv-gemini";
+const TTS_MODEL = process.env.RMX_TTS_MODEL || "gemini-3.8-flash-tts";
+const TTS_VOICE = process.env.RMX_TTS_VOICE || "Kore";
+const TTS_STYLE = process.env.RMX_TTS_STYLE || "落ち着いて、はっきりと";
+async function ttsKey(): Promise<string> {
+  if (process.env.GEMINI_API_KEY) return process.env.GEMINI_API_KEY;
+  try {
+    const p = Bun.spawn(["security", "find-generic-password", "-s", TTS_SERVICE, "-w"], { stdout: "pipe", stderr: "ignore" });
+    const [out, code] = await Promise.all([new Response(p.stdout).text(), p.exited]);
+    return code === 0 ? out.trim() : "";
+  } catch {
+    return "";
+  }
+}
+async function speak(req: Request): Promise<Response> {
+  if (!ORIGINS.has(req.headers.get("origin") ?? "")) return new Response("forbidden origin", { status: 403 });
+  const body = await req.json().catch(() => null);
+  const text = typeof body?.text === "string" ? body.text : "";
+  if (!text.trim() || text.length > 4000) return new Response("text must be 1..4000 chars", { status: 400 });
+  const key = await ttsKey();
+  if (!key) return new Response(`no Gemini API key: env GEMINI_API_KEY かキーチェーン (service ${TTS_SERVICE}) に入れる`, { status: 503 });
+  let r: Response;
+  try {
+    r = await fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
+      method: "POST",
+      headers: { "x-goog-api-key": key, "content-type": "application/json" },
+      body: JSON.stringify({
+        model: TTS_MODEL,
+        input: [{ type: "user_input", content: [{ type: "text", text, annotations: [{ type: "speech_metadata", style: TTS_STYLE }] }] }],
+        response_format: { type: "audio" },
+        generation_config: { speech_config: [{ voice: TTS_VOICE }] },
+      }),
+      signal: req.signal, // viewer が取得を中断したら Gemini への要求も切る
+    });
+  } catch (e) {
+    return new Response(`gemini fetch failed: ${e}`, { status: 502 });
+  }
+  if (!r.ok) return new Response(`gemini ${r.status}: ${(await r.text().catch(() => "")).slice(0, 300)}`, { status: r.status });
+  const d = await r.json().catch(() => null);
+  const audio = (d?.steps ?? []).filter((s: any) => s?.type === "model_output").flatMap((s: any) => s.content ?? []).filter((c: any) => c?.type === "audio").pop();
+  if (typeof audio?.data !== "string") return new Response("gemini returned no audio", { status: 502 });
+  return new Response(Buffer.from(audio.data, "base64"), { headers: { "content-type": "audio/wav", "cache-control": "no-store" } });
+}
+
 // GET /skills?cwd=<絶対パス>: チャット欄の "/" 補完の候補。user / project / plugin の skill と command。60 秒 memo (cwd ごと)。
 // ponytail: plugin は cache/<marketplace>/<plugin>/<version>/skills を全版なめて name で重複除去。上限 = 版が複数残っても名前が同じなら 1 件に潰れるだけ。
 const skillMemo = new Map<string, { at: number; v: { name: string; desc: string }[] }>();
@@ -310,6 +357,7 @@ Bun.serve({
     }
     if (pathname === "/send" && req.method === "POST") return send(req);
     if (pathname === "/paste" && req.method === "POST") return paste(req);
+    if (pathname === "/speak" && req.method === "POST") return speak(req);
     if (pathname === "/media") return media(searchParams.get("name"));
     if (pathname === "/skills") return skills(searchParams.get("cwd"));
     if (pathname === "/file") return file(searchParams.get("p"));

@@ -469,13 +469,17 @@ async function showIdx(i) {
 }
 const older = () => showIdx(idx + 1);
 const newer = () => showIdx(idx - 1);
-// 読み上げ: 描画済み本文から、コード・表・図・画像・ボタン等の UI 部品を除いた文字だけを speechSynthesis で読む。もう一度押すと止まる
+// 読み上げ: 描画済み本文から、コード・表・図・画像・ボタン等の UI 部品を除いた文字だけを読む。もう一度押すと止まる。
+// 声は server の /speak (Gemini TTS)。1 つ目のチャンクで失敗したら (キー無し等) ブラウザ内蔵の speechSynthesis で全文を読む
 const speakBtn = document.getElementById("speak");
-let speaking = null;
+const TTS_RATE = 2; // 再生速度 (声の高さは変えない)
+let speaking = null; // 読み上げ中の 1 回分: Gemini = { ctl: AbortController, audio } / 予備 = SpeechSynthesisUtterance
 function stopSpeak() {
   if (!speaking) return;
-  speaking = null; // cancel が起こす onerror / onend は、speaking が変わっているので無視される
-  speechSynthesis.cancel();
+  const s = speaking;
+  speaking = null; // 止めた後に届く onend / onerror / fetch の結果は、speaking が変わっているので無視される
+  if (s.ctl) { s.ctl.abort(); s.audio?.pause(); }
+  else speechSynthesis.cancel();
   speakBtn.textContent = "🔊";
 }
 // 声の選び方: Kyoko (拡張版があればそれ) → Otoya → lang が ja の最初。先頭を取るとおもしろ声 (Eddy / Grandma 等) になる。voices は非同期に揃うので voiceschanged で選び直す
@@ -491,12 +495,68 @@ function readableText() {
   c.querySelectorAll(".blk, .ln, .foot, p, li, h1, h2, h3, h4, h5, h6").forEach((n) => n.after("\n")); // textContent は段落を区切らないので、切れ目に改行を入れる
   return c.textContent.replace(/\n\s*/g, "\n").trim();
 }
-function toggleSpeak() {
-  if (speaking) return stopSpeak();
-  const text = readableText();
-  if (!text) return;
+// 段落 (改行) 単位で区切り、短い段落は max 字までまとめる。1 段落が max を超える時はそのまま 1 チャンク
+function speakChunks(text, max = 250) {
+  const out = [];
+  for (const p of text.split("\n")) {
+    if (out.length && out[out.length - 1].length + 1 + p.length <= max) out[out.length - 1] += "\n" + p;
+    else out.push(p);
+  }
+  return out;
+}
+async function fetchWav(text, signal) {
+  const r = await fetch("/speak", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text }), signal });
+  if (!r.ok) throw new Error(`/speak ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  return r.blob();
+}
+// 1 チャンクを最後まで鳴らす。止めた (abort) 時も resolve して読み上げの loop を抜けさせる
+function playWav(blob, s) {
+  const url = URL.createObjectURL(blob);
+  const a = new Audio(url);
+  a.playbackRate = TTS_RATE;
+  a.preservesPitch = true;
+  s.audio = a;
+  return new Promise((res, rej) => {
+    a.onended = res;
+    a.onerror = () => rej(new Error("audio error"));
+    s.ctl.signal.addEventListener("abort", res);
+    a.play().catch(rej);
+  }).finally(() => URL.revokeObjectURL(url));
+}
+// 再生中に 2 つ先のチャンクまで同時に取りに行く: 2 倍速だと 1 チャンクの再生時間 ≈ 次の生成時間で、1 つ先だけだと途切れる
+async function speakGemini(text) {
+  const s = { ctl: new AbortController(), audio: null };
+  speaking = s;
+  const parts = speakChunks(text), pending = [];
+  const get = (j) => {
+    if (j < parts.length && !pending[j]) { pending[j] = fetchWav(parts[j], s.ctl.signal); pending[j].catch(() => {}); } // 待つ前に失敗しても unhandled にしない
+    return pending[j];
+  };
+  for (let i = 0; i < parts.length; i++) {
+    get(i); get(i + 1); get(i + 2);
+    speakBtn.textContent = "⏳";
+    try {
+      const blob = await pending[i];
+      if (speaking !== s) return;
+      speakBtn.textContent = "⏹";
+      await playWav(blob, s);
+    } catch (e) {
+      if (speaking !== s) return;
+      if (i > 0) { console.warn(`Gemini の読み上げが途中で失敗したので止める: ${e.message}`); return stopSpeak(); }
+      console.warn(`Gemini の読み上げに失敗したので内蔵の声で読む: ${e.message}`);
+      s.ctl.abort();
+      speaking = null;
+      return speakLocal(text);
+    }
+    if (speaking !== s) return;
+  }
+  stopSpeak();
+}
+function speakLocal(text) {
+  if (!("speechSynthesis" in window)) return stopSpeak();
   const u = new SpeechSynthesisUtterance(text);
   u.lang = "ja-JP";
+  u.rate = Math.min(TTS_RATE, 10); // speechSynthesis の上限は 10
   if (jaVoice) u.voice = jaVoice;
   const done = () => { if (speaking === u) stopSpeak(); };
   u.onend = done; u.onerror = done;
@@ -504,7 +564,14 @@ function toggleSpeak() {
   speakBtn.textContent = "⏹";
   speechSynthesis.speak(u);
 }
-if ("speechSynthesis" in window) { speakBtn.onclick = toggleSpeak; speechSynthesis.addEventListener("voiceschanged", pickVoice); pickVoice(); } else speakBtn.hidden = true;
+function toggleSpeak() {
+  if (speaking) return stopSpeak();
+  const text = readableText();
+  if (!text) return;
+  speakGemini(text);
+}
+speakBtn.onclick = toggleSpeak;
+if ("speechSynthesis" in window) { speechSynthesis.addEventListener("voiceschanged", pickVoice); pickVoice(); }
 document.getElementById("prev").onclick = older;
 document.getElementById("next").onclick = newer;
 // 図の全画面: 図の複製を画面いっぱいに置き、viewBox を動かして拡大・移動する (CSS transform より拡大しても線がぼやけない)。

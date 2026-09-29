@@ -98,7 +98,7 @@ chmod +x "$PSSTUB"
 OSASTUB="$TMP/osa-stub"
 printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$2" >> "%s/osa"\n' "$TMP" > "$OSASTUB"
 chmod +x "$OSASTUB"
-RMX_PROJECTS_DIR="$TMP/projects" RMX_STATE_DIR="$STATE" RMX_PORT="$PORT" RMX_ORCA_BIN="$STUB" RMX_OSASCRIPT_BIN="$OSASTUB" RMX_PS_BIN="$PSSTUB" RMX_LIVE_TTL_MS=0 bun run "$SERVER" > "$TMP/server.log" 2>&1 &
+GEMINI_API_KEY= RMX_TTS_KEYCHAIN_SERVICE="rmv-test-nonexistent-$$" RMX_PROJECTS_DIR="$TMP/projects" RMX_STATE_DIR="$STATE" RMX_PORT="$PORT" RMX_ORCA_BIN="$STUB" RMX_OSASCRIPT_BIN="$OSASTUB" RMX_PS_BIN="$PSSTUB" RMX_LIVE_TTL_MS=0 bun run "$SERVER" > "$TMP/server.log" 2>&1 &
 SRV=$!
 trap 'kill $SRV 2>/dev/null' EXIT
 for _ in $(seq 50); do curl -s -o /dev/null "$BASE/history" && break; sleep 0.1; done
@@ -281,6 +281,12 @@ check "media: 各要素の t は数値で、新しい順に厳密減少 (貼っ�
 check "media: 不正な name → 400" "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/media?name=../x.md")" 400
 printf 'x' > "$STATE/history/20000101T000000000-nosuch00.md"; printf '{"session_id":"nosuch00"}' > "$STATE/history/20000101T000000000-nosuch00.json"
 check "media: transcript の無い session → 空" "$(mget 20000101T000000000-nosuch00.md)" ""
+
+# --- /speak: Gemini の読み上げ (本物の Gemini は呼ばない。server はキー無し = GEMINI_API_KEY 空 + 存在しないキーチェーン service で起動) ---
+spk() { local o=(); [ "$1" != "-" ] && o=(-H "Origin: $1"); curl -s -o "$TMP/body" -w '%{http_code}' -X POST "${o[@]}" -H 'content-type: application/json' --data '{"text":"こんにちは"}' "$BASE/speak"; }
+check "speak: 別 Origin → 403" "$(spk "https://evil.example")" 403
+check "speak: Origin なし → 403" "$(spk -)" 403
+check "speak: キーが env にもキーチェーンにも無い → 503" "$(spk "$GOOD")" 503
 
 # --- index.html: 読み上げボタンが本文ペインの操作列に描画される ---
 check "page: 読み上げボタン (#speak) が index.html にある" "$(curl -s "$BASE/" | grep -c '<button id="speak"')" 1
