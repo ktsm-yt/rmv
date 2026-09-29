@@ -122,7 +122,7 @@
 
   /* 上部: どのセッションの返事か + 履歴の送り */
   #bar { max-width: var(--measure); display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--muted); margin-bottom: 20px; white-space: nowrap; }
-  #bar button { font: inherit; color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 2px 10px; cursor: pointer; }
+  #bar button, #bar select { font: inherit; color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 2px 10px; cursor: pointer; }
   #bar button:disabled { opacity: .35; cursor: default; }
   #stamp { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 600; color: var(--fg); }
   #filter { font-size: 12px; }
@@ -217,7 +217,7 @@
   @media (max-width: 599px) {
     main { padding: 10px 10px 0; }
     #bar { gap: 6px; font-size: 12px; margin-bottom: 12px; }
-    #bar button { padding: 0 6px; }
+    #bar button, #bar select { padding: 0 6px; }
     #chips { margin: -4px 0 10px; }
     .chip { padding: 0 8px; }
     #bar .lbl { display: none; }
@@ -251,7 +251,7 @@ try { document.body.classList.toggle("chat-closed", localStorage.getItem("rmx.ch
 <main>
   <div id="bar">
     <span id="filter"></span><span id="stamp"></span><span id="sent"></span>
-    <button id="prev">◀<span class="lbl"> 前</span></button><span id="pos"></span><button id="next"><span class="lbl">次 </span>▶</button><button id="speak" title="返事を読み上げる / 止める (r)">🔊</button>
+    <button id="prev">◀<span class="lbl"> 前</span></button><span id="pos"></span><button id="next"><span class="lbl">次 </span>▶</button><button id="speak" title="返事を読み上げる / 止める (r)、一時停止 / 再開 (Shift+R)">🔊</button><select id="rate" title="読み上げの速さ"><option value="1">1x</option><option value="1.5">1.5x</option><option value="2" selected>2x</option><option value="2.5">2.5x</option><option value="3">3x</option></select>
   </div>
   <nav id="chips"></nav>
   <article id="reply"></article>
@@ -472,15 +472,37 @@ const newer = () => showIdx(idx - 1);
 // 読み上げ: 描画済み本文から、コード・表・図・画像・ボタン等の UI 部品を除いた文字だけを読む。もう一度押すと止まる。
 // 声は server の /speak (Gemini TTS)。1 つ目のチャンクで失敗したら (キー無し等) ブラウザ内蔵の speechSynthesis で全文を読む
 const speakBtn = document.getElementById("speak");
-const TTS_RATE = 2; // 再生速度 (声の高さは変えない)
+// 再生速度 (声の高さは変えない) は 🔊 の隣の select。選んだ値を localStorage "rmx.ttsRate" に覚える
+const rateSel = document.getElementById("rate");
+try { rateSel.value = localStorage.getItem("rmx.ttsRate") || "2"; } catch {}
+if (!rateSel.value) rateSel.value = "2"; // 覚えた値が選択肢に無い時
+const ttsRate = () => +rateSel.value;
+rateSel.onchange = () => {
+  try { localStorage.setItem("rmx.ttsRate", rateSel.value); } catch {}
+  if (speaking?.audio) speaking.audio.playbackRate = ttsRate(); // 鳴っている Gemini の声にもすぐ効かせる (内蔵の声は次の読み上げから)
+};
 let speaking = null; // 読み上げ中の 1 回分: Gemini = { ctl: AbortController, audio } / 予備 = SpeechSynthesisUtterance
+let paused = false, onResume = null; // 一時停止中か / 一時停止中に Gemini の次チャンクが再開を待つ resolve
+const resumed = () => paused && new Promise((r) => (onResume = r));
 function stopSpeak() {
   if (!speaking) return;
   const s = speaking;
   speaking = null; // 止めた後に届く onend / onerror / fetch の結果は、speaking が変わっているので無視される
   if (s.ctl) { s.ctl.abort(); s.audio?.pause(); }
-  else speechSynthesis.cancel();
+  else { speechSynthesis.cancel(); if (paused) speechSynthesis.resume(); } // pause のまま cancel すると次の speak も止まったままになるので解く
+  paused = false; onResume?.(); onResume = null; // 再開待ちの loop を起こして抜けさせる
   speakBtn.textContent = "🔊";
+}
+// Shift+R = 一時停止 / 再開 (読み上げ中だけ)。Gemini は鳴っている Audio を止め、次のチャンクは再開まで鳴らさない
+function togglePause() {
+  if (!speaking) return;
+  paused = !paused;
+  const a = speaking.audio;
+  if (!speaking.ctl) paused ? speechSynthesis.pause() : speechSynthesis.resume();
+  else if (paused) a?.pause();
+  else a?.play().catch(() => {});
+  if (!paused) { onResume?.(); onResume = null; }
+  speakBtn.textContent = paused ? "▶" : speaking.ctl && !a ? "⏳" : "⏹";
 }
 // 声の選び方: Kyoko (拡張版があればそれ) → Otoya → lang が ja の最初。先頭を取るとおもしろ声 (Eddy / Grandma 等) になる。voices は非同期に揃うので voiceschanged で選び直す
 let jaVoice = null;
@@ -515,15 +537,15 @@ async function fetchWav(text, signal) {
 function playWav(blob, s) {
   const url = URL.createObjectURL(blob);
   const a = new Audio(url);
-  a.playbackRate = TTS_RATE;
+  a.playbackRate = ttsRate();
   a.preservesPitch = true;
   s.audio = a;
   return new Promise((res, rej) => {
     a.onended = res;
     a.onerror = () => rej(new Error("audio error"));
     s.ctl.signal.addEventListener("abort", res);
-    a.play().catch(rej);
-  }).finally(() => URL.revokeObjectURL(url));
+    a.play().catch((e) => { if (e.name !== "AbortError") rej(e); }); // AbortError = 鳴り始める前に pause された (一時停止)。失敗扱いにしない
+  }).finally(() => { URL.revokeObjectURL(url); s.audio = null; }); // 鳴り終えた Audio を残すと、再開の play() が頭から鳴らし直す
 }
 // 再生中に 2 つ先のチャンクまで同時に取りに行く: 2 倍速だと 1 チャンクの再生時間 ≈ 次の生成時間で、1 つ先だけだと途切れる
 async function speakGemini(text) {
@@ -536,9 +558,10 @@ async function speakGemini(text) {
   };
   for (let i = 0; i < parts.length; i++) {
     get(i); get(i + 1); get(i + 2);
-    speakBtn.textContent = "⏳";
+    if (!paused) speakBtn.textContent = "⏳";
     try {
       const blob = await pending[i];
+      await resumed(); // 一時停止中は次のチャンクを鳴らさない
       if (speaking !== s) return;
       speakBtn.textContent = "⏹";
       await playWav(blob, s);
@@ -547,6 +570,8 @@ async function speakGemini(text) {
       if (i > 0) { console.warn(`Gemini の読み上げが途中で失敗したので止める: ${e.message}`); return stopSpeak(); }
       console.warn(`Gemini の読み上げに失敗したので内蔵の声で読む: ${e.message}`);
       s.ctl.abort();
+      await resumed(); // 一時停止中に失敗したら、内蔵の声も再開まで待つ
+      if (speaking !== s) return;
       speaking = null;
       return speakLocal(text);
     }
@@ -558,7 +583,7 @@ function speakLocal(text) {
   if (!("speechSynthesis" in window)) return stopSpeak();
   const u = new SpeechSynthesisUtterance(text);
   u.lang = "ja-JP";
-  u.rate = Math.min(TTS_RATE, 10); // speechSynthesis の上限は 10
+  u.rate = ttsRate();
   if (jaVoice) u.voice = jaVoice;
   const done = () => { if (speaking === u) stopSpeak(); };
   u.onend = done; u.onerror = done;
@@ -664,6 +689,7 @@ document.addEventListener("keydown", (ev) => {
     return;
   }
   if (ev.key === "Enter" && (ev.metaKey || ev.ctrlKey)) { ev.preventDefault(); return document.getElementById(ev.target === ctext ? "csend" : "send").click(); } // Cmd+Enter = 送信 (入力欄の中でも。チャット欄にいる時はチャット欄の送信)
+  if (ev.key === "R" && ev.shiftKey && !ev.altKey && !ev.ctrlKey && !ev.metaKey && !ev.target.closest?.("input, textarea, [contenteditable]")) return togglePause(); // Shift+R = 読み上げの一時停止 / 再開 (下の修飾キー除けより前で拾う)
   if (ev.altKey || ev.ctrlKey || ev.metaKey || ev.shiftKey) return;
   const qb = /^[1-6]$/.test(ev.key) && document.querySelectorAll("#cact .q")[+ev.key - 1];
   if (qb && !ev.target.closest?.("input, textarea, [contenteditable]") && sug.hidden) { ev.preventDefault(); return qb.click(); } // 数字 1〜6 = クイック送信 (欄の外だけ。空のチャット欄でも拾うと「3」を打とうとして A が送られた、2026-09-30)
