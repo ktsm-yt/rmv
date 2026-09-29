@@ -251,7 +251,7 @@ try { document.body.classList.toggle("chat-closed", localStorage.getItem("rmx.ch
 <main>
   <div id="bar">
     <span id="filter"></span><span id="stamp"></span><span id="sent"></span>
-    <button id="prev">◀<span class="lbl"> 前</span></button><span id="pos"></span><button id="next"><span class="lbl">次 </span>▶</button>
+    <button id="prev">◀<span class="lbl"> 前</span></button><span id="pos"></span><button id="next"><span class="lbl">次 </span>▶</button><button id="speak" title="返事を読み上げる / 止める (r)">🔊</button>
   </div>
   <nav id="chips"></nav>
   <article id="reply"></article>
@@ -419,6 +419,7 @@ function renderLowLoad(md) {
 
 async function show(md, entry) {
   const el = document.getElementById("reply");
+  stopSpeak(); // 返事が替わったら読み上げは止める
   el.innerHTML = md ? renderLowLoad(md) : "";
   const time = entry?.ts ? new Date(entry.ts).toLocaleTimeString("ja-JP", { hour12: false }) : "";
   document.getElementById("stamp").textContent = entry ? agentTag(entry) + [entry.repo || "?", time].filter(Boolean).join(" · ") : "";
@@ -468,6 +469,36 @@ async function showIdx(i) {
 }
 const older = () => showIdx(idx + 1);
 const newer = () => showIdx(idx - 1);
+// 読み上げ: 描画済み本文から、コード・表・図・画像・ボタン等の UI 部品を除いた文字だけを speechSynthesis で読む。もう一度押すと止まる
+const speakBtn = document.getElementById("speak");
+let speaking = null;
+function stopSpeak() {
+  if (!speaking) return;
+  speaking = null; // cancel が起こす onerror / onend は、speaking が変わっているので無視される
+  speechSynthesis.cancel();
+  speakBtn.textContent = "🔊";
+}
+function readableText() {
+  const c = document.getElementById("reply").cloneNode(true);
+  c.querySelectorAll("pre, table, svg, img, video, audio, iframe, button, .media, .cp").forEach((n) => n.remove());
+  c.querySelectorAll(".blk, .ln, .foot, p, li, h1, h2, h3, h4, h5, h6").forEach((n) => n.after("\n")); // textContent は段落を区切らないので、切れ目に改行を入れる
+  return c.textContent.replace(/\n\s*/g, "\n").trim();
+}
+function toggleSpeak() {
+  if (speaking) return stopSpeak();
+  const text = readableText();
+  if (!text) return;
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = "ja-JP";
+  const v = speechSynthesis.getVoices().find((x) => /^ja/i.test(x.lang));
+  if (v) u.voice = v;
+  const done = () => { if (speaking === u) stopSpeak(); };
+  u.onend = done; u.onerror = done;
+  speaking = u;
+  speakBtn.textContent = "⏹";
+  speechSynthesis.speak(u);
+}
+if ("speechSynthesis" in window) speakBtn.onclick = toggleSpeak; else speakBtn.hidden = true;
 document.getElementById("prev").onclick = older;
 document.getElementById("next").onclick = newer;
 // 図の全画面: 図の複製を画面いっぱいに置き、viewBox を動かして拡大・移動する (CSS transform より拡大しても線がぼやけない)。
@@ -568,6 +599,7 @@ document.addEventListener("keydown", (ev) => {
     return;
   }
   if (ev.target.closest?.("input, textarea, [contenteditable]")) return;
+  if (ev.key === "r" && !speakBtn.hidden) return toggleSpeak(); // r = 読み上げ (他のキーと重ならない)
   // Esc (欄の外) = 1 回ごとに新しいピンから外す。ひとことが書いてあるピンに当たったら止める (打った文字は消さない)
   if (ev.key === "Escape") {
     const pins = drafts.get(curName())?.pins, last = pins && [...pins.keys()].pop();

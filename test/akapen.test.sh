@@ -282,5 +282,8 @@ check "media: 不正な name → 400" "$(curl -s -o /dev/null -w '%{http_code}' 
 printf 'x' > "$STATE/history/20000101T000000000-nosuch00.md"; printf '{"session_id":"nosuch00"}' > "$STATE/history/20000101T000000000-nosuch00.json"
 check "media: transcript の無い session → 空" "$(mget 20000101T000000000-nosuch00.md)" ""
 
+# --- index.html: 読み上げボタンが本文ペインの操作列に描画される ---
+check "page: 読み上げボタン (#speak) が index.html にある" "$(curl -s "$BASE/" | grep -c '<button id="speak"')" 1
+
 echo "checked $N cases ($FAIL failed)"
 [ "$FAIL" -eq 0 ]
