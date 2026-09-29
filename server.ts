@@ -30,6 +30,11 @@ async function history(repo: string | null): Promise<Response> {
       return { name, ts: meta.ts ?? null, cwd, repo: cwd.split("/").filter(Boolean).pop() ?? "", head: body.replace(/\s+/g, " ").trim().slice(0, 40), terminal: Boolean(meta.terminal), live: terms ? Boolean(meta.terminal) && handles.has(meta.terminal) : true, session: String(meta.terminal || meta.session_id || ""), agent: meta.agent ?? null, title: byHandle.get(meta.terminal)?.title ?? null, lastOutputAt: byHandle.get(meta.terminal)?.lastOutputAt ?? null };
     }),
   );
+  // 1 つの端末で順に別の repo を開くと、端末が生きている限り昔の repo まで live になる (2026-09-29 実機: 1 端末で 4 repo)。
+  // 端末ごとに最新の本体の返事の cwd だけを live に残す (subagent は親と同じ cwd なので一緒に残る)
+  const nowCwd = new Map<string, string>();
+  for (const e of items) if (e.live && !e.agent && !nowCwd.has(e.session)) nowCwd.set(e.session, e.cwd); // items は新しい順
+  for (const e of items) if (e.live && nowCwd.has(e.session) && nowCwd.get(e.session) !== e.cwd) e.live = false;
   const want = repo?.toLowerCase();
   return Response.json(want ? items.filter((e) => e.repo.toLowerCase() === want) : items, { headers: { "cache-control": "no-store", "x-rmx-live": terms ? "ok" : "unknown" } });
 }

@@ -128,6 +128,13 @@ tl() { curl -s "$BASE/history" | python3 -c "import json,sys; e=[e for e in json
 list '{"handle":"term_test","worktreePath":"'"$CWD"'","lastOutputAt":1234,"connected":true,"writable":true,"title":"✳ waiting"}'
 check "/history: title / lastOutputAt が terminal から乗る" "$(tl "$WITH")" "✳ waiting 1234"
 check "/history: terminal なし entry は title / lastOutputAt null" "$(tl "$WITHOUT")" "None None"
+# 同じ端末で後から別 repo の返事が出たら、前の repo の entry は live false (端末は 1 度に 1 repo)
+NEWER=29991231T000000000-newrepo
+: > "$STATE/history/$NEWER.md"; echo '{"cwd":"/tmp/other-repo","terminal":"term_test"}' > "$STATE/history/$NEWER.json"
+nl() { curl -s "$BASE/history" | python3 -c "import json,sys; d={e['name']:e['live'] for e in json.load(sys.stdin)}; print(d['$WITH'], d['$NEWER.md'])"; }
+check "/history: 同じ端末で新しい別 repo → 古い repo は live false、新しい方は true" "$(nl)" "False True"
+rm -f "$STATE/history/$NEWER".*
+check "/history: 新しい別 repo が消えれば元の repo は live に戻る" "$(lives)" "True False ok"
 rm -f "$TMP/list.json"
 check "/history: list 失敗 → title / lastOutputAt null" "$(tl "$WITH")" "None None"
 list "$(term term_test "$CWD" 1)"
