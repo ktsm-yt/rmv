@@ -158,9 +158,9 @@ security add-generic-password -U -a "$USER" -s rmv-gemini -w
 無料枠のキーでは、送った文章が Google の製品改善に使われます。
 有料か無料かはキーの属する Google Cloud プロジェクトの支払い設定で決まり、rmv 側に切り替えはありません。
 
-- `RMX_TTS_MODEL`: 読み上げモデル (既定 `gemini-3.8-flash-tts`)
+- `RMX_TTS_MODEL`: 読み上げモデル (既定 `gemini-3.1-flash-tts-preview`。`gemini-3.8-flash-tts` は声が良いが無料枠が 1 日 10 回)
 - `RMX_TTS_VOICE`: 声 (既定 `Kore`)
-- `RMX_TTS_STYLE`: 話し方の指示 (既定 `落ち着いて、はっきりと`)
+- `RMX_TTS_STYLE`: 話し方の指示 (既定 `落ち着いて、はっきりと`。3.8 のときだけ効く)
 
 ## 注意
 

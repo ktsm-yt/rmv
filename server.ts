@@ -252,11 +252,12 @@ async function send(req: Request): Promise<Response> {
   }
 }
 
-// POST /speak {text}: 読み上げの声を Gemini の TTS で作り、WAV (RIFF ヘッダ付き 24kHz mono) をそのまま返す。
+// POST /speak {text}: 読み上げの声を Gemini の TTS で作り、WAV で返す (3.8 は WAV、3.1 / 2.5 は生の PCM が返るので WAV に包む)。
 // キーは env GEMINI_API_KEY → 無ければ macOS キーチェーンを毎回引く。キーはログにもレスポンスにも出さない。
 // Origin 必須は /send と同じ理由 (他サイトから有料 API を叩かせない)。
+// 既定を 3.1 にした理由: 3.8 の無料枠は 1 日 10 回で、1 返事 3〜5 回呼ぶと 2〜3 返事で尽きる (2026-09-30 実測の 429)
 const TTS_SERVICE = process.env.RMX_TTS_KEYCHAIN_SERVICE || "rmv-gemini";
-const TTS_MODEL = process.env.RMX_TTS_MODEL || "gemini-3.8-flash-tts";
+const TTS_MODEL = process.env.RMX_TTS_MODEL || "gemini-3.1-flash-tts-preview";
 const TTS_VOICE = process.env.RMX_TTS_VOICE || "Kore";
 const TTS_STYLE = process.env.RMX_TTS_STYLE || "落ち着いて、はっきりと";
 async function ttsKey(): Promise<string> {
@@ -283,7 +284,9 @@ async function speak(req: Request): Promise<Response> {
       headers: { "x-goog-api-key": key, "content-type": "application/json" },
       body: JSON.stringify({
         model: TTS_MODEL,
-        input: [{ type: "user_input", content: [{ type: "text", text, annotations: [{ type: "speech_metadata", style: TTS_STYLE }] }] }],
+        // 話し方の指示 (annotations) は 3.8 だけ受け付ける。3.1 / 2.5 に付けると 400
+        // ponytail: モデル名で判定。3.8 以降の新モデルが出たら正規表現を広げる
+        input: [{ type: "user_input", content: [{ type: "text", text, ...(/3\.8/.test(TTS_MODEL) ? { annotations: [{ type: "speech_metadata", style: TTS_STYLE }] } : {}) }] }],
         response_format: { type: "audio" },
         generation_config: { speech_config: [{ voice: TTS_VOICE }] },
       }),
@@ -296,7 +299,18 @@ async function speak(req: Request): Promise<Response> {
   const d = await r.json().catch(() => null);
   const audio = (d?.steps ?? []).filter((s: any) => s?.type === "model_output").flatMap((s: any) => s.content ?? []).filter((c: any) => c?.type === "audio").pop();
   if (typeof audio?.data !== "string") return new Response("gemini returned no audio", { status: 502 });
-  return new Response(Buffer.from(audio.data, "base64"), { headers: { "content-type": "audio/wav", "cache-control": "no-store" } });
+  const raw = Buffer.from(audio.data, "base64");
+  const wav = /l16/i.test(audio.mime_type ?? "") ? pcmToWav(raw, audio.sample_rate ?? 24000) : raw;
+  return new Response(wav, { headers: { "content-type": "audio/wav", "cache-control": "no-store" } });
+}
+// 16bit little-endian mono の PCM に 44 byte の WAV ヘッダを付ける
+function pcmToWav(pcm: Buffer, rate: number): Buffer {
+  const h = Buffer.alloc(44);
+  h.write("RIFF", 0); h.writeUInt32LE(36 + pcm.length, 4); h.write("WAVE", 8);
+  h.write("fmt ", 12); h.writeUInt32LE(16, 16); h.writeUInt16LE(1, 20); h.writeUInt16LE(1, 22);
+  h.writeUInt32LE(rate, 24); h.writeUInt32LE(rate * 2, 28); h.writeUInt16LE(2, 32); h.writeUInt16LE(16, 34);
+  h.write("data", 36); h.writeUInt32LE(pcm.length, 40);
+  return Buffer.concat([h, pcm]);
 }
 
 // GET /skills?cwd=<絶対パス>: チャット欄の "/" 補完の候補。user / project / plugin の skill と command。60 秒 memo (cwd ごと)。

@@ -666,7 +666,7 @@ document.addEventListener("keydown", (ev) => {
   if (ev.key === "Enter" && (ev.metaKey || ev.ctrlKey)) { ev.preventDefault(); return document.getElementById(ev.target === ctext ? "csend" : "send").click(); } // Cmd+Enter = 送信 (入力欄の中でも。チャット欄にいる時はチャット欄の送信)
   if (ev.altKey || ev.ctrlKey || ev.metaKey || ev.shiftKey) return;
   const qb = /^[1-6]$/.test(ev.key) && document.querySelectorAll("#cact .q")[+ev.key - 1];
-  if (qb && (ev.target === ctext ? !ctext.value : !ev.target.closest?.("input, textarea, [contenteditable]")) && sug.hidden) { ev.preventDefault(); return qb.click(); } // 数字 1〜5 = クイック送信 (欄の外、または空のチャット欄)
+  if (qb && !ev.target.closest?.("input, textarea, [contenteditable]") && sug.hidden) { ev.preventDefault(); return qb.click(); } // 数字 1〜6 = クイック送信 (欄の外だけ。空のチャット欄でも拾うと「3」を打とうとして A が送られた、2026-09-30)
   // ↑↓ = 送り先 chip (= 端末) を上下に移る。欄の外、または空のチャット欄で (skill 候補が出ている時は候補の移動が先)
   if ((ev.key === "ArrowUp" || ev.key === "ArrowDown") && sug.hidden && (ev.target === ctext ? !ctext.value : !ev.target.closest?.("input, textarea, [contenteditable]"))) {
     const cs = [...cchips.querySelectorAll(".chip")], i = cs.findIndex((c) => c.classList.contains("on")), n = cs[i + (ev.key === "ArrowDown" ? 1 : -1)];
