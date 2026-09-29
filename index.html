@@ -478,6 +478,13 @@ function stopSpeak() {
   speechSynthesis.cancel();
   speakBtn.textContent = "🔊";
 }
+// 声の選び方: Kyoko (拡張版があればそれ) → Otoya → lang が ja の最初。先頭を取るとおもしろ声 (Eddy / Grandma 等) になる。voices は非同期に揃うので voiceschanged で選び直す
+let jaVoice = null;
+function pickVoice() {
+  const vs = speechSynthesis.getVoices();
+  const kyoko = vs.filter((x) => /Kyoko/i.test(x.name));
+  jaVoice = kyoko.find((x) => /拡張|Enhanced|Premium|プレミアム/i.test(x.name)) ?? kyoko[0] ?? vs.find((x) => /Otoya/i.test(x.name)) ?? vs.find((x) => /^ja/i.test(x.lang)) ?? null;
+}
 function readableText() {
   const c = document.getElementById("reply").cloneNode(true);
   c.querySelectorAll("pre, table, svg, img, video, audio, iframe, button, .media, .cp").forEach((n) => n.remove());
@@ -490,15 +497,14 @@ function toggleSpeak() {
   if (!text) return;
   const u = new SpeechSynthesisUtterance(text);
   u.lang = "ja-JP";
-  const v = speechSynthesis.getVoices().find((x) => /^ja/i.test(x.lang));
-  if (v) u.voice = v;
+  if (jaVoice) u.voice = jaVoice;
   const done = () => { if (speaking === u) stopSpeak(); };
   u.onend = done; u.onerror = done;
   speaking = u;
   speakBtn.textContent = "⏹";
   speechSynthesis.speak(u);
 }
-if ("speechSynthesis" in window) speakBtn.onclick = toggleSpeak; else speakBtn.hidden = true;
+if ("speechSynthesis" in window) { speakBtn.onclick = toggleSpeak; speechSynthesis.addEventListener("voiceschanged", pickVoice); pickVoice(); } else speakBtn.hidden = true;
 document.getElementById("prev").onclick = older;
 document.getElementById("next").onclick = newer;
 // 図の全画面: 図の複製を画面いっぱいに置き、viewBox を動かして拡大・移動する (CSS transform より拡大しても線がぼやけない)。
