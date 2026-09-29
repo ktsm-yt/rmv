@@ -496,10 +496,12 @@ function readableText() {
   return c.textContent.replace(/\n\s*/g, "\n").trim();
 }
 // 段落 (改行) 単位で区切り、短い段落は max 字までまとめる。1 段落が max を超える時はそのまま 1 チャンク
+// 最初の 2 つは 80 / 160 字までに抑える: 生成待ちは字数に比例し (241 字で 17.8 秒、2026-09-30 実測)、声が出るまでの待ちは 1 つ目の生成時間で決まる
 function speakChunks(text, max = 250) {
   const out = [];
   for (const p of text.split("\n")) {
-    if (out.length && out[out.length - 1].length + 1 + p.length <= max) out[out.length - 1] += "\n" + p;
+    const cap = [80, 160][out.length - 1] ?? max;
+    if (out.length && out[out.length - 1].length + 1 + p.length <= cap) out[out.length - 1] += "\n" + p;
     else out.push(p);
   }
   return out;
