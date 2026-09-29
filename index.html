@@ -533,6 +533,12 @@ document.addEventListener("keydown", (ev) => {
     return;
   }
   if (ev.target.closest?.("input, textarea, [contenteditable]")) return;
+  // Esc (欄の外) = 1 回ごとに新しいピンから外す。ひとことが書いてあるピンに当たったら止める (打った文字は消さない)
+  if (ev.key === "Escape") {
+    const pins = drafts.get(curName())?.pins, last = pins && [...pins.keys()].pop();
+    if (last != null && !pins.get(last).comment.trim()) { pins.delete(last); refresh(); }
+    return;
+  }
   if (ev.key === "ArrowLeft") { ev.preventDefault(); older(); }
   else if (ev.key === "ArrowRight") { ev.preventDefault(); newer(); }
 });
