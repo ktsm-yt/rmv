@@ -392,7 +392,7 @@ function renderLowLoad(md) {
     const { md: lt, media } = linkPaths(t);
     if (/^(検証|DECIDE)\s*[:：]/.test(t)) { foot.push(`<div>${marked.parseInline(lt)}</div>`); continue; }
     if (!t) { if (cur && cur.html.length) cur.html.push('<div class="gap"></div>'); continue; }
-    const m = ind === 0 && raw.match(/^(\d+)\.\s+(.*)$/);
+    const m = ind === 0 && raw.match(/^(\d+)\\?\.\s+(.*)$/);
     // 太字だけの行・# 見出しも段の区切りにする (番号段落を使わない返事でも段ごとにピンが付く)
     const h = !m && ind === 0 && (t.match(/^\*\*(.+)\*\*$/) ?? t.match(/^#{1,6}\s+(.+)$/));
     // パスだけの行 (「ⅱ /b.png」等) が画像の直後に続いたら、行を出さずに前の格子へ足す (画像 1・2・3 を 1 つの格子に)
