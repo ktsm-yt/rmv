@@ -218,7 +218,8 @@ async function send(req: Request): Promise<Response> {
   };
   // 画像はクリップボード経由で貼る: パスを文字で送っても Claude Code は画像にしない (文字のまま残る)。
   // クリップボードに画像を載せて Ctrl+V (\x16) を送ると [Image #N] で入る (2026-09-29 実測)。
-  // 次の画像でクリップボードを上書きする前に、下書きの [Image #N] が増えるのを待つ (最大 3 秒)。
+  // 次の画像でクリップボードを上書きする前に、下書きの [Image #N] が増えるのを待つ (最大 10 秒)。
+  // 3 秒だと 663 KB のスクショで、実際は入っているのに「入らなかった」と返していた (2026-09-30)。大きい画像ほど取り込みが遅い
   // ponytail: user のクリップボードは最後の画像のまま戻さない
   const attach = async (path: string): Promise<string | null> => {
     if (!(await Bun.file(path).exists())) return `image not found: ${path}`;
@@ -228,11 +229,10 @@ async function send(req: Request): Promise<Response> {
     if (ocode !== 0) return `osascript exit ${ocode}: ${oerr.trim()}`;
     const v = await typed("\x16");
     if (v.code !== 0) return `orca exit ${v.code}: ${v.err.trim() || v.out.trim()}`;
-    for (let i = 0; i < 20; i++) {
+    for (const t0 = Date.now(); Date.now() - t0 < 10_000; await Bun.sleep(150)) { // 回数でなく時間で区切る (orca terminal read 自体に時間がかかる)
       if ((await drafted()) > before) return null;
-      await Bun.sleep(150);
     }
-    return "画像が端末に入らなかった (3 秒待っても [Image #N] が増えない)";
+    return "画像が端末に入らなかった (10 秒待っても [Image #N] が増えない)";
   };
   try {
     for (const img of images as string[]) {
