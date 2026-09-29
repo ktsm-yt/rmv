@@ -1,0 +1,5 @@
+state/
+.DS_Store
+# 手元の開発用ハーネス (dev-harness の配布物)。公開しない
+.claude/
+hooks/dev-harness/

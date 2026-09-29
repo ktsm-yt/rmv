@@ -1,0 +1,5 @@
+{"type": "user", "message": {"role": "user", "content": "構成を図で"}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "1 件目の返事 (上書きされるはず)"}]}}
+{"type": "user", "message": {"role": "user", "content": "続けて"}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "## 構成\n\n```mermaid\nflowchart LR\n  hook[Stop hook] --> file[state/latest.html] --> page[index.html]\n```\n\n```html\n<div style=\"padding:16px;font-family:system-ui\"><b>断片</b>: iframe で描く</div>\n```\n\n![](https://placehold.co/300x100)"}]}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "ls"}}]}}

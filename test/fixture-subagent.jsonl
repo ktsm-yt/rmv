@@ -1,0 +1,1 @@
+{"session_id": "abcd1234-ef56-7890-aaaa-bbbbccccdddd", "cwd": "/Users/i/Dev/harness-rmx", "hook_event_name": "SubagentStop", "agent_type": "claude-code-harness:worker", "agent_id": "a1", "stop_reason": "end_turn", "last_assistant_message": "1. 🟢 subagent の報告: 実装と検証が終わった\nⅰ. hook に SubagentStop を足した\nⅱ. テストは全部 green"}

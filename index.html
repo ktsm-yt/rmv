@@ -1,0 +1,949 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>rmv (Red Marker Viewer): 返事を見て赤ペンで返す</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f7f7f5; --panel: #ffffff; --fg: #1d1d1f; --muted: #6e6e73; --line: #e3e3e0;
+    --red: #dc2626; --yellow: #d97706; --green: #16a34a;
+    --card: #ffffff; --code-fg: #8a5a00; --link: #1a56db;
+    --measure: 760px; /* 返事の列幅: 番号列 (約 72px) + 本文 約 74ch (16px)。#bar #chips #reply #tray で揃える */
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #16171a; --panel: #1f2126; --fg: #e8e8ea; --muted: #9a9aa2; --line: #2e3037; --card: #2a2d33; --code-fg: #f3d9a0; --link: #8ab4f8; }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; height: 100vh; display: grid; grid-template-columns: 200px minmax(0, 1fr);
+    font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    line-height: 1.8; background: var(--bg); color: var(--fg);
+  }
+  /* 左のプロジェクト列: 畳むと ☰ だけの細帯。開閉は広い幅でだけ localStorage "rmx.proj" に覚える */
+  #proj { overflow-y: auto; padding: 12px 8px; border-right: 1px solid var(--line); background: var(--bg); font-size: 13px; line-height: 1.5; }
+  #ptoggle, #ctoggle { display: block; font: inherit; font-size: 14px; line-height: 1; width: 24px; height: 24px; padding: 0; margin-bottom: 8px; color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; cursor: pointer; }
+  #ptoggle.unread { border-color: var(--red); color: var(--red); }
+  body.proj-closed { grid-template-columns: 32px minmax(0, 1fr); }
+  body.proj-closed #proj { padding: 8px 4px; overflow: hidden; }
+  body.proj-closed #plist { display: none; }
+  /* 畳んでいてもホバーで重ねて開く (離すと閉じる)。☰ で開きっぱなしにもできる (2026-09-29 user) */
+  body.proj-closed #proj:hover { position: fixed; left: 0; top: 0; bottom: 0; width: 240px; padding: 12px 8px; overflow-y: auto; z-index: 20; box-shadow: 6px 0 18px rgb(0 0 0 / .18); }
+  body.proj-closed #proj:hover #plist { display: block; }
+  @media (max-width: 699px) {
+    /* 狭い幅では開いても返事を押し潰さず、上に重ねる */
+    body { grid-template-columns: 32px minmax(0, 1fr); }
+    body:not(.proj-closed) #proj { position: fixed; left: 0; top: 0; bottom: 0; width: min(280px, 88vw); z-index: 20; box-shadow: 6px 0 18px rgb(0 0 0 / .18); }
+  }
+  .prow { display: block; width: 100%; text-align: left; font: inherit; color: var(--fg); background: none; border: 0; border-radius: 6px; padding: 6px 8px; margin-bottom: 2px; cursor: pointer; }
+  .prow:hover { background: color-mix(in srgb, var(--fg) 6%, transparent); }
+  .prow.on { background: var(--fg); color: var(--bg); }
+  .prow .pn { display: flex; gap: 6px; align-items: center; font-weight: 600; }
+  .prow .pn b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: inherit; }
+  .prow time { font-size: 11px; font-weight: 400; color: var(--muted); }
+  .prow .ph { display: block; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .prow.on time, .prow.on .ph { color: inherit; opacity: .7; }
+  .prow.dead:not(.on) { opacity: .55; }
+  .ptabs { display: flex; gap: 2px; } /* 「メイン」 / 「🤖 ワーカー」(subagent) の 2 択 */
+  .ptabs .prow { width: auto; }
+  .ptabs .prow + .prow { font-size: 12px; }
+  #pdead { font: inherit; font-size: 11px; color: var(--muted); background: none; border: 0; padding: 6px 8px; cursor: pointer; text-decoration: underline; }
+  .rc { flex: none; font-style: normal; font-size: 10px; margin-right: 4px; color: var(--rc); } /* repo 色の丸: プロジェクト列・上の chip で同じ色 = 同じ repo */
+  .dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--red); }
+  main { grid-column: 2; overflow-y: auto; padding: 32px 56px; }
+  /* チャット欄: ピン無しで自由文を元の端末へ。幅 900px 以上は右の列、未満は返事の上の帯 (grid の 1 行目なので返事をスクロールしても隠れない) */
+  #chat { display: flex; flex-direction: column; gap: 8px; min-height: 0; overflow: hidden; padding: 12px; border-left: 1px solid var(--line); background: var(--bg); font-size: 13px; line-height: 1.5; }
+  #chead { display: flex; gap: 6px; align-items: center; }
+  #ctoggle { flex: none; margin: 0; }
+  #cto { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+  #cchips { flex: none; display: grid; gap: 4px; padding-bottom: 2px; } /* 送り先: 直近 5 セッションを縦に積む (横並びだとどれがどれか分からない) */
+  #cchips .chip { display: flex; gap: 8px; text-align: left; overflow: hidden; white-space: nowrap; border-radius: 6px; border-left: 3px solid var(--rc, var(--line)); }
+  #cchips .chip time { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
+  #cchips .chip.on time { color: inherit; }
+  #cchips .chip span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  #cform { display: flex; flex-direction: column; gap: 6px; }
+  #tstat { flex: none; display: grid; gap: 2px; font-size: 12px; color: var(--muted); } /* 端末ごとの待ち状態 (chip と同じ集合) */
+  #tstat .trow { display: flex; gap: 8px; overflow: hidden; white-space: nowrap; cursor: pointer; border-left: 3px solid var(--rc, var(--line)); padding-left: 6px; }
+  #tstat .trow span { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; }
+  #tstat .trow.wait { color: inherit; font-weight: 700; }
+  /* 状態アイコン (文字でなく絵で。2026-09-29 user): 作業中 = 回るリング / 待ち = 目立つ点 / 静か = 薄い丸 */
+  #tstat i { flex: none; width: 10px; height: 10px; margin-top: 4px; border-radius: 50%; box-sizing: border-box; }
+  #tstat i.busy { border: 2px solid var(--line); border-top-color: var(--fg); animation: tspin .8s linear infinite; }
+  #tstat i.wait { background: #e5a50a; box-shadow: 0 0 0 3px rgb(229 165 10 / .25); }
+  #tstat i.idle { border: 2px solid var(--line); }
+  @keyframes tspin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { #tstat i.busy { animation: none; border-top-color: var(--muted); } }
+  #sug { border: 1px solid var(--line); border-radius: 6px; background: var(--panel); overflow: hidden; margin-bottom: 6px; }
+  #sug div { padding: 3px 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+  #sug div.on { background: var(--bg); box-shadow: inset 2px 0 var(--red); }
+  #sug b { color: var(--fg); } #sug span { color: var(--muted); margin-left: 8px; }
+  #ctext { font: inherit; color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; width: 100%; resize: none; field-sizing: content; min-height: 10em; max-height: 60vh; } /* 文字量で上へ伸びる (欄は列の下に貼り付き)。掴んで伸ばす角は無し (2026-09-29 user: 右下からの操作が効かない) */
+  #cact { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; justify-content: flex-end; }
+  #cact .q { font: inherit; font-size: 12px; line-height: 1.6; padding: 1px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); cursor: pointer; }
+  #cact .q sup { color: var(--muted); font-size: 9px; margin-left: 2px; }
+  #cact .q:disabled { opacity: .35; cursor: default; }
+  #csend { align-self: flex-end; flex: none; font: inherit; color: #fff; background: var(--red); border: 1px solid var(--red); border-radius: 6px; padding: 2px 12px; cursor: pointer; }
+  #ctext:disabled, #csend:disabled { opacity: .35; cursor: default; }
+  #cwhy { color: var(--muted); }
+  #cmsg { color: var(--red); overflow-wrap: anywhere; }
+  #cwhy:empty, #cmsg:empty { display: none; }
+  body.chat-closed #chat { padding: 12px 4px; }
+  body.chat-closed #chat > :not(#chead), body.chat-closed #chead > :not(#ctoggle) { display: none; }
+  @media (min-width: 900px) {
+    body { grid-template-columns: 200px minmax(0, 1fr) 300px; }
+    body.proj-closed { grid-template-columns: 32px minmax(0, 1fr) 300px; }
+    body.chat-closed { grid-template-columns: 200px minmax(0, 1fr) 32px; }
+    body.proj-closed.chat-closed { grid-template-columns: 32px minmax(0, 1fr) 32px; }
+  }
+  @media (max-width: 899px) {
+    body { grid-template-rows: auto minmax(0, 1fr); }
+    #proj { grid-row: 1 / -1; }
+    main { grid-row: 2; }
+    #tstat { display: none; }
+    #chat { grid-column: 2; grid-row: 1; gap: 4px; padding: 6px 12px; border-left: 0; border-bottom: 1px solid var(--line); }
+    body.chat-closed #chat { padding: 4px 12px; }
+    #cform { flex-direction: row; align-items: flex-end; }
+    #ctext { min-height: 2.4em; max-height: 30vh; }
+  }
+
+  /* 上部: どのセッションの返事か + 履歴の送り */
+  #bar { max-width: var(--measure); display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--muted); margin-bottom: 20px; white-space: nowrap; }
+  #bar button { font: inherit; color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 2px 10px; cursor: pointer; }
+  #bar button:disabled { opacity: .35; cursor: default; }
+  #stamp { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 600; color: var(--fg); }
+  #filter { font-size: 12px; }
+  /* セッション切替: 1 行・折り返さず横スクロール */
+  #chips { max-width: var(--measure); display: flex; gap: 6px; overflow-x: auto; white-space: nowrap; margin: -8px 0 16px; padding-bottom: 2px; scrollbar-width: thin; }
+  #chips:empty { display: none; }
+  .chip { flex: none; font: inherit; font-size: 12px; line-height: 1.6; padding: 1px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); color: var(--fg); cursor: pointer; }
+  .chip.on { background: var(--fg); border-color: var(--fg); color: var(--bg); font-weight: 600; }
+  #filter:empty { display: none; }
+
+  /* 返事: 型ごとに置き場所を固定する */
+  #reply { max-width: var(--measure); font-size: 16px; overflow-wrap: anywhere; }
+  #reply:empty::before { content: "まだ返事がありません (Stop hook が state/ に書くと表示されます)"; color: var(--muted); }
+  .blk { display: grid; grid-template-columns: 2.6em 1fr; gap: 0 14px; padding: 10px 0 10px 12px; margin-bottom: 14px; border-left: 4px solid transparent; }
+  .blk.pri-red { border-left-color: var(--red); }
+  .blk.pri-yellow { border-left-color: var(--yellow); }
+  .blk.pri-green { border-left-color: var(--green); }
+  .num { width: 2.2em; height: 2.2em; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 17px; background: var(--fg); color: var(--bg); }
+  .blk.nonum { grid-template-columns: 1fr; }
+  .blk.nonum .num { display: none; }
+  .body { min-width: 0; }
+  .ln { padding-left: calc(var(--ind, 0) * .55em); }
+  .ln.head { font-weight: 700; margin-bottom: .3em; }
+  .ln.item { margin-left: calc(var(--ind, 0) * .55em + .6em); padding-left: .8em; border-left: 2px solid var(--line); }
+  .ln.item + .ln.item { margin-top: .35em; } /* 折り返す項目どうしが一続きに見えないように */
+  .gap { height: .9em; } /* 空行 = 段落の切れ目 */
+  #reply :not(pre) > code { font-family: "UDEV Gothic", ui-monospace, Menlo, monospace; font-size: .9em; color: var(--code-fg); background: color-mix(in srgb, var(--fg) 8%, transparent); border-radius: 4px; padding: .1em .35em; }
+  #reply a { color: var(--link); text-decoration: none; }
+  #reply a:hover { text-decoration: underline; }
+  #reply h1, #reply h2, #reply h3 { font-size: 17px; margin: .4em 0; color: var(--fg); letter-spacing: 0; }
+  #reply .tbl { overflow-x: auto; }
+  #reply table { width: 100%; border-collapse: collapse; margin: 8px 0; font-size: 14px; }
+  #reply th { background: color-mix(in srgb, var(--fg) 8%, transparent); text-align: left; font-weight: 600; }
+  #reply th, #reply td { border-bottom: 1px solid var(--line); padding: 6px 10px; }
+  .bar5 { font-family: ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: 0; white-space: nowrap; }
+  /* 画像はカード (明るい面 + 角丸 + 薄い枠 + 余白) に載せる */
+  #reply img { max-width: 100%; background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 8px; }
+  #reply .media { margin: 4px 0 8px; display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; }
+  /* 2 つ以上 → 2 列の格子 (幅 < 700px は 1 列)。拡大はクリック */
+  #reply .media:has(> :nth-child(2)) { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+  #reply .media:has(> :nth-child(2)) > :is(img, video) { width: 100%; height: auto; object-fit: contain; }
+  @media (max-width: 699px) { #reply .media:has(> :nth-child(2)) { grid-template-columns: 1fr; } }
+  #reply .media img { cursor: zoom-in; }
+  #reply .media img, #reply .media video { max-width: 100%; max-height: 60vh; }
+  #reply .media video { border-radius: 8px; border: 1px solid var(--line); }
+  #reply pre { line-height: 1.25; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px; overflow-x: auto; }
+  #reply pre, #reply pre code { font-family: "UDEV Gothic", "HackGen Console", ui-monospace, Menlo, monospace; font-size: 14px; } /* 無印 = 半角:全角 1:2。35 版は 3:5 で罫線図がズレる */
+  #reply pre.mermaid { position: relative; background: transparent; border: none; text-align: center; overflow-x: auto; }
+  /* 図: 角を丸める (配色は mermaid.initialize の themeVariables)。空き地クリック / ⤢ = 全画面、ノードクリック = 赤ペン */
+  :is(pre.mermaid, #mmzoom) :is(.node rect, rect.actor, rect.note) { rx: 8px; ry: 8px; }
+  :is(pre.mermaid, #mmzoom) .cluster rect { rx: 12px; ry: 12px; }
+  #reply pre.mermaid[data-processed] { cursor: zoom-in; }
+  #reply pre.mermaid .pinable { cursor: pointer; }
+  #reply pre.mermaid .pinable:hover :is(rect, path, polygon, circle) { stroke: color-mix(in srgb, var(--red) 55%, transparent) !important; }
+  #reply pre.mermaid .pinned :is(rect, path, polygon, circle) { stroke: var(--red) !important; stroke-width: 2.5px !important; }
+  #reply pre.mermaid text.pinned { fill: var(--red) !important; font-weight: 700; }
+  .mmzoom { position: absolute; top: 4px; right: 4px; font: inherit; font-size: 14px; line-height: 1; padding: 4px 6px; color: var(--muted); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; cursor: zoom-in; opacity: .7; }
+  .mmzoom:hover { opacity: 1; color: var(--fg); }
+  .cp { position: relative; } .cp .cpbtn { cursor: pointer; top: 18px; }
+  #mmzoom { position: fixed; inset: 0; z-index: 50; background: var(--bg); cursor: grab; touch-action: none; }
+  #mmzoom[hidden] { display: none; }
+  #mmzoom.drag { cursor: grabbing; }
+  #mmzoom > svg { position: absolute; inset: 0; width: 100%; height: 100%; max-width: none !important; }
+  #mmzoom > button { position: absolute; top: 10px; right: 10px; z-index: 1; font: inherit; font-size: 18px; line-height: 1; width: 34px; height: 34px; color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; cursor: pointer; }
+  #mmzoom > span { position: absolute; left: 12px; bottom: 10px; font-size: 12px; color: var(--muted); pointer-events: none; }
+  #reply iframe { width: 100%; min-height: 240px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+  /* 赤ペン: 段・項目・表の行をクリックでピン留め → 下のトレイから元の端末へ送る */
+  .pinable { cursor: pointer; }
+  .blk.pinable:hover, .ln.item.pinable:hover, tr.pinable:hover { background: color-mix(in srgb, var(--red) 5%, transparent); }
+  .blk.pinned { border-left-color: var(--red); background: color-mix(in srgb, var(--red) 6%, transparent); }
+  .blk.pinned > .num { background: var(--red); color: #fff; }
+  .ln.item.pinned { border-left-color: var(--red); }
+  tr.pinned > td:first-child { box-shadow: inset 3px 0 0 var(--red); }
+  [data-badge]::before { content: attr(data-badge); display: inline-block; margin-right: .5em; padding: 0 .5em; border-radius: 999px; background: var(--red); color: #fff; font-size: 11px; font-weight: 700; line-height: 1.6; vertical-align: middle; }
+  tr.chosen { background: color-mix(in srgb, var(--red) 8%, transparent); }
+  .pick { margin-left: 8px; font: inherit; font-size: 11px; padding: 0 6px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--fg); cursor: pointer; }
+  .pick.on { background: var(--red); border-color: var(--red); color: #fff; }
+  #tray { position: sticky; bottom: 0; max-width: var(--measure); margin-top: 16px; display: grid; gap: 8px; font-size: 13px; background: var(--panel); border: 1px solid var(--line); border-top: 3px solid var(--red); border-radius: 10px; padding: 10px 14px; box-shadow: 0 -6px 18px rgb(0 0 0 / .12); }
+  #tray[hidden] { display: none; }
+  .pin { display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(0, 1.2fr) auto; gap: 8px; align-items: center; }
+  .pin b { color: var(--red); white-space: nowrap; }
+  .pin .q { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #tray input, #tray textarea { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; width: 100%; }
+  #tray textarea { resize: vertical; }
+  #tray .row { display: flex; gap: 8px; align-items: center; }
+  #akmsg { flex: 1; color: var(--muted); }
+  #tray button { font: inherit; color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 2px 10px; cursor: pointer; }
+  #tray #send { background: var(--red); border-color: var(--red); color: #fff; }
+  #tray button:disabled { opacity: .35; cursor: default; }
+  #sent { color: var(--green); }
+  .pin > span:empty { display: none; }
+  @media (max-width: 599px) {
+    main { padding: 10px 10px 0; }
+    #bar { gap: 6px; font-size: 12px; margin-bottom: 12px; }
+    #bar button { padding: 0 6px; }
+    #chips { margin: -4px 0 10px; }
+    .chip { padding: 0 8px; }
+    #bar .lbl { display: none; }
+    #reply { font-size: 15px; }
+    #reply th, #reply td { white-space: nowrap; padding: 4px 8px; } /* 1 字ずつ折れるより .tbl 内の横スクロールを選ぶ */
+    .blk { grid-template-columns: 2em 1fr; gap: 0 8px; padding-left: 6px; }
+    .num { width: 1.8em; height: 1.8em; font-size: 14px; }
+    #tray { padding: 8px 10px; border-radius: 10px 10px 0 0; margin-top: 10px; }
+    /* ピン行: 錨 + 引用 + × を 1 行、ひとこと欄は下に全幅 */
+    .pin { grid-template-columns: auto minmax(0, 1fr) auto; row-gap: 4px; }
+    .pin input { grid-column: 1 / -1; grid-row: 2; }
+  }
+  .foot { margin-top: 20px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 12px; line-height: 1.6; color: var(--muted); }
+</style>
+</head>
+<body>
+<script>
+// 描画前に列の開閉を決める (ちらつき防止)。狭い幅 (< 700px) は畳む、広い幅は localStorage "rmx.proj" の選択 (既定は開く)。幅が変わった時も module 側がこれを呼ぶ
+function applyProjDefault() {
+  let c = matchMedia("(max-width: 699px)").matches;
+  if (!c) try { c = localStorage.getItem("rmx.proj") === "closed"; } catch {}
+  document.body.classList.toggle("proj-closed", c);
+}
+applyProjDefault();
+try { document.body.classList.toggle("chat-closed", localStorage.getItem("rmx.chat.open") === "0"); } catch {} // チャット欄の開閉 (既定は開)
+</script>
+<aside id="proj">
+  <button id="ptoggle" title="プロジェクト列を開く / 畳む">☰</button>
+  <nav id="plist"></nav>
+</aside>
+<main>
+  <div id="bar">
+    <span id="filter"></span><span id="stamp"></span><span id="sent"></span>
+    <button id="prev">◀<span class="lbl"> 前</span></button><span id="pos"></span><button id="next"><span class="lbl">次 </span>▶</button>
+  </div>
+  <nav id="chips"></nav>
+  <article id="reply"></article>
+  <div id="tray" hidden>
+    <div id="pins"></div>
+    <textarea id="free" rows="2" placeholder="全体へのひとこと (任意)"></textarea>
+    <div class="row"><span id="akmsg"></span><button id="copy">コピー</button><button id="send">送信</button></div>
+  </div>
+</main>
+<aside id="chat">
+  <div id="chead"><button id="ctoggle" title="チャット欄を開く / 畳む">✎</button><span id="cto"></span></div>
+  <div id="cwhy"></div>
+  <nav id="cchips"></nav>
+  <div id="sug" hidden></div>
+  <div id="cform"><textarea id="ctext" rows="3" maxlength="4000" placeholder="端末へ送る (⌘+Enter)"></textarea><div id="cact"><button class="q" data-t="ok" title="ok を送る (1)">ok<sup>1</sup></button><button class="q" data-t="continue" title="continue を送る (2)">cont<sup>2</sup></button><button class="q" data-t="A" title="A を送る (3)">A<sup>3</sup></button><button class="q" data-t="B" title="B を送る (4)">B<sup>4</sup></button><button class="q" data-t="C" title="C を送る (5)">C<sup>5</sup></button><button class="q" data-t="land" title="land を送る (6)">land<sup>6</sup></button><button class="q" data-t="/compact" title="/compact を送る">/compact</button><button class="q" data-t="/exit" title="/exit を送る">/exit</button><button id="csend">送信</button></div></div>
+  <div id="cmsg"></div>
+  <div id="tstat"></div>
+</aside>
+<div id="mmzoom" hidden><button title="閉じる (Esc)">×</button><span>ホイール / ピンチ = 拡大縮小 · ドラッグ = 移動 · ダブルクリック = 全体</span></div>
+<script src="https://cdn.jsdelivr.net/npm/marked@14.1.2/lib/marked.umd.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.4.16/dist/purify.min.js"></script>
+<script type="module">
+import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs";
+// 図の配色はページの CSS 変数から作る (読むのは起動時 1 回。途中の dark/light 切替では描き直さない)
+// ponytail: mix は "#rrggbb" だけ読む。上限 = :root の色トークンを 6 桁 hex で書いている間
+const css = getComputedStyle(document.documentElement);
+const [bg, panel, fg, muted, line, yellow] = ["--bg", "--panel", "--fg", "--muted", "--line", "--yellow"].map((n) => css.getPropertyValue(n).trim());
+const rgb = (h) => h.slice(1).match(/../g).map((x) => parseInt(x, 16));
+const mix = (a, b, t) => "#" + rgb(a).map((v, i) => Math.round(v + (rgb(b)[i] - v) * t).toString(16).padStart(2, "0")).join("");
+const border = mix(line, fg, 0.3), edge = mix(muted, bg, 0.2), soft = mix(bg, fg, 0.035);
+mermaid.initialize({
+  startOnLoad: false,
+  theme: "base",
+  flowchart: { curve: "basis", padding: 14 },
+  themeVariables: {
+    darkMode: matchMedia("(prefers-color-scheme: dark)").matches,
+    fontFamily: getComputedStyle(document.body).fontFamily, fontSize: "17px",
+    background: bg, textColor: fg, titleColor: fg,
+    primaryColor: panel, primaryTextColor: fg, primaryBorderColor: border, secondaryColor: soft, tertiaryColor: soft,
+    mainBkg: panel, nodeBorder: border, nodeTextColor: fg, lineColor: edge, edgeLabelBackground: bg,
+    clusterBkg: soft, clusterBorder: line,
+    actorBkg: panel, actorBorder: border, actorTextColor: fg, actorLineColor: line, signalColor: edge, signalTextColor: fg,
+    labelBoxBkgColor: panel, labelBoxBorderColor: border, labelTextColor: fg, loopTextColor: fg,
+    noteBkgColor: mix(bg, yellow, 0.14), noteBorderColor: mix(line, yellow, 0.45), noteTextColor: fg,
+    activationBkgColor: soft, activationBorderColor: border, sequenceNumberColor: bg,
+    stateBkg: panel, stateBorder: border, stateLabelColor: fg, transitionColor: edge, transitionLabelColor: fg,
+    compositeBackground: soft, compositeTitleBackground: panel, altBackground: soft, specialStateColor: muted, innerEndBackground: muted,
+  },
+});
+
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+
+// 返事中の絶対パス → server の GET /file?p=…。拡張子は server.ts の FILE_EXT と揃える (root の最終判定は server)
+const FILE_EXT = "png|jpe?g|gif|webp|svg|mp4|mov|webm|m4a|mp3|wav|html?|pdf|md|txt|json";
+const IS_ROOT = /^\/(Users|private|tmp|var)\//;
+const MEDIA = [["img", /\.(png|jpe?g|gif|webp|svg)$/i], ["video", /\.(mp4|mov|webm)$/i], ["audio", /\.(m4a|mp3|wav)$/i]];
+// 生の絶対パス: 直前が語・"/"・`](`・< " ' = (markdown リンク/画像や HTML 属性の中) なら置換しない。末尾の "." は句点として外す
+const RAWPATH = new RegExp(`(?<![\\w/<"'=]|\\]\\()/(?:Users|private|tmp|var)/[^\\s)\\]"'<>]*\\.(?:${FILE_EXT})(?![\\w-]|\\.\\w)`, "gi");
+const fileURL = (p) => `/file?p=${encodeURIComponent(p)}`;
+const mdText = (s) => s.replace(/[[\]\\*_]/g, "\\$&");
+// 1 行の生パスを [basename](/file?p=…) に置き換え、画像・動画・音声のパスを media に集める。code span の中は触らない
+function linkPaths(t) {
+  const media = [];
+  const md = t.split(/(`[^`]*`)/).map((s, i) => i % 2 ? s : s.replace(RAWPATH, (p) => {
+    if (MEDIA.some(([, re]) => re.test(p))) media.push(p);
+    return `[${mdText(p.split("/").pop())}](${fileURL(p)})`;
+  })).join("");
+  return { md, media };
+}
+// 同じ行のメディアは 1 つの .media に入れる (2 つ以上なら CSS で横並び)
+function mediaHTML(paths) {
+  const one = (p) => {
+    const kind = MEDIA.find(([, re]) => re.test(p))?.[0];
+    const u = esc(fileURL(p));
+    if (kind === "img") return `<img src="${u}" loading="lazy" title="クリックで拡大">`; // 拡大は zoomImage (mermaid と同じ全画面)
+    if (kind === "video") return `<video controls preload="metadata" src="${u}"></video>`;
+    return `<audio controls src="${u}"></audio>`;
+  };
+  return `<div class="media">${paths.map(one).join("")}</div>`;
+}
+
+// ```html は sandbox iframe、```mermaid は図、他は通常のコード
+// markdown 内の生 HTML は DOMPurify を通す (<img> は残し、onerror / script / iframe は落とす)。
+// 返事が web ページ等の外部文を引いた時に、その HTML が viewer と同じ origin で /send (端末へのキー入力) を叩けないように
+marked.use({
+  // markdown リンク・画像の href が絶対パスなら /file 経由にする (renderer より前に token を書き換える)
+  walkTokens(t) { if ((t.type === "link" || t.type === "image") && IS_ROOT.test(t.href)) t.href = fileURL(t.href); },
+  renderer: {
+    html({ text }) { return DOMPurify.sanitize(text); },
+    // http(s) と /file は新タブ: Orca のフローティングブラウザの viewer から離れないように。他は既定の描画
+    // それ以外のスキーム (javascript: 等) は文字だけにする: 返事に混ざった外部文のリンクから /send を叩かせない。href は esc して文字参照でのすり抜けも止める
+    link({ href, title, tokens }) {
+      const text = this.parser.parseInline(tokens);
+      if (/^[a-z][\w+.-]*:/i.test(href) && !/^(https?|mailto):/i.test(href)) return text;
+      const tab = /^(https?:\/\/|\/file\?)/i.test(href) ? ` target="_blank" rel="noopener"` : "";
+      return `<a href="${esc(href)}"${title ? ` title="${esc(title)}"` : ""}${tab}>${text}</a>`;
+    },
+    code({ text, lang }) {
+      if (lang === "mermaid") return `<pre class="mermaid">${esc(text)}</pre>`;
+      if (lang === "html") return `<iframe sandbox="allow-scripts" srcdoc="${esc(text)}"></iframe>`;
+      return `<div class="cp"><pre><code${lang ? ` class="language-${esc(lang)}"` : ""}>${esc(text)}</code></pre><button class="mmzoom cpbtn" title="コピー">⧉</button></div>`;
+    },
+  },
+});
+
+// Low-Load の型を固定の置き場所へ写す。行単位で読み、フェンスと表だけ marked に丸ごと渡す。
+// ponytail: 認識するのは 行頭 "N. " の段 / ⅰ〜 の項目 / 🔴🟡🟢 / 表 / ``` / 見出し / 検証: DECIDE: だけ。上限 = Low-Load 型の返事。
+// それ以外の markdown (- 箇条書き・引用・4 スペース code) は 1 行ずつ inline で描き、字下げは幅で表す。
+const ROMAN = /^[ⅰ-ⅿ]/;
+const PRI = [["🔴", "red"], ["🟡", "yellow"], ["🟢", "green"]];
+function renderLowLoad(md) {
+  const lines = md.replace(/\r\n?/g, "\n").split("\n");
+  const blocks = [];
+  const foot = [];
+  let cur = null;
+  const open = (num) => { cur = { num, html: [], pri: new Set() }; blocks.push(cur); };
+  const push = (h) => { if (!cur) open(null); cur.html.push(h); };
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i];
+    const t = raw.trim();
+    const ind = raw.length - raw.trimStart().length;
+    if (/^(```|~~~)/.test(t)) {
+      const fence = t.slice(0, 3);
+      const chunk = [t];
+      while (++i < lines.length && !lines[i].trim().startsWith(fence)) chunk.push(lines[i].slice(Math.min(ind, lines[i].length - lines[i].trimStart().length)));
+      chunk.push(fence);
+      push(marked.parse(chunk.join("\n")));
+      continue;
+    }
+    if (t.startsWith("|")) {
+      const chunk = [t];
+      while (i + 1 < lines.length && lines[i + 1].trim().startsWith("|")) chunk.push(lines[++i].trim());
+      push(`<div class="tbl">${marked.parse(chunk.join("\n")).replace(/[■□]{2,}/g, (b) => `<span class="bar5">${b}</span>`)}</div>`);
+      continue;
+    }
+    const { md: lt, media } = linkPaths(t);
+    if (/^(検証|DECIDE)\s*[:：]/.test(t)) { foot.push(`<div>${marked.parseInline(lt)}</div>`); continue; }
+    if (!t) { if (cur && cur.html.length) cur.html.push('<div class="gap"></div>'); continue; }
+    const m = ind === 0 && raw.match(/^(\d+)\.\s+(.*)$/);
+    const h = !m && ind === 0 && /^#{1,6}\s/.test(t);
+    // パスだけの行 (「ⅱ /b.png」等) が画像の直後に続いたら、行を出さずに前の格子へ足す (画像 1・2・3 を 1 つの格子に)
+    const pathOnly = media.length && !t.replace(RAWPATH, "").replace(/^[ⅰ-ⅿ]/, "").trim();
+    const last = cur?.html.at(-1) ?? "";
+    if (!m && !h && pathOnly && last.startsWith('<div class="media">')) { cur.html[cur.html.length - 1] = last.replace(/<\/div>$/, mediaHTML(media).slice('<div class="media">'.length)); continue; }
+    if (m) { open(m[1]); if (m[2].trim()) push(`<div class="ln head">${marked.parseInline(linkPaths(m[2]).md)}</div>`); }
+    else if (h) push(marked.parse(lt));
+    else push(`<div class="ln${ROMAN.test(t) ? " item" : ""}" style="--ind:${ind}">${marked.parseInline(lt)}</div>`);
+    if (!h && media.length) push(mediaHTML(media)); // .ln 行の直後に出す。見出し・表・フェンスは対象外
+    const lead = m ? m[2].trim() : t; // "1. 🔴 …" の段見出しも拾う
+    for (const [e, c] of PRI) if (lead.startsWith(e)) cur.pri.add(c);
+  }
+  const body = blocks.map((b) => {
+    const pri = PRI.map(([, c]) => c).find((c) => b.pri.has(c)); // 赤 > 黄 > 緑
+    return `<section class="blk${b.num ? "" : " nonum"}${pri ? " pri-" + pri : ""}"><div class="num">${esc(b.num ?? "")}</div><div class="body">${b.html.join("")}</div></section>`;
+  }).join("");
+  return body + (foot.length ? `<div class="foot">${foot.join("")}</div>` : "");
+}
+
+async function show(md, entry) {
+  const el = document.getElementById("reply");
+  el.innerHTML = md ? renderLowLoad(md) : "";
+  const time = entry?.ts ? new Date(entry.ts).toLocaleTimeString("ja-JP", { hour12: false }) : "";
+  document.getElementById("stamp").textContent = entry ? agentTag(entry) + [entry.repo || "?", time].filter(Boolean).join(" · ") : "";
+  cur = entry;
+  renderChat();
+  document.getElementById("sent").textContent = "";
+  document.getElementById("akmsg").textContent = "";
+  decorate(el);
+  refresh();
+  try { await mermaid.run({ nodes: el.querySelectorAll("pre.mermaid") }); }
+  finally { decorateDiagrams(el); applyMarks(); } // 図のノードは描画後にしか無い。同じ返事の描き直しでもピンの赤枠を戻す
+}
+
+// 履歴: list[0] が最新。following = 最新を見ている間は新着で自動的に差し替える。
+// all = /history の全件 (プロジェクト列のため常に絞らずに取る)、list = そのうち選択中プロジェクト (?repo=) かつセッション (?s=) の分。
+// ← → と追従は list の中だけで動く。
+let all = [], list = [], idx = 0, following = true, shownName = null;
+const params = new URLSearchParams(location.search);
+let SESS = params.get("s") || ""; // "" = 最新 (最後に返事したセッションを追う)
+let REPO = params.get("repo") || ""; // "" = すべて
+// モード: main = 本体の返事だけ / agents = subagent の返事 (entry.agent あり) だけ。混ぜない (2026-09-29 user)。
+// inRepo で落とす = 一覧・← →・追従・chip・送り先リスト・プロジェクト列がモードの entry だけを見る。?mode=agents に残す (localStorage には持たない = 開けば main)
+let AGENTS = params.get("mode") === "agents";
+const inMode = (e) => !!e.agent === AGENTS;
+const agentTag = (e) => (e?.agent ? `🤖 ${String(e.agent.type ?? "").split(":").pop() || "agent"}: ` : ""); // "claude-code-harness:worker" → "🤖 worker: "
+// ponytail: repo の照合は cwd basename の完全一致 (大文字小文字は無視) だけ。上限 = 1 repo ずつ切り替えて見る用途。
+const inRepo = (es) => es.filter((e) => inMode(e) && (!REPO || e.repo.toLowerCase() === REPO.toLowerCase()));
+// repo 名 → 決定的な色 (文字列 hash → hue)。照合と同じく大文字小文字は無視
+const repoColor = (r) => { let h = 0; for (const c of String(r ?? "").toLowerCase()) h = (h * 31 + c.codePointAt(0)) >>> 0; return `hsl(${h % 360} 55% 55%)`; };
+const rcDot = '<i class="rc">●</i>';
+const inSess = (es) => (SESS ? es.filter((e) => e.session === SESS) : es);
+const scope = () => inSess(inRepo(all));
+const setParam = (k, v) => { const u = new URL(location.href); if (v) u.searchParams.set(k, v); else u.searchParams.delete(k); history.replaceState(null, "", u); };
+function renderBar() {
+  document.getElementById("pos").textContent = list.length ? `${list.length - idx} / ${list.length}` : "";
+  document.getElementById("prev").disabled = idx >= list.length - 1;
+  document.getElementById("next").disabled = idx <= 0;
+}
+async function showIdx(i) {
+  idx = Math.max(0, Math.min(i, list.length - 1));
+  following = idx === 0;
+  const e = list[idx];
+  renderBar();
+  if (!e || e.name === shownName) return;
+  shownName = e.name;
+  await show(await (await fetch(`/history/${encodeURIComponent(e.name)}`, { cache: "no-store" })).text(), e);
+}
+const older = () => showIdx(idx + 1);
+const newer = () => showIdx(idx - 1);
+document.getElementById("prev").onclick = older;
+document.getElementById("next").onclick = newer;
+// 図の全画面: 図の複製を画面いっぱいに置き、viewBox を動かして拡大・移動する (CSS transform より拡大しても線がぼやけない)。
+// 表示域と viewBox の縦横比を常に揃えるので preserveAspectRatio="none" で歪まない。
+const zoom = document.getElementById("mmzoom");
+let vb = null, box = null, drag = null;
+const setVB = () => zoom.querySelector("svg")?.setAttribute("viewBox", `${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
+function fitZoom() {
+  const W = zoom.clientWidth, H = zoom.clientHeight, pad = 1.08;
+  const s = Math.max((box.width * pad) / W, (box.height * pad) / H); // 図の単位 / 画面 px
+  vb = { w: W * s, h: H * s };
+  vb.x = box.x + box.width / 2 - vb.w / 2;
+  vb.y = box.y + box.height / 2 - vb.h / 2;
+  setVB();
+}
+function openZoom(svg) {
+  const c = svg.cloneNode(true); // id も複製のまま: mermaid の <style> と矢印 marker が id 付きで参照するため
+  c.removeAttribute("style");
+  c.removeAttribute("width");
+  c.removeAttribute("height");
+  c.setAttribute("preserveAspectRatio", "none");
+  c.querySelectorAll(".mmzoom").forEach((b) => b.remove());
+  zoom.querySelector("svg")?.remove();
+  zoom.prepend(c);
+  box = svg.viewBox.baseVal;
+  zoom.hidden = false;
+  fitZoom();
+}
+// 画像 (png 等) は <svg><image> に包んで同じ全画面に載せる (viewBox の拡大・移動をそのまま使う)
+function zoomImage(im) {
+  const w = im.naturalWidth, h = im.naturalHeight;
+  if (!w || !h) return;
+  const ns = "http://www.w3.org/2000/svg";
+  const s = document.createElementNS(ns, "svg");
+  s.setAttribute("viewBox", `0 0 ${w} ${h}`);
+  const i = document.createElementNS(ns, "image");
+  i.setAttribute("href", im.src); i.setAttribute("width", w); i.setAttribute("height", h);
+  s.append(i);
+  openZoom(s);
+}
+const closeZoom = () => { zoom.hidden = true; zoom.querySelector("svg")?.remove(); };
+zoom.querySelector("button").onclick = closeZoom;
+zoom.addEventListener("wheel", (ev) => {
+  ev.preventDefault(); // trackpad のピンチは ctrl+wheel として届く
+  const k = Math.exp(-ev.deltaY * (ev.ctrlKey ? 0.01 : 0.0015)); // > 1 で拡大
+  const r = zoom.getBoundingClientRect();
+  const px = (ev.clientX - r.left) / r.width, py = (ev.clientY - r.top) / r.height; // カーソル位置 (0..1) を動かさずに拡大縮小
+  const cx = vb.x + px * vb.w, cy = vb.y + py * vb.h;
+  vb.w /= k; vb.h /= k;
+  vb.x = cx - px * vb.w; vb.y = cy - py * vb.h;
+  setVB();
+}, { passive: false });
+zoom.addEventListener("pointerdown", (ev) => {
+  if (ev.target.closest("button")) return;
+  drag = { x: ev.clientX, y: ev.clientY };
+  zoom.setPointerCapture(ev.pointerId);
+  zoom.classList.add("drag");
+});
+zoom.addEventListener("pointermove", (ev) => {
+  if (!drag) return;
+  const s = vb.w / zoom.clientWidth;
+  vb.x -= (ev.clientX - drag.x) * s; vb.y -= (ev.clientY - drag.y) * s;
+  drag = { x: ev.clientX, y: ev.clientY };
+  setVB();
+});
+const endDrag = () => { drag = null; zoom.classList.remove("drag"); };
+zoom.addEventListener("pointerup", endDrag);
+zoom.addEventListener("pointercancel", endDrag);
+zoom.addEventListener("dblclick", (ev) => { if (!ev.target.closest("button")) fitZoom(); });
+addEventListener("resize", () => { if (!zoom.hidden) fitZoom(); }); // 縦横比が変わるので合わせ直す
+
+// ← = 前 (古い) / → = 次 (新しい)。修飾キー無しだけ拾い、赤ペンの入力欄にいる間は拾わない。全画面の図を開いている間は Esc で閉じるだけ。
+document.addEventListener("keydown", (ev) => {
+  if (!zoom.hidden) { if (ev.key === "Escape") closeZoom(); else if (ev.key.startsWith("Arrow")) ev.preventDefault(); return; }
+  if (ev.key === "Enter" && (ev.metaKey || ev.ctrlKey)) { ev.preventDefault(); return document.getElementById(ev.target === ctext ? "csend" : "send").click(); } // Cmd+Enter = 送信 (入力欄の中でも。チャット欄にいる時はチャット欄の送信)
+  if (ev.altKey || ev.ctrlKey || ev.metaKey || ev.shiftKey) return;
+  const qb = /^[1-6]$/.test(ev.key) && document.querySelectorAll("#cact .q")[+ev.key - 1];
+  if (qb && (ev.target === ctext ? !ctext.value : !ev.target.closest?.("input, textarea, [contenteditable]")) && sug.hidden) { ev.preventDefault(); return qb.click(); } // 数字 1〜5 = クイック送信 (欄の外、または空のチャット欄)
+  // ↑↓ = 送り先 chip (= 端末) を上下に移る。欄の外、または空のチャット欄で (skill 候補が出ている時は候補の移動が先)
+  if ((ev.key === "ArrowUp" || ev.key === "ArrowDown") && sug.hidden && (ev.target === ctext ? !ctext.value : !ev.target.closest?.("input, textarea, [contenteditable]"))) {
+    const cs = [...cchips.querySelectorAll(".chip")], i = cs.findIndex((c) => c.classList.contains("on")), n = cs[i + (ev.key === "ArrowDown" ? 1 : -1)];
+    if (n) { ev.preventDefault(); n.click(); }
+    return;
+  }
+  if (ev.target.closest?.("input, textarea, [contenteditable]")) return;
+  if (ev.key === "ArrowLeft") { ev.preventDefault(); older(); }
+  else if (ev.key === "ArrowRight") { ev.preventDefault(); newer(); }
+});
+
+// 赤ペン: 段 (N.) / 項目 (ⅰ〜) / 表の行をクリックでピン留めし、ひとことを添えて返事を出した Orca 端末へ送る。
+// 下書きは表示中の返事ごとに drafts (name → 下書き) に持つ。← → で行き来しても消えない。
+// ponytail: 下書きはメモリだけ (リロードで消える)。上限 = 1 タブで書いてすぐ送る用途。
+const drafts = new Map();
+let pageVer = null; // 読み込んだ index.html の版 (/history の x-rmx-page)
+let cur = null; // 表示中の履歴 entry。latest.html だけ映している間は null (送信不可・コピーのみ)
+const curName = () => cur?.name ?? "";
+const draftOf = (n) => { if (!drafts.has(n)) drafts.set(n, { pins: new Map(), choice: null, free: "" }); return drafts.get(n); };
+const hasDraft = (n) => { const d = drafts.get(n ?? ""); return !!d && (d.pins.size > 0 || !!d.choice || !!d.free.trim()); };
+const cut = (s, n) => { const t = s.replace(/\s+/g, " ").trim(); return t.length > n ? t.slice(0, n) + "…" : t; };
+const textOf = (el) => {
+  const c = el.cloneNode(true);
+  c.querySelectorAll(".pick").forEach((b) => b.remove());
+  return el.tagName === "TR" ? [...c.cells].map((td) => td.textContent.trim()).join(" | ") : (c.querySelector(".body") ?? c).textContent;
+};
+const hhmm = (d) => d.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit", hour12: false });
+
+// 描画後の DOM に錨を付ける: data-anchor = 表示名 (2 / 2-ⅱ / 表 A)、data-pin = 返事内の通し番号 (本文は不変なので番号で同定できる)
+function decorate(el) {
+  el.querySelectorAll(".blk:not(.nonum)").forEach((b) => { b.dataset.anchor = b.querySelector(".num").textContent; });
+  el.querySelectorAll(".ln.item").forEach((it) => {
+    const n = it.closest(".blk:not(.nonum)")?.querySelector(".num").textContent;
+    const r = it.textContent.trim()[0];
+    it.dataset.anchor = n ? `${n}-${r}` : r;
+  });
+  el.querySelectorAll("table tbody tr").forEach((tr) => {
+    const first = tr.cells[0]?.textContent.trim() ?? "";
+    tr.dataset.anchor = `表 ${cut(first, 12)}`;
+    if (/^[A-E]$/.test(first)) tr.cells[0].insertAdjacentHTML("beforeend", `<button class="pick" data-pick="${first}">これにする</button>`); // Low-Load の案表
+  });
+  el.querySelectorAll("[data-anchor]").forEach((x, i) => { x.dataset.pin = String(i); x.classList.add("pinable"); });
+}
+
+// 図のノード (flowchart / state のノード、sequence の登場人物と矢印の文言) に錨を付ける。
+// data-pin = "図:<ラベル>#<返事内で同じラベルが何回目か>": 同じ返事を描き直しても同じキーになる (登場人物は上下 2 回出るので #0 / #1)
+function decorateDiagrams(el) {
+  const seen = new Map();
+  el.querySelectorAll("pre.mermaid").forEach((pre) => {
+    const svg = pre.querySelector("svg");
+    if (!svg) return; // 描画に失敗した図
+    if (!pre.querySelector(".mmzoom")) pre.insertAdjacentHTML("beforeend", '<button class="mmzoom" title="全画面で見る">⤢</button>');
+    svg.querySelectorAll("g.node, text.actor, text.messageText").forEach((n) => {
+      const label = n.textContent.replace(/\s+/g, " ").trim();
+      if (!label) return; // 開始・終了の丸
+      const x = n.matches("text.actor") && n.parentNode.querySelector("rect.actor") ? n.parentNode : n; // 登場人物は箱ごと
+      const i = seen.get(label) ?? 0;
+      seen.set(label, i + 1);
+      x.dataset.anchor = `図: ${cut(label, 20)}`;
+      x.dataset.pin = `図:${label}#${i}`;
+      x.classList.add("pinable");
+    });
+  });
+}
+
+function applyMarks() {
+  const d = drafts.get(curName());
+  document.querySelectorAll("#reply [data-pin]").forEach((x) => {
+    const on = !!d?.pins.has(x.dataset.pin);
+    x.classList.toggle("pinned", on);
+    if (x.classList.contains("blk") || x instanceof SVGElement) return; // 段は丸番号、図のノードは赤枠 (CSS) だけ
+    const host = x.tagName === "TR" ? x.cells[0] : x;
+    if (on) host.dataset.badge = x.dataset.anchor; else delete host.dataset.badge;
+  });
+  document.querySelectorAll("#reply .pick").forEach((b) => {
+    const on = d?.choice === b.dataset.pick;
+    b.classList.toggle("on", on);
+    b.textContent = on ? "採用" : "これにする";
+    b.closest("tr").classList.toggle("chosen", on);
+  });
+}
+
+function renderTray() {
+  const d = drafts.get(curName());
+  const tray = document.getElementById("tray");
+  tray.hidden = !d || (!d.pins.size && !d.choice);
+  if (tray.hidden) return;
+  document.getElementById("pins").innerHTML =
+    (d.choice ? `<div class="pin"><b>採用</b><span class="q">${esc(d.choice)}</span><span></span><button data-x="" title="外す">×</button></div>` : "") +
+    [...d.pins].map(([k, p]) => `<div class="pin" data-k="${esc(k)}"><b>${esc(p.anchor)}</b><span class="q">「${esc(p.quote)}」</span><input value="${esc(p.comment)}" placeholder="ひとこと"><button data-x="${esc(k)}" title="外す">×</button></div>`).join("");
+  document.getElementById("free").value = d.free;
+  const send = document.getElementById("send");
+  send.disabled = !cur?.terminal;
+  send.title = cur?.terminal ? "返事を出した端末へ打ち込む" : "この返事は Orca 端末の外で出たので送れません。コピーして貼ってください";
+}
+const refresh = () => { applyMarks(); renderTray(); };
+
+function message(d) {
+  const head = cur?.ts ? `【赤ペン】(${hhmm(new Date(cur.ts))} の返事へ)` : "【赤ペン】";
+  const pins = [...d.pins.values()].map((p) => `${p.anchor}「${p.quote}」${p.comment.trim() ? `→ ${p.comment.trim()}` : ""}`);
+  return [head, d.choice && `採用: ${d.choice}`, ...pins, d.free.trim()].filter(Boolean).join("\n");
+}
+
+document.getElementById("reply").addEventListener("click", (ev) => {
+  const im = ev.target.closest(".media img");
+  if (im) return zoomImage(im); // 画像は mermaid と同じ全画面 (ホイール拡大・ドラッグ・Esc)
+  const cb = ev.target.closest(".cpbtn");
+  if (cb) { navigator.clipboard.writeText(cb.previousElementSibling.textContent.replace(/\n$/, "")); cb.textContent = "✓"; setTimeout(() => (cb.textContent = "⧉"), 1200); return; }
+  if (ev.target.closest("a, input, textarea, iframe, .media")) return; // 画像・動画・音声の操作でピンを付けない
+  const d = draftOf(curName());
+  const pick = ev.target.closest(".pick");
+  if (pick) { d.choice = d.choice === pick.dataset.pick ? null : pick.dataset.pick; return refresh(); }
+  const mm = ev.target.closest("pre.mermaid");
+  if (mm?.querySelector("svg") && (ev.target.closest(".mmzoom") || !ev.target.closest("svg [data-pin]"))) return openZoom(mm.querySelector("svg")); // 図の空き地 / ⤢
+  if (String(getSelection())) return; // 文字を選択している最中はピンにしない
+  const t = ev.target.closest("[data-pin]");
+  if (!t) return;
+  const k = t.dataset.pin;
+  if (d.pins.has(k)) d.pins.delete(k);
+  else d.pins.set(k, { anchor: t.dataset.anchor, quote: cut(textOf(t), 30), comment: "" });
+  refresh();
+  document.querySelector(`#pins [data-k="${CSS.escape(k)}"] input`)?.focus();
+});
+document.getElementById("pins").addEventListener("input", (ev) => {
+  const k = ev.target.closest("[data-k]")?.dataset.k;
+  const p = k != null && drafts.get(curName())?.pins.get(k);
+  if (p) p.comment = ev.target.value;
+});
+// Esc (ひとこと欄): 空ならそのピンを外す / 書きかけなら欄を抜けるだけ (打った文字は消さない)
+document.getElementById("pins").addEventListener("keydown", (ev) => {
+  if (ev.key !== "Escape" || ev.target.tagName !== "INPUT") return;
+  ev.preventDefault();
+  if (ev.target.value.trim()) return ev.target.blur();
+  draftOf(curName()).pins.delete(ev.target.closest("[data-k]").dataset.k);
+  refresh();
+});
+document.getElementById("pins").addEventListener("click", (ev) => {
+  const x = ev.target.closest("[data-x]");
+  if (!x) return;
+  const d = draftOf(curName());
+  if (x.dataset.x === "") d.choice = null; else d.pins.delete(x.dataset.x);
+  refresh();
+});
+document.getElementById("free").addEventListener("input", (ev) => { draftOf(curName()).free = ev.target.value; });
+document.getElementById("copy").onclick = async () => {
+  const say = document.getElementById("akmsg");
+  try { await navigator.clipboard.writeText(message(draftOf(curName()))); say.textContent = "コピーしました"; }
+  catch (e) { say.textContent = `コピーできませんでした: ${e.message ?? e}`; }
+};
+document.getElementById("send").onclick = async () => {
+  const say = document.getElementById("akmsg");
+  const n = curName();
+  if (!cur?.terminal || !drafts.has(n)) return;
+  say.textContent = "送信中…";
+  try {
+    const r = await fetch("/send", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: n, text: message(drafts.get(n)) }) });
+    if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+    drafts.delete(n);
+    say.textContent = "";
+    document.getElementById("sent").textContent = `送信済 ${hhmm(new Date())}`;
+    refresh();
+  } catch (e) { say.textContent = `送れませんでした: ${e.message ?? e}`; }
+};
+
+// チャット欄: ピン無しで自由文を送る。送り先は赤ペンと同じ (表示中 entry の name → server がその entry の terminal へ)。
+// focus:false = 端末タブへ切り替えず viewer に留まる。送信済みの履歴は持たない (2026-09-29 user: 再入力の用途が薄い)。
+const chat = document.getElementById("chat"), ctext = document.getElementById("ctext"), csend = document.getElementById("csend");
+let chipLabels = new Map(), chatBusy = false;
+// 送り先の固定: プロジェクト列の選択 (repo 小文字、"すべて" は "") → session key を localStorage "rmx.chat.pin" に。無ければ追従 (表示中の返事の端末)。
+// 固定中に送る entry = /history 一覧 (all、新しい順) でそのセッションの最新。表示中の返事が切り替わっても変わらない。
+const cchips = document.getElementById("cchips");
+let chatPins = {}, cchipsHtml = null, chipEntries = new Map();
+try { chatPins = JSON.parse(localStorage.getItem("rmx.chat.pin")) || {}; } catch {}
+const chatPin = () => chatPins[REPO.toLowerCase()] ?? "";
+const chatTo = () => { const p = chatPin(); return p ? all.find((e) => e.session === p) ?? null : cur; };
+function renderChat() {
+  const pin = chatPin(), to = chatTo();
+  const lbl = to ? chipLabels.get(to.session) ?? `${to.repo || "?"} · ${to.session}` : pin;
+  document.getElementById("cto").textContent = lbl ? `${pin ? "📌 " : ""}→ ${lbl}` : "→ (送り先なし)";
+  const why = !to ? (pin ? "固定先のセッションの返事が一覧に無い (送れない)" : "表示中の返事が無い (送れない)")
+    : !to.terminal ? (pin ? "固定先は Orca 外の端末 (送れない)" : "この返事は Orca 外の端末 (送れない)") : "";
+  document.getElementById("cwhy").textContent = why;
+  ctext.disabled = csend.disabled = !!why || chatBusy;
+  document.querySelectorAll("#cact .q").forEach((b) => { b.disabled = csend.disabled; });
+  csend.textContent = chatBusy ? "送信中…" : "送信";
+  // 各行 = 時刻 + 最新返事の冒頭。同じ repo の chip は時刻だけでは見分けられない (2026-09-29 user)
+  const row = (e) => `<time>${esc(hhmm(new Date(e.ts)))}</time><span>${esc(agentTag(e) + (e.head || ""))}</span>`;
+  const shown = [...chipEntries.values()].filter((e) => e.live || showDead || e.session === pin).slice(0, 5);
+  renderTstat(shown.filter((e) => e.live));
+  let html = chipBtn("", !pin, "追従", "表示中の返事の端末へ送る") + shown.map((e) => chipBtn(e.session, e.session === pin, row(e), `送り先をここに固定: ${chipLabels.get(e.session)}`, true, e.repo)).join("");
+  if (pin && !chipLabels.has(pin)) html += chipBtn(pin, true, "固定中 (返事なし)", pin);
+  if (html === cchipsHtml) return; // 毎 poll 描き直すと横スクロール位置が飛ぶ
+  cchipsHtml = html;
+  cchips.innerHTML = html;
+}
+// 端末ごとの待ち状態: title 先頭 ◑◐◓◒ = 作業中 / ✳ = 入力待ち (Claude Code が tab 題名に付ける)。行を押すと chip と同じ (pickChip)
+const tstat = document.getElementById("tstat");
+let tstatHtml = null;
+function renderTstat(list) {
+  const ago = (t) => { const m = Math.max(0, Math.floor((Date.now() - t) / 60000)); return m > 60 ? `${Math.floor(m / 60)} 時間` : `${m} 分`; };
+  const html = list.map((e) => {
+    const c = String(e.title ?? "").trim()[0] ?? "", wait = c === "✳";
+    // 題名の記号は作業中でも付かない時がある (2026-09-29 実機) ので、記号が無ければ最終出力の新しさで見る
+    const st = wait ? "wait" : (c && "◑◐◓◒".includes(c)) || (e.lastOutputAt && Date.now() - e.lastOutputAt < 15000) ? "busy" : "idle";
+    const stTitle = { wait: "入力待ち", busy: "作業中", idle: "静か" }[st];
+    return `<div class="trow${wait ? " wait" : ""}" data-s="${esc(e.session)}" style="--rc:${repoColor(e.repo)}" title="${stTitle} · この端末を送り先にする"><i class="${st}"></i><span>${esc(hhmm(new Date(e.ts)))} ${esc(e.repo || "?")} · ${esc(e.head || "")}</span><time>${e.lastOutputAt ? ago(e.lastOutputAt) : ""}</time></div>`;
+  }).join("");
+  if (html === tstatHtml) return; // chip と同じ: 同じ内容なら書き直さない
+  tstatHtml = html;
+  tstat.innerHTML = html;
+}
+tstat.addEventListener("click", (ev) => { const r = ev.target.closest("[data-s]"); if (r) pickChip(r.dataset.s); });
+cchips.addEventListener("click", (ev) => { const b = ev.target.closest("[data-s]"); if (b) pickChip(b.dataset.s); });
+async function pickChip(s) {
+  if (s) chatPins[REPO.toLowerCase()] = s; else delete chatPins[REPO.toLowerCase()];
+  try { localStorage.setItem("rmx.chat.pin", JSON.stringify(chatPins)); } catch {}
+  // 送り先と表示は同じセッション集合なので、表示もそこへ切り替える (追従 = 最新に戻す)。上の chip を押したのと同じ (2026-09-29 user)
+  SESS = s;
+  setParam("s", SESS);
+  await reselect();
+}
+async function sendText(text, clear) {
+  const to = chatTo(), say = document.getElementById("cmsg");
+  if (!to?.terminal || chatBusy || !text.trim()) return;
+  chatBusy = true;
+  say.textContent = "";
+  renderChat();
+  try {
+    const r = await fetch("/send", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: to.name, text, focus: false }) });
+    if (!r.ok) throw new Error((await r.text()) || String(r.status)); // server の本文 (409 terminal closed: … 等) をそのまま出す
+    if (clear) ctext.value = "";
+  } catch (e) { say.textContent = e.message ?? String(e); }
+  chatBusy = false;
+  renderChat();
+  ctext.focus();
+}
+csend.onclick = () => sendText(ctext.value, true);
+document.getElementById("cact").addEventListener("click", (ev) => { const b = ev.target.closest(".q"); if (b) sendText(b.dataset.t, false); });
+// "/" 補完: 入力が ^/(\S*)$ の間だけ候補 (server /skills) を出す。取得は送り先 (cwd) が変わった時か 60 秒経過で 1 回。
+const sug = document.getElementById("sug");
+let skillList = [], skillCwd = null, skillAt = 0, sugItems = [], sugI = 0;
+async function loadSkills() {
+  const cwd = chatTo()?.cwd ?? "";
+  if (skillCwd === cwd && Date.now() - skillAt < 60000) return;
+  skillCwd = cwd; skillAt = Date.now();
+  try { skillList = await (await fetch("/skills" + (cwd ? "?cwd=" + encodeURIComponent(cwd) : ""))).json(); } catch { skillList = []; }
+  renderSug();
+}
+function renderSug() {
+  const m = ctext.value.match(/^\/(\S*)$/);
+  if (!m) { sugItems = []; sug.hidden = true; return; }
+  const q = m[1].toLowerCase();
+  let hit = skillList.filter((s) => s.name.toLowerCase().startsWith(q));
+  if (!hit.length) hit = skillList.filter((s) => s.name.toLowerCase().includes(q));
+  sugItems = hit.slice(0, 12);
+  sugI = Math.min(sugI, Math.max(sugItems.length - 1, 0));
+  sug.hidden = !sugItems.length;
+  sug.innerHTML = sugItems.map((s, i) => `<div data-i="${i}"${i === sugI ? ' class="on"' : ""}><b>${esc(s.name)}</b><span>${esc(s.desc)}</span></div>`).join("");
+}
+const pickSug = (i) => { ctext.value = `/${sugItems[i].name} `; sugItems = []; sug.hidden = true; ctext.focus(); };
+ctext.addEventListener("input", () => { sugI = 0; loadSkills(); renderSug(); });
+ctext.addEventListener("keydown", (ev) => {
+  if (sug.hidden || ev.metaKey || ev.ctrlKey) return;
+  if (ev.key === "ArrowDown" || ev.key === "ArrowUp") { ev.preventDefault(); sugI = (sugI + (ev.key === "ArrowDown" ? 1 : sugItems.length - 1)) % sugItems.length; renderSug(); }
+  else if (ev.key === "Tab" || ev.key === "Enter") { ev.preventDefault(); pickSug(sugI); }
+  else if (ev.key === "Escape") { ev.preventDefault(); sugItems = []; sug.hidden = true; }
+});
+sug.addEventListener("mousedown", (ev) => { const d = ev.target.closest("[data-i]"); if (d) { ev.preventDefault(); pickSug(+d.dataset.i); } });
+document.getElementById("ctoggle").onclick = () => {
+  const closed = document.body.classList.toggle("chat-closed");
+  try { localStorage.setItem("rmx.chat.open", closed ? "0" : "1"); } catch {}
+};
+
+// セッション chip: 選択中プロジェクトの all (新しい順) で各セッションが最初に現れた entry = そのセッションの最新返事。並びも新しい順。
+// 同じ repo のセッションが 2 つ以上なら HH:MM を添えて見分ける。
+let chipsHtml = null;
+const chipBtn = (key, on, label, title, raw = false, repo = null) => `<button class="chip${on ? " on" : ""}" data-s="${esc(key)}" title="${esc(title)}"${repo === null ? "" : ` style="--rc:${repoColor(repo)}"`}>${raw ? label : esc(label)}</button>`;
+function renderChips() {
+  const seen = new Map();
+  for (const e of inRepo(all)) if (e.session && !seen.has(e.session)) seen.set(e.session, e);
+  const ss = [...seen.values()];
+  const perRepo = new Map();
+  for (const e of ss) perRepo.set(e.repo, (perRepo.get(e.repo) ?? 0) + 1);
+  const chip = (key, label, title) => chipBtn(key, key === SESS, label, title);
+  const base = (e) => (e.repo || "?") + (perRepo.get(e.repo) > 1 && e.ts ? ` ${hhmm(new Date(e.ts))}` : "");
+  const dup = new Map();
+  for (const e of ss) dup.set(base(e), (dup.get(base(e)) ?? 0) + 1);
+  const label = (e) => base(e) + (dup.get(base(e)) > 1 ? ` ·${e.session.slice(-4)}` : ""); // 同じ分に返事した同 repo 同士は鍵の末尾で見分ける
+  chipLabels = new Map(ss.map((e) => [e.session, label(e)]));
+  chipEntries = seen;
+  renderChat();
+  // 既定は live なセッションだけ (終了したものは #pdead で出す)。選択中は live でなくても出す (消えると迷子)
+  const shown = ss.filter((e) => e.live || showDead || e.session === SESS);
+  let html = ss.length || SESS ? chip("", "最新", "最後に返事したセッションを追う") + shown.map((e) => chipBtn(e.session, e.session === SESS, rcDot + esc(label(e)), `${e.repo} / ${e.session}`, true, e.repo)).join("") : "";
+  if (SESS && !seen.has(SESS)) html += chip(SESS, "選択中 (返事なし)", SESS); // 履歴から消えたセッションを URL で指している
+  if (html === chipsHtml) return; // 毎 poll 描き直すと横スクロール位置が飛ぶ
+  chipsHtml = html;
+  const box = document.getElementById("chips");
+  box.innerHTML = html;
+  box.querySelector(".on")?.scrollIntoView({ inline: "nearest", block: "nearest" });
+}
+document.getElementById("chips").addEventListener("click", async (ev) => {
+  const b = ev.target.closest("[data-s]");
+  if (!b) return;
+  SESS = b.dataset.s;
+  setParam("s", SESS);
+  await reselect();
+});
+// chip / プロジェクトを選び直した後: 選択範囲の最新へ。以後その範囲の新着だけ追う
+async function reselect() {
+  renderChips();
+  renderProjects();
+  list = scope();
+  if (!list.length) { idx = 0; shownName = null; renderBar(); await show("", null); return; }
+  await showIdx(0);
+}
+
+// プロジェクト列: all を repo ごとにまとめ、最後に返事した順に 1 行ずつ。先頭の「メイン」= 本体の返事を repo で絞らない。
+// 未読 = そのプロジェクトを最後に選んで見た時より新しい返事がある。lastSeen (repo 小文字 → ts ms) を localStorage "rmx.seen" に持つ。
+const tsOf = (e) => Date.parse(e?.ts ?? "") || 0;
+let lastSeen = null;
+try { lastSeen = JSON.parse(localStorage.getItem("rmx.seen")); } catch {}
+const saveSeen = () => { try { localStorage.setItem("rmx.seen", JSON.stringify(lastSeen)); } catch {} };
+const renderFilter = () => { document.getElementById("filter").innerHTML = REPO ? `[<span class="lbl">repo: </span>${esc(REPO)}]` : ""; };
+let projHtml = null;
+// 終了した repo (live な entry が 1 つも無い = 端末が全部閉じた) は既定で隠す。liveState = /history の x-rmx-live (ok 以外 = 判定不能なので全部出す)
+let liveState = null, showDead = false;
+try { showDead = localStorage.getItem("rmx.proj.dead") === "show"; } catch {}
+function renderProjects() {
+  // latest = 行に出す (モードの entry) / mainLatest = 未読の判定用 (本体の返事だけ、subagent の新着では赤くしない)
+  const latest = new Map(), mainLatest = new Map(), alive = new Set();
+  for (const e of all) {
+    const k = e.repo.toLowerCase();
+    if (!e.agent && !mainLatest.has(k)) mainLatest.set(k, e);
+    if (!inMode(e)) continue;
+    if (!latest.has(k)) latest.set(k, e);
+    if (e.live) alive.add(k);
+  }
+  if (!lastSeen) { lastSeen = Object.fromEntries([...mainLatest].map(([k, e]) => [k, tsOf(e)])); saveSeen(); } // 初回は全部既読から始める
+  const sel = REPO.toLowerCase();
+  if (!AGENTS && mainLatest.has(sel) && tsOf(mainLatest.get(sel)) > (lastSeen[sel] ?? 0)) { lastSeen[sel] = tsOf(mainLatest.get(sel)); saveSeen(); } // main で選んでいる間は既読
+  const judged = liveState === "ok";
+  let unread = false, hidden = 0, hiddenUnread = false;
+  const rows = [...latest].map(([k, e]) => {
+    const dot = tsOf(mainLatest.get(k)) > (lastSeen[k] ?? 0);
+    const dead = judged && !alive.has(k) && k !== sel; // 選んでいる repo は隠さない (消えると迷子)
+    if (dead) { hidden++; hiddenUnread ||= dot; }
+    if (dead && !showDead) return "";
+    unread ||= dot; // ☰ の赤は表示中の repo だけで数える
+    return `<button class="prow${k === sel ? " on" : ""}${dead ? " dead" : ""}" data-r="${esc(e.repo)}" title="${esc(e.repo)}"><span class="pn" style="--rc:${repoColor(e.repo)}">${dot ? '<i class="dot" title="未読"></i>' : ""}<b>${rcDot}${esc(e.repo || "?")}</b><time>${e.ts ? hhmm(new Date(e.ts)) : ""}</time></span><span class="ph">${esc(cut(agentTag(e) + (e.head ?? ""), 30))}</span></button>`;
+  });
+  if (sel && !latest.has(sel)) rows.push(`<button class="prow on" data-r="${esc(REPO)}"><span class="pn"><b>${esc(REPO)}</b></span><span class="ph">返事なし</span></button>`); // URL が履歴に無い repo を指している
+  const deadSess = judged && inRepo(all).some((e) => !e.live); // repo は活きていても、その中の終了したセッション (chip・送り先) を出すためのトグル
+  const deadBtn = !hidden && !deadSess ? "" : showDead ? "終了したものを隠す" : `終了したものも表示${hidden ? ` (${hidden}${hiddenUnread ? "・未読あり" : ""})` : ""}`;
+  const tabs = `<div class="ptabs"><button class="prow${sel || AGENTS ? "" : " on"}" data-r="" data-m=""><span class="pn"><b>メイン</b></span></button><button class="prow${AGENTS ? " on" : ""}" data-r="" data-m="agents" title="subagent の返事だけを見る"><span class="pn"><b>🤖 ワーカー</b></span></button></div>`;
+  const html = tabs + rows.join("") + (deadBtn ? `<button id="pdead" title="Claude が走っている端末が無い repo / セッション">${deadBtn}</button>` : "");
+  document.getElementById("plist").title = judged ? "" : "端末の生死を判定できないので全部表示中";
+  document.getElementById("ptoggle").classList.toggle("unread", unread); // 畳んでいても未読が分かるように
+  if (html === projHtml) return; // 毎 poll 描き直すと hover とスクロール位置が飛ぶ
+  projHtml = html;
+  document.getElementById("plist").innerHTML = html;
+}
+document.getElementById("plist").addEventListener("click", async (ev) => {
+  if (ev.target.closest("#pdead")) {
+    showDead = !showDead;
+    try { localStorage.setItem("rmx.proj.dead", showDead ? "show" : "hide"); } catch {}
+    renderChips(); // chip と送り先も同じスイッチ
+    return renderProjects();
+  }
+  const b = ev.target.closest("[data-r]");
+  if (!b) return;
+  REPO = b.dataset.r;
+  SESS = ""; // セッションはプロジェクトをまたがない
+  if ("m" in b.dataset) { AGENTS = b.dataset.m === "agents"; setParam("mode", b.dataset.m); } // タブ = モード切り替え + repo 絞り込み解除
+  setParam("repo", REPO);
+  setParam("s", "");
+  renderFilter();
+  if (narrow.matches) document.body.classList.add("proj-closed"); // 重ねた列を閉じて返事を見せる
+  await reselect();
+});
+
+// 列の開閉。狭い幅では毎回畳んだ状態から始め、覚えるのは広い幅での選択だけ。
+const narrow = matchMedia("(max-width: 699px)");
+narrow.addEventListener("change", window.applyProjDefault);
+document.getElementById("ptoggle").onclick = () => {
+  const closed = document.body.classList.toggle("proj-closed");
+  if (!narrow.matches) try { localStorage.setItem("rmx.proj", closed ? "closed" : "open"); } catch {}
+};
+renderFilter();
+
+let fragMod = null;
+async function poll() {
+  try {
+    const hr = await fetch("/history", { cache: "no-store" });
+    // index.html が更新されたら読み直す (サーバー再起動では開いたままの画面は変わらない、2026-09-29 実害)。赤ペンの下書き中は消さない
+    const page = hr.headers.get("x-rmx-page");
+    if (page) { if (pageVer && page !== pageVer && !drafts.size && !ctext.value.trim()) return location.reload(); pageVer = page; }
+    liveState = hr.headers.get("x-rmx-live");
+    all = await hr.json();
+    renderChips();
+    renderProjects();
+    const next = scope();
+    if (!next.length && (REPO || SESS || AGENTS)) { list = []; idx = 0; shownName = null; renderBar(); await show("", null); return; } // 絞り込み中・agents モードは他 repo / 他セッション / 本体の latest.html を映さない
+    if (!next.length) { // 履歴導入前の state: latest.html だけ映す
+      const r = await fetch("/fragment", { cache: "no-store" });
+      const mod = r.headers.get("last-modified");
+      if (mod !== fragMod) { fragMod = mod; await show(await r.text(), null); }
+      list = []; renderBar(); return;
+    }
+    const keep = following && !hasDraft(shownName) ? null : list[idx]?.name; // 書きかけの赤ペンがある間は新着で差し替えない
+    list = next;
+    if (keep) { const j = list.findIndex((e) => e.name === keep); idx = j < 0 ? list.length - 1 : j; renderBar(); return; }
+    await showIdx(0);
+  } catch (e) { console.error(e); }
+}
+
+poll();
+setInterval(poll, 2000);
+</script>
+</body>
+</html>
