@@ -1,6 +1,7 @@
 # rmv (Red Marker Viewer)
 
 Claude Code の返事を、[Orca](https://github.com/stablyai/orca) のフローティングブラウザで「見て分かる」形に描き、赤ペンで端末へ返すビューアです。
+（chrome等でも見れますが、vimium等ショートカットの競合注意）
 
 ![rmv のデモ](docs/demo.gif)
 
@@ -19,7 +20,7 @@ rmv では、その赤を入れる体験を毎回の返事に持ち込んでい�
 
 ## 僕の使い方
 
-Orca のフローティングブラウザに rmv を開いておきます。（chrome等でも見れますが、vimium等ショートカットの競合注意）
+Orca のフローティングブラウザに rmv を開いておきます。
 
 | 操作 | 何が起きるか |
 | --- | --- |
