@@ -689,7 +689,7 @@ document.addEventListener("keydown", (ev) => {
     return;
   }
   if (ev.key === "Enter" && (ev.metaKey || ev.ctrlKey)) { ev.preventDefault(); return document.getElementById(ev.target === ctext ? "csend" : "send").click(); } // Cmd+Enter = 送信 (入力欄の中でも。チャット欄にいる時はチャット欄の送信)
-  if (ev.key === "R" && ev.shiftKey && !ev.altKey && !ev.ctrlKey && !ev.metaKey && !ev.target.closest?.("input, textarea, [contenteditable]")) return togglePause(); // Shift+R = 読み上げの一時停止 / 再開 (下の修飾キー除けより前で拾う)
+  if (ev.code === "KeyR" && ev.shiftKey && !ev.altKey && !ev.ctrlKey && !ev.metaKey && !ev.target.closest?.("input, textarea, [contenteditable]")) return togglePause(); // Shift+R = 読み上げの一時停止 / 再開 (下の修飾キー除けより前で拾う。ev.key だと Caps Lock ON で "r" になるので物理キーで見る)
   if (ev.altKey || ev.ctrlKey || ev.metaKey || ev.shiftKey) return;
   const qb = /^[1-6]$/.test(ev.key) && document.querySelectorAll("#cact .q")[+ev.key - 1];
   if (qb && !ev.target.closest?.("input, textarea, [contenteditable]") && sug.hidden) { ev.preventDefault(); return qb.click(); } // 数字 1〜6 = クイック送信 (欄の外だけ。空のチャット欄でも拾うと「3」を打とうとして A が送られた、2026-09-30)
