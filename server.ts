@@ -20,6 +20,13 @@ async function readPerm(session: string): Promise<Perm | null> {
   const p = await Bun.file(`${PERM}/${session}.json`).json().catch(() => null);
   return p && typeof p.id === "string" && Date.now() - Date.parse(p.ts) < PERM_TTL ? p : null;
 }
+const PROMPT = `${STATE}/prompt`; // hooks/prompt-state.py が送った依頼文を <session>.json に置く。返事の保存時に stop hook が消す
+// 未返答の依頼。無い・壊れている・TTL 切れ (返事が来ずに取り残された分)・その端末の最新返事より古いなら null
+async function readAsking(session: string, lastReplyTs: number): Promise<{ prompt: string; ts: string } | null> {
+  const p = await Bun.file(`${PROMPT}/${session}.json`).json().catch(() => null);
+  const t = p ? Date.parse(p.ts) : NaN;
+  return typeof p?.prompt === "string" && Date.now() - t < PERM_TTL && !(t < lastReplyTs) ? { prompt: p.prompt, ts: p.ts } : null;
+}
 const NAME = /^[\w.-]+\.md$/; // [\w.-] のみ: "/" を含まないので state/history の外は読めない
 const TEXT = { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" };
 
@@ -46,7 +53,7 @@ async function history(repo: string | null): Promise<Response> {
       const cwd = String(meta.cwd ?? "");
       const session = String(meta.terminal || meta.session_id || "");
       const perm = perms.get(session);
-      return { name, ts: meta.ts ?? null, cwd, repo: cwd.split("/").filter(Boolean).pop() ?? "", head: body.replace(/\s+/g, " ").trim().slice(0, 40), terminal: Boolean(meta.terminal), live: terms ? Boolean(meta.terminal) && handles.has(meta.terminal) : true, session, perm: perm ? { id: perm.id, tool: perm.tool, detail: perm.detail, ts: perm.ts } : null, agent: meta.agent ?? null, title: byHandle.get(meta.terminal)?.title ?? null, lastOutputAt: byHandle.get(meta.terminal)?.lastOutputAt ?? null };
+      return { name, prompt: typeof meta.prompt === "string" ? meta.prompt : null, ts: meta.ts ?? null, cwd, repo: cwd.split("/").filter(Boolean).pop() ?? "", head: body.replace(/\s+/g, " ").trim().slice(0, 40), terminal: Boolean(meta.terminal), live: terms ? Boolean(meta.terminal) && handles.has(meta.terminal) : true, session, perm: perm ? { id: perm.id, tool: perm.tool, detail: perm.detail, ts: perm.ts } : null, agent: meta.agent ?? null, title: byHandle.get(meta.terminal)?.title ?? null, lastOutputAt: byHandle.get(meta.terminal)?.lastOutputAt ?? null };
     }),
   );
   // 1 つの端末で順に別の repo を開くと、端末が生きている限り昔の repo まで live になる (2026-09-29 実機: 1 端末で 4 repo)。
@@ -54,8 +61,14 @@ async function history(repo: string | null): Promise<Response> {
   const nowCwd = new Map<string, string>();
   for (const e of items) if (e.live && !e.agent && !nowCwd.has(e.session)) nowCwd.set(e.session, e.cwd); // items は新しい順
   for (const e of items) if (e.live && nowCwd.has(e.session) && nowCwd.get(e.session) !== e.cwd) e.live = false;
+  // 状態行用: 端末ごとの最新の本体の返事より後に送られた依頼 (返事待ち) を、その端末の entry 全部に付ける (perm と同じ)
+  const lastReply = new Map<string, number>();
+  for (const e of items) if (!e.agent && !lastReply.has(e.session)) lastReply.set(e.session, Date.parse(e.ts ?? "") || 0);
+  const asking = new Map<string, { prompt: string; ts: string } | null>();
+  for (const s of new Set(items.map((e) => e.session))) asking.set(s, await readAsking(s, lastReply.get(s) ?? 0));
+  const out = items.map((e) => ({ ...e, asking: asking.get(e.session) ?? null }));
   const want = repo?.toLowerCase();
-  return Response.json(want ? items.filter((e) => e.repo.toLowerCase() === want) : items, { headers: { "cache-control": "no-store", "x-rmx-live": terms ? "ok" : "unknown" } });
+  return Response.json(want ? out.filter((e) => e.repo.toLowerCase() === want) : out, { headers: { "cache-control": "no-store", "x-rmx-live": terms ? "ok" : "unknown" } });
 }
 
 // GET /file?p=<絶対パス>: 返事に出た絶対パス (スクショ・動画・生成 html 等) を viewer にそのまま出す口。

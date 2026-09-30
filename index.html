@@ -137,6 +137,10 @@
   #filter:empty { display: none; }
 
   /* 返事: 型ごとに置き場所を固定する */
+  /* 依頼文: 返事の真上に 1 行だけ (長文は省略記号)。押すと全文。返事の開始位置は 1 行ぶんしか動かさない */
+  #ask { max-width: var(--measure); font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  #ask summary { cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #ask div { white-space: pre-wrap; overflow-wrap: anywhere; margin-top: 4px; }
   #reply { max-width: var(--measure); font-size: 16px; overflow-wrap: anywhere; }
   #reply:empty::before { content: "まだ返事がありません (Stop hook が state/ に書くと表示されます)"; color: var(--muted); }
   .blk { display: grid; grid-template-columns: 2.6em 1fr; gap: 0 14px; padding: 10px 0 10px 12px; margin-bottom: 14px; border-left: 4px solid transparent; }
@@ -257,6 +261,7 @@ try { document.body.classList.toggle("chat-closed", localStorage.getItem("rmx.ch
     <button id="prev">◀<span class="lbl"> 前</span></button><span id="pos"></span><button id="next"><span class="lbl">次 </span>▶</button><button id="speak" title="返事を読み上げる / 止める (r)、一時停止 / 再開 (Shift+R)">🔊</button><select id="rate" title="読み上げの速さ"><option value="1">1x</option><option value="1.5">1.5x</option><option value="2" selected>2x</option><option value="2.5">2.5x</option><option value="3">3x</option></select>
   </div>
   <nav id="chips"></nav>
+  <details id="ask" hidden><summary></summary><div></div></details>
   <article id="reply"></article>
   <div id="tray" hidden>
     <div id="pins"></div>
@@ -424,6 +429,10 @@ async function show(md, entry) {
   const el = document.getElementById("reply");
   stopSpeak(); // 返事が替わったら読み上げは止める
   el.innerHTML = md ? renderLowLoad(md) : "";
+  const ask = document.getElementById("ask"), q = entry?.prompt ?? "";
+  ask.hidden = !q; ask.open = false;
+  ask.firstChild.textContent = "依頼: " + q.replace(/\s+/g, " ");
+  ask.lastChild.textContent = q;
   const time = entry?.ts ? new Date(entry.ts).toLocaleTimeString("ja-JP", { hour12: false }) : "";
   document.getElementById("stamp").textContent = entry ? agentTag(entry) + [entry.repo || "?", time].filter(Boolean).join(" · ") : "";
   cur = entry;
@@ -951,7 +960,7 @@ function renderTstat(list) {
     const st = perm ? "perm" : wait ? "wait" : (c && "◑◐◓◒".includes(c)) || (e.lastOutputAt && Date.now() - e.lastOutputAt < 15000) ? "busy" : "idle";
     const stTitle = { perm: "許可待ち", wait: "入力待ち", busy: "作業中", idle: "静か" }[st];
     if (perm) return `<div class="trow perm" data-s="${esc(e.session)}" style="--rc:${repoColor(e.repo)}" title="許可待ち"><i class="perm"></i><span>${esc(e.repo || "?")} · ${esc(perm.tool)} 許可待ち · ${esc(perm.detail)}</span><button data-approve="${esc(e.session)}" data-id="${esc(perm.id)}">許可</button></div>`;
-    return `<div class="trow${wait ? " wait" : ""}" data-s="${esc(e.session)}" style="--rc:${repoColor(e.repo)}" title="${stTitle} · この端末を送り先にする"><i class="${st}"></i><span>${esc(hhmm(new Date(e.ts)))} ${esc(e.repo || "?")} · ${esc(e.head || "")}</span><time>${e.lastOutputAt ? ago(e.lastOutputAt) : ""}</time></div>`;
+    return `<div class="trow${wait ? " wait" : ""}" data-s="${esc(e.session)}" style="--rc:${repoColor(e.repo)}" title="${stTitle} · この端末を送り先にする"><i class="${st}"></i><span>${esc(hhmm(new Date(e.ts)))} ${esc(e.repo || "?")} · ${e.asking ? esc("依頼: " + e.asking.prompt.replace(/\s+/g, " ").slice(0, 60)) : esc(e.head || "")}</span><time>${e.lastOutputAt ? ago(e.lastOutputAt) : ""}</time></div>`;
   }).join("");
   if (html === tstatHtml) return; // chip と同じ: 同じ内容なら書き直さない
   tstatHtml = html;

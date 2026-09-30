@@ -6,6 +6,7 @@
   history/<ts>-<session_id 先頭 8>.md (+ 同名 .json に同じメタ)。直近 KEEP 件だけ残す
 SubagentStop でも同じ script を配線する: meta に agent {type, id} を足し、history にだけ書く
   (latest.* は本体の返事を subagent の報告で上書きしないため触らない)。本文は先頭 AGENT_MAX 字まで。
+本体の返事には、prompt-state.py (UserPromptSubmit) が置いた依頼文 state/prompt/<key>.json を meta.prompt として載せ、そのファイルを消す。
 stdout には何も出さない (hook 出力は user 画面に出る)。exit 0 固定。
 """
 import json
@@ -123,6 +124,14 @@ def main():
                 "terminal": os.environ.get("ORCA_TERMINAL_HANDLE")}
         if sub:
             meta["agent"] = {"type": data.get("agent_type"), "id": data.get("agent_id")}
+        else:  # 本体の返事には prompt-state.py が置いた依頼文を載せて、ファイルは消す
+            pf = os.path.join(STATE, "prompt", re.sub(r"[^A-Za-z0-9_-]", "", meta["terminal"] or sid) + ".json")
+            try:
+                with open(pf, encoding="utf-8") as f:
+                    meta["prompt"] = json.load(f).get("prompt")
+                os.remove(pf)
+            except (OSError, ValueError, AttributeError):
+                pass  # 依頼文が無い返事 (自動通知が起こした turn 等) は prompt を載せない
         meta = json.dumps(meta, ensure_ascii=False)
         os.makedirs(HIST, exist_ok=True)
         write(os.path.join(HIST, name), text)

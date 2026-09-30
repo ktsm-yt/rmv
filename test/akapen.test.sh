@@ -95,6 +95,29 @@ check "perm hook: 親が claude -p なら書かない" "$([ -e "$TMP/perm4/perm/
 CLAUDE_CODE_ENTRYPOINT=sdk-cli ORCA_TERMINAL_HANDLE=term_x H="$PERMHOOK" F="$TMP/perm-in.json" RMX_STATE_DIR="$TMP/perm5" "$TMP/bin/claude" -c 'python3 "$H" < "$F"; :' x --permission-mode auto
 check "perm hook: 親が -p 無しの対話 claude なら書く (判定は stop-to-fragment の is_interactive)" "$([ -e "$TMP/perm5/perm/term_x.json" ] && echo written || echo none)" written
 
+# --- prompt-state hook: 送った依頼文 → state/prompt/<key>.json → 返事の meta.prompt ---
+PROMPTHOOK="${RMX_PROMPT_HOOK:-$A/hooks/prompt-state.py}"
+# upr <state dir> <prompt> <env 引数...> → UserPromptSubmit を 1 回実行 (prompt は python で JSON 化)
+upr() { local d="$1" p="$2"; shift 2; python3 -c 'import json,sys; print(json.dumps({"hook_event_name":"UserPromptSubmit","session_id":"sess-1","prompt":sys.argv[1]}))' "$p" | env "$@" RMX_STATE_DIR="$d" python3 "$PROMPTHOOK"; }
+pfile() { [ -e "$1" ] && echo written || echo none; }
+upr "$TMP/pr1" $'長い依頼\n二行目' ORCA_TERMINAL_HANDLE=term_p CLAUDE_CODE_ENTRYPOINT=cli
+check "prompt hook: 通常の prompt → prompt/term_p.json に本文 (改行は保つ)" "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["prompt"].replace("\n","|"))' "$TMP/pr1/prompt/term_p.json")" "長い依頼|二行目"
+ORCA_TERMINAL_HANDLE=term_p CLAUDE_CODE_ENTRYPOINT=cli RMX_STATE_DIR="$TMP/pr1" python3 "$HOOK" < "$FIX"
+PRN="$(field "$TMP/pr1/latest.json" name)"
+check "prompt hook: 返事の meta.prompt に依頼文が載る" "$(field "$TMP/pr1/history/${PRN%.md}.json" prompt | tr '\n' '|')" "長い依頼|二行目|"
+check "prompt hook: 返事に載せたら prompt ファイルは消える (次の自動 turn に古い依頼を付けない)" "$(pfile "$TMP/pr1/prompt/term_p.json")" none
+ORCA_TERMINAL_HANDLE=term_p CLAUDE_CODE_ENTRYPOINT=cli RMX_STATE_DIR="$TMP/pr1" python3 "$HOOK" < "$FIX"
+PRN2="$(field "$TMP/pr1/latest.json" name)"
+check "prompt hook: 依頼の無い返事 (自動通知が起こした turn) は meta.prompt なし" "$(field "$TMP/pr1/history/${PRN2%.md}.json" prompt)" null
+upr "$TMP/pr2" 'ok <task-notification><x/></task-notification>' ORCA_TERMINAL_HANDLE=term_p CLAUDE_CODE_ENTRYPOINT=cli
+upr "$TMP/pr3" '<system-reminder>x</system-reminder>' ORCA_TERMINAL_HANDLE=term_p CLAUDE_CODE_ENTRYPOINT=cli
+upr "$TMP/pr4" '[SYSTEM NOTIFICATION - x]' ORCA_TERMINAL_HANDLE=term_p CLAUDE_CODE_ENTRYPOINT=cli
+check "prompt hook: task-notification / system-reminder / SYSTEM NOTIFICATION の prompt は記録しない" "$(pfile "$TMP/pr2/prompt/term_p.json") $(pfile "$TMP/pr3/prompt/term_p.json") $(pfile "$TMP/pr4/prompt/term_p.json")" "none none none"
+upr "$TMP/pr5" 'x' ORCA_TERMINAL_HANDLE=term_p CLAUDE_CODE_ENTRYPOINT=sdk-cli
+check "prompt hook: entrypoint=sdk-cli (claude -p) の prompt は記録しない" "$(pfile "$TMP/pr5/prompt/term_p.json")" none
+upr "$TMP/pr6" 'x' -u ORCA_TERMINAL_HANDLE CLAUDE_CODE_ENTRYPOINT=cli
+check "prompt hook: 端末 handle 無しは session_id が key" "$(pfile "$TMP/pr6/prompt/sess-1.json")" written
+
 # --- server ---
 # stub: argv を 1 行 1 個で書き出す + 呼び出しごとに "<サブコマンド 2 語> <handle>" を $TMP/calls へ追記。$TMP/fail があれば stderr に書いて exit 1
 #   $TMP/failout があれば stderr 空・stdout に error JSON で exit 1 (本物の terminal_not_writable の形)
@@ -345,8 +368,24 @@ check "approve: 30 分より古い perm → 409" "$(apost "$GOOD" "{\"session\":
 check "approve: TTL 切れでは orca を呼ばない" "$(calls)" ""
 rm -f "$STATE/perm/term_test.json"
 
+# --- 依頼文: /history の prompt (返事の上) と asking (返事待ちの状態行) ---
+askof() { curl -s "$BASE/history" | python3 -c "import json,sys; a=[e['asking'] for e in json.load(sys.stdin) if e['name']==sys.argv[1]][0]; print(None if a is None else a['prompt'])" "$1"; }
+check "/history: 依頼が無ければ asking null" "$(askof "$WITH")" None
+upr "$STATE" '状態行に出す依頼' ORCA_TERMINAL_HANDLE=term_test CLAUDE_CODE_ENTRYPOINT=cli
+check "/history: 返事前の依頼は、その端末の entry に asking で付く" "$(askof "$WITH")" "状態行に出す依頼"
+ORCA_TERMINAL_HANDLE=term_test RMX_STATE_DIR="$STATE" python3 "$HOOK" < "$FIX"
+NEWN="$(field "$STATE/latest.json" name)"
+check "/history: 返事が届くと asking は消える" "$(askof "$WITH")" None
+check "/history: 返事の entry に prompt が付く" "$(curl -s "$BASE/history" | python3 -c "import json,sys; print([e['prompt'] for e in json.load(sys.stdin) if e['name']==sys.argv[1]][0])" "$NEWN")" "状態行に出す依頼"
+check "/history: 依頼の無い返事の prompt は null" "$(curl -s "$BASE/history" | python3 -c "import json,sys; print([e['prompt'] for e in json.load(sys.stdin) if e['name']==sys.argv[1]][0])" "$WITH")" None
+upr "$STATE" '古い取り残し' ORCA_TERMINAL_HANDLE=term_test CLAUDE_CODE_ENTRYPOINT=cli
+python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["ts"]="2020-01-01T00:00:00+09:00"; json.dump(d,open(p,"w"))' "$STATE/prompt/term_test.json"
+check "/history: 返事より古い (取り残された) 依頼は asking にしない" "$(askof "$WITH")" None
+rm -f "$STATE/prompt/term_test.json"
+
 # --- index.html: 読み上げボタンが本文ペインの操作列に描画される ---
 check "page: 読み上げボタン (#speak) が index.html にある" "$(curl -s "$BASE/" | grep -c '<button id="speak"')" 1
+check "page: 返事の上に依頼文 (details#ask) の描画がある" "$(curl -s "$BASE/" | grep -c '<details id="ask"')" 1
 check "page: 状態行に許可ボタン (data-approve) の描画がある" "$(curl -s "$BASE/" | grep -c 'data-approve="')" 1
 
 echo "checked $N cases ($FAIL failed)"
