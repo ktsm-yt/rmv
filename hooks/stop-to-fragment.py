@@ -11,6 +11,7 @@ stdout には何も出さない (hook 出力は user 画面に出る)。exit 0 �
 import json
 import os
 import re
+import subprocess
 import sys
 from datetime import datetime
 
@@ -62,8 +63,28 @@ def prune():
                 pass
 
 
+def parent_claude_args():
+    """hook の直接の親が claude ならその argv、違えば None。
+    hook は claude の直下で動く (2.1.285 実測: -p は `claude -p …`、--bg は `claude bg-spare …` が親)。"""
+    try:
+        args = subprocess.run(["ps", "-ww", "-o", "args=", "-p", str(os.getppid())],
+                              capture_output=True, text=True, timeout=2).stdout.split()
+    except Exception:
+        return None
+    return args if args and os.path.basename(args[0]) == "claude" else None
+
+
 def is_interactive():
-    # ponytail: 判定は CLAUDE_CODE_ENTRYPOINT。claude -p は親から "cli" を継承しても "sdk-cli" で上書きする
+    # 第 1 信号は親 claude の argv。-p / --print / --sdk-url 付きなら雑音、無ければ対話 (env より優先)。
+    # env だけだと 2 型を取りこぼす (harness-rmx.9、2.1.285 で再現):
+    #   bg daemon を -p 配下から起こすと以後の bg 対話 session が sdk-cli を継承して消える /
+    #   claude-vscode・claude-desktop 配下の -p は親の値のまま残り記録される
+    # ponytail: argv は空白 split なので、prompt 本文に単独の "-p" があると雑音側に倒れる。困ったら sysctl KERN_PROCARGS2 で正確に読む
+    args = parent_claude_args()
+    if args is not None:
+        return not any(a in ("-p", "--print", "--sdk-url") or a.startswith("--sdk-url=") for a in args[1:])
+    # 親が claude でない (テスト・手動実行・将来 hook がシェル経由になった時) は env で判定する。
+    # 判定は CLAUDE_CODE_ENTRYPOINT。claude -p は親から "cli" を継承しても "sdk-cli" で上書きする
     # (2.1.283 で実測。transcript の entrypoint も既存 history 31 session で cli 6 / sdk-cli 25 と完全分離)。
     # ORCA_TERMINAL_HANDLE は -p 子にも継承され、SESSION_ATTENDED は bg 対話 session で 0 になるので使わない。
     # 除外は "sdk" 始まりだけ: 欠落・未知の値 (IDE / desktop 等) は記録側へ倒す (fail open)。

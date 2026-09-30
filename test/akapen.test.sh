@@ -63,6 +63,16 @@ check "hook: entrypoint=sdk-cli (claude -p) → 何も書かない" "$(rec sdk C
 check "hook: entrypoint=sdk-cli → latest.json も書かない" "$([ -e "$TMP/ep-sdk/latest.json" ] && echo written || echo none)" none
 check "hook: entrypoint 欠落 (判定不能) → 記録 (fail open)" "$(rec unset -u CLAUDE_CODE_ENTRYPOINT)" 1
 check "hook: entrypoint が未知の値 (IDE 等) → 記録" "$(rec other CLAUDE_CODE_ENTRYPOINT=claude-vscode)" 1
+# 親が claude なら argv を env より優先する (harness-rmx.9)。/bin/sh を claude という名前で親に立てる
+# (cp だと署名検査で kill され「捨てる」側が素通しで緑になる。symlink は動く。末尾の "; :" は sh が python に exec して親から外れるのを防ぐ)
+mkdir -p "$TMP/bin" && ln -s /bin/sh "$TMP/bin/claude"
+check "hook: 偽 claude が起動できる (起動できないと捨てる側の検査が空振りする)" "$("$TMP/bin/claude" -c 'echo up')" up
+# under <ラベル> <entrypoint> <親 claude の argv...> → 親 claude の下で 1 回書き、history の .md 件数を返す
+under() { local d="$TMP/pa-$1"; CLAUDE_CODE_ENTRYPOINT="$2" H="$HOOK" F="$FIX" RMX_STATE_DIR="$d" "$TMP/bin/claude" -c 'python3 "$H" < "$F"; :' "${@:3}"; ls "$d/history" 2>/dev/null | grep -c '\.md$'; }
+check "hook: bg 対話 session (親 claude bg-spare) は sdk-cli を継承していても記録" "$(under bg sdk-cli bg-spare --bg-spare x.sock)" 1
+check "hook: 親が claude -p なら entrypoint=claude-vscode でも捨てる" "$(under vscode-p claude-vscode x -p)" 0
+check "hook: 親が --print --sdk-url (remote-control の子) なら捨てる" "$(under rc cli x --print --sdk-url ws://h)" 0
+check "hook: 親が -p 無しの対話 claude なら記録" "$(under tui cli x --permission-mode auto)" 1
 
 # --- server ---
 # stub: argv を 1 行 1 個で書き出す + 呼び出しごとに "<サブコマンド 2 語> <handle>" を $TMP/calls へ追記。$TMP/fail があれば stderr に書いて exit 1
