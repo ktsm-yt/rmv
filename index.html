@@ -652,11 +652,12 @@ function zoomImage(im) {
   s.append(i);
   openZoom(s);
 }
-// ギャラリー (右下) から開いた時だけ ← → で前後の画像へ送る (端は反対側へ回る)。一覧の img は loading=lazy で
+// ギャラリー (右下) と返事の本文の画像は ← → で前後の画像へ送る (端で止まる、回らない。2026-09-30 user)。一覧の img は loading=lazy で
 // 未読込のことがあるので、src から読み直してから開く
 let zoomSet = null, zoomAt = 0;
 function zoomGallery(i) {
-  zoomAt = (i + zoomSet.length) % zoomSet.length;
+  if (i < 0 || i >= zoomSet.length) return; // 端では何もしない
+  zoomAt = i;
   if (zoomSet[zoomAt].tagName !== "IMG") return openZoom(zoomSet[zoomAt]); // mermaid 図
   const im = new Image();
   im.onload = () => zoomImage(im);
@@ -821,7 +822,7 @@ function message(d) {
 
 document.getElementById("reply").addEventListener("click", (ev) => {
   const im = ev.target.closest(".media img");
-  if (im) return zoomImage(im); // 画像は mermaid と同じ全画面 (ホイール拡大・ドラッグ・Esc)
+  if (im) { zoomSet = [...document.querySelectorAll("#reply .media img")]; return zoomGallery(zoomSet.indexOf(im)); } // 画像は mermaid と同じ全画面 (ホイール拡大・ドラッグ・Esc・← →)
   const cb = ev.target.closest(".cpbtn");
   if (cb) { navigator.clipboard.writeText(cb.previousElementSibling.textContent.replace(/\n$/, "")); cb.textContent = "✓"; setTimeout(() => (cb.textContent = "⧉"), 1200); return; }
   if (ev.target.closest("a, input, textarea, iframe, .media")) return; // 画像・動画・音声の操作でピンを付けない
