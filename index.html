@@ -71,6 +71,9 @@
   #tstat i { flex: none; width: 10px; height: 10px; margin-top: 4px; border-radius: 50%; box-sizing: border-box; }
   #tstat i.busy { border: 2px solid var(--line); border-top-color: var(--fg); animation: tspin .8s linear infinite; }
   #tstat i.wait { background: #e5a50a; box-shadow: 0 0 0 3px rgb(229 165 10 / .25); }
+  #tstat i.perm { background: #e01b24; box-shadow: 0 0 0 3px rgb(224 27 36 / .25); }
+  #tstat .trow.perm { color: inherit; font-weight: 700; }
+  #tstat button { flex: none; font-size: 11px; padding: 0 8px; line-height: 18px; }
   #tstat i.idle { border: 2px solid var(--line); }
   @keyframes tspin { to { transform: rotate(360deg); } }
   @media (prefers-reduced-motion: reduce) { #tstat i.busy { animation: none; border-top-color: var(--muted); } }
@@ -943,17 +946,32 @@ let tstatHtml = null;
 function renderTstat(list) {
   const ago = (t) => { const m = Math.max(0, Math.floor((Date.now() - t) / 60000)); return m > 60 ? `${Math.floor(m / 60)} 時間` : `${m} 分`; };
   const html = list.map((e) => {
-    const c = String(e.title ?? "").trim()[0] ?? "", wait = c === "✳";
+    const c = String(e.title ?? "").trim()[0] ?? "", wait = c === "✳", perm = e.perm;
     // 題名の記号は作業中でも付かない時がある (2026-09-29 実機) ので、記号が無ければ最終出力の新しさで見る
-    const st = wait ? "wait" : (c && "◑◐◓◒".includes(c)) || (e.lastOutputAt && Date.now() - e.lastOutputAt < 15000) ? "busy" : "idle";
-    const stTitle = { wait: "入力待ち", busy: "作業中", idle: "静か" }[st];
+    const st = perm ? "perm" : wait ? "wait" : (c && "◑◐◓◒".includes(c)) || (e.lastOutputAt && Date.now() - e.lastOutputAt < 15000) ? "busy" : "idle";
+    const stTitle = { perm: "許可待ち", wait: "入力待ち", busy: "作業中", idle: "静か" }[st];
+    if (perm) return `<div class="trow perm" data-s="${esc(e.session)}" style="--rc:${repoColor(e.repo)}" title="許可待ち"><i class="perm"></i><span>${esc(e.repo || "?")} · ${esc(perm.tool)} 許可待ち · ${esc(perm.detail)}</span><button data-approve="${esc(e.session)}" data-id="${esc(perm.id)}">許可</button></div>`;
     return `<div class="trow${wait ? " wait" : ""}" data-s="${esc(e.session)}" style="--rc:${repoColor(e.repo)}" title="${stTitle} · この端末を送り先にする"><i class="${st}"></i><span>${esc(hhmm(new Date(e.ts)))} ${esc(e.repo || "?")} · ${esc(e.head || "")}</span><time>${e.lastOutputAt ? ago(e.lastOutputAt) : ""}</time></div>`;
   }).join("");
   if (html === tstatHtml) return; // chip と同じ: 同じ内容なら書き直さない
   tstatHtml = html;
   tstat.innerHTML = html;
 }
-tstat.addEventListener("click", (ev) => { const r = ev.target.closest("[data-s]"); if (r) pickChip(r.dataset.s); });
+tstat.addEventListener("click", async (ev) => {
+  const b = ev.target.closest("[data-approve]");
+  if (!b) { const r = ev.target.closest("[data-s]"); if (r) pickChip(r.dataset.s); return; }
+  // 許可ボタンは行の click (pickChip) に伝えない。id は render 時点のもの: 端末で先に答えていれば server が 409 で断る
+  b.disabled = true;
+  const say = document.getElementById("cmsg");
+  try {
+    const r = await fetch("/approve", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ session: b.dataset.approve, id: b.dataset.id }) });
+    if (!r.ok) throw new Error((await r.text()) || String(r.status));
+    say.textContent = "";
+  } catch (e) {
+    say.textContent = e.message ?? String(e);
+    b.disabled = false;
+  }
+});
 cchips.addEventListener("click", (ev) => { const b = ev.target.closest("[data-s]"); if (b) pickChip(b.dataset.s); });
 async function pickChip(s) {
   if (s) chatPins[REPO.toLowerCase()] = s; else delete chatPins[REPO.toLowerCase()];

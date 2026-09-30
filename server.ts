@@ -10,6 +10,16 @@ const HIST = `${STATE}/history`;
 const ORCA = process.env.RMX_ORCA_BIN || "orca"; // env はテストの stub 差し替え用
 const OSASCRIPT = process.env.RMX_OSASCRIPT_BIN || "osascript"; // 同上
 const PROJECTS = process.env.RMX_PROJECTS_DIR || `${process.env.HOME}/.claude/projects`; // transcript の置き場 (同上)
+const PERM = `${STATE}/perm`; // hooks/perm-state.py が許可待ちの間だけ <session>.json を置く
+const PERM_TTL = 30 * 60_000; // 強制終了した端末に取り残された perm を無視する
+// Claude Code の許可ダイアログは 1 = Yes。Enter 無しの 1 打で通り、入力欄に 1 は残らない (2.1.285 の WebFetch ダイアログで実機確認、2026-09-30)
+const APPROVE_KEY = "1";
+type Perm = { id: string; tool: string; detail: string; ts: string; terminal?: string | null };
+// 許可待ちの記録を返す。無い・壊れている・TTL 切れは null
+async function readPerm(session: string): Promise<Perm | null> {
+  const p = await Bun.file(`${PERM}/${session}.json`).json().catch(() => null);
+  return p && typeof p.id === "string" && Date.now() - Date.parse(p.ts) < PERM_TTL ? p : null;
+}
 const NAME = /^[\w.-]+\.md$/; // [\w.-] のみ: "/" を含まないので state/history の外は読めない
 const TEXT = { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" };
 
@@ -23,13 +33,20 @@ async function history(repo: string | null): Promise<Response> {
   const [terms, claude] = await Promise.all([liveTerminals(LIVE_TTL), claudeTerminals(LIVE_TTL)]);
   const byHandle = new Map((terms ?? []).map((t) => [t.handle, t])); // 待ち状態表示用: title (◑ 作業中 / ✳ 入力待ち) と lastOutputAt
   const handles = new Set(terms?.map((t) => t.handle).filter((h) => !claude || claude.has(h ?? "")));
+  const perms = new Map<string, Perm>(); // state/perm/*.json を 1 回だけ読む。key = item.session
+  for (const n of (await readdir(PERM).catch(() => [] as string[])).filter((n) => n.endsWith(".json"))) {
+    const p = await readPerm(n.slice(0, -5));
+    if (p) perms.set(n.slice(0, -5), p);
+  }
   const names = (await readdir(HIST).catch(() => [] as string[])).filter((n) => n.endsWith(".md")).sort().reverse();
   const items = await Promise.all(
     names.map(async (name) => {
       const meta = await Bun.file(`${HIST}/${name.slice(0, -3)}.json`).json().catch(() => ({}));
       const body = await Bun.file(`${HIST}/${name}`).text().catch(() => "");
       const cwd = String(meta.cwd ?? "");
-      return { name, ts: meta.ts ?? null, cwd, repo: cwd.split("/").filter(Boolean).pop() ?? "", head: body.replace(/\s+/g, " ").trim().slice(0, 40), terminal: Boolean(meta.terminal), live: terms ? Boolean(meta.terminal) && handles.has(meta.terminal) : true, session: String(meta.terminal || meta.session_id || ""), agent: meta.agent ?? null, title: byHandle.get(meta.terminal)?.title ?? null, lastOutputAt: byHandle.get(meta.terminal)?.lastOutputAt ?? null };
+      const session = String(meta.terminal || meta.session_id || "");
+      const perm = perms.get(session);
+      return { name, ts: meta.ts ?? null, cwd, repo: cwd.split("/").filter(Boolean).pop() ?? "", head: body.replace(/\s+/g, " ").trim().slice(0, 40), terminal: Boolean(meta.terminal), live: terms ? Boolean(meta.terminal) && handles.has(meta.terminal) : true, session, perm: perm ? { id: perm.id, tool: perm.tool, detail: perm.detail, ts: perm.ts } : null, agent: meta.agent ?? null, title: byHandle.get(meta.terminal)?.title ?? null, lastOutputAt: byHandle.get(meta.terminal)?.lastOutputAt ?? null };
     }),
   );
   // 1 つの端末で順に別の repo を開くと、端末が生きている限り昔の repo まで live になる (2026-09-29 実機: 1 端末で 4 repo)。
@@ -252,6 +269,26 @@ async function send(req: Request): Promise<Response> {
   }
 }
 
+// POST /approve {session, id}: 許可待ちの端末へ APPROVE_KEY だけ送って許可する。Enter は送らない (次のダイアログを連鎖で許可しないため)。
+// id 照合が誤爆防止の要: 端末で先に答えて別のダイアログが出ていれば id が変わっているので送らない。
+// perm ファイルは消さない (PostToolUse の hook が消す)
+async function approve(req: Request): Promise<Response> {
+  if (!ORIGINS.has(req.headers.get("origin") ?? "")) return new Response("forbidden origin", { status: 403 });
+  const body = await req.json().catch(() => null);
+  const session = typeof body?.session === "string" ? body.session : "";
+  if (!/^[\w-]+$/.test(session)) return new Response("bad session", { status: 400 });
+  const perm = await readPerm(session);
+  if (!perm || perm.id !== body?.id || !perm.terminal) return new Response("許可待ちはもう無い", { status: 409 });
+  try {
+    const p = Bun.spawn([ORCA, "terminal", "send", "--terminal", perm.terminal, "--text", APPROVE_KEY, "--json"], { stdout: "pipe", stderr: "pipe" });
+    const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
+    if (code !== 0) return new Response(`orca exit ${code}: ${err.trim() || out.trim()}`, { status: 502 });
+    return new Response(out || "{}", { headers: { "content-type": "application/json; charset=utf-8" } });
+  } catch (e) {
+    return new Response(`orca spawn failed: ${e}`, { status: 502 });
+  }
+}
+
 // POST /speak {text}: 読み上げの声を Gemini の TTS で作り、WAV で返す (3.8 は WAV、3.1 / 2.5 は生の PCM が返るので WAV に包む)。
 // キーは env GEMINI_API_KEY → 無ければ macOS キーチェーンを毎回引く。キーはログにもレスポンスにも出さない。
 // Origin 必須は /send と同じ理由 (他サイトから有料 API を叩かせない)。
@@ -370,6 +407,7 @@ Bun.serve({
       return r;
     }
     if (pathname === "/send" && req.method === "POST") return send(req);
+    if (pathname === "/approve" && req.method === "POST") return approve(req);
     if (pathname === "/paste" && req.method === "POST") return paste(req);
     if (pathname === "/speak" && req.method === "POST") return speak(req);
     if (pathname === "/media") return media(searchParams.get("name"));

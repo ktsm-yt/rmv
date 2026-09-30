@@ -141,6 +141,30 @@ AI には HTML を書かせません。
    `SubagentStop` は任意です。
    入れると、上部の「🤖 ワーカー」タブで subagent の報告も読めます。
 
+   許可ダイアログで止まった端末を状態行に出して「許可」ボタンで通したい時は、同じ `hooks` に `perm-state.py` も足します (任意)。
+   `PermissionRequest` で許可待ちを記録し、それ以外のイベントで消します。
+
+   ```json
+   {
+     "hooks": {
+       "PermissionRequest": [
+         { "hooks": [{ "type": "command", "command": "python3 ~/rmv/hooks/perm-state.py", "timeout": 5 }] }
+       ],
+       "PostToolUse": [
+         { "hooks": [{ "type": "command", "command": "python3 ~/rmv/hooks/perm-state.py", "timeout": 5 }] }
+       ],
+       "Stop": [
+         { "hooks": [{ "type": "command", "command": "python3 ~/rmv/hooks/stop-to-fragment.py", "timeout": 5 }, { "type": "command", "command": "python3 ~/rmv/hooks/perm-state.py", "timeout": 5 }] }
+       ],
+       "UserPromptSubmit": [
+         { "hooks": [{ "type": "command", "command": "python3 ~/rmv/hooks/perm-state.py", "timeout": 5 }] }
+       ]
+     }
+   }
+   ```
+
+   `Stop` は上の返事保存と同じ配列に並べます (別の `Stop` を書くと上書きになります)。
+
 3. Orca のフローティングブラウザで `http://127.0.0.1:4310` を開きます。
    ポートは環境変数 `RMX_PORT` で変えられます。
 

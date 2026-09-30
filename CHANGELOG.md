@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.5.0 (2026-09-30)
+
+- Claude Code が許可ダイアログで止まっている間、チャット欄の端末状態行に赤い点で「Bash 許可待ち · コマンドの頭」と出るようにした。行の「許可」ボタンで端末へ `1` を送って許可できる (Enter は送らないので、次のダイアログは自動では通らない)
+- 使うには `hooks/perm-state.py` を `PermissionRequest` / `PostToolUse` / `Stop` / `UserPromptSubmit` に配線する (README の手順 2)
+
 ## v0.4.4 (2026-09-30)
 
 - 返事を載せるか捨てるかの判定を直した。`claude -p` から起こした `claude --bg` のセッションでは、対話の返事まで捨てられていた。VS Code 版・デスクトップ版から起動された `claude -p` の返事は、捨てられずに載っていた。起動元の claude に `-p` / `--print` / `--sdk-url` が付いているかを先に見るようにした

@@ -8,6 +8,7 @@ set -u
 A="$(cd "$(dirname "$0")/.." && pwd)"
 HOOK="${RMX_HOOK:-$A/hooks/stop-to-fragment.py}"
 SERVER="${RMX_SERVER:-$A/server.ts}"
+PERMHOOK="${RMX_PERM_HOOK:-$A/hooks/perm-state.py}"
 # hook は claude -p (entrypoint sdk-*) の返事を捨てる。親が -p でも結果が変わらないよう対話側に固定する
 export CLAUDE_CODE_ENTRYPOINT=cli
 TMP="$(mktemp -d)"
@@ -73,6 +74,26 @@ check "hook: bg 対話 session (親 claude bg-spare) は sdk-cli を継承して
 check "hook: 親が claude -p なら entrypoint=claude-vscode でも捨てる" "$(under vscode-p claude-vscode x -p)" 0
 check "hook: 親が --print --sdk-url (remote-control の子) なら捨てる" "$(under rc cli x --print --sdk-url ws://h)" 0
 check "hook: 親が -p 無しの対話 claude なら記録" "$(under tui cli x --permission-mode auto)" 1
+
+# --- perm-state hook: 許可待ちの間だけ state/perm/<key>.json ---
+# pev <state dir> <event> <tool> <tool_input json> <env 引数...> → hook を 1 回実行
+pev() { local d="$1" ev="$2" tool="$3" ti="$4"; shift 4; printf '{"hook_event_name":"%s","session_id":"sess-1","cwd":"/x","tool_name":"%s","tool_input":%s}' "$ev" "$tool" "$ti" | env "$@" RMX_STATE_DIR="$d" python3 "$PERMHOOK"; }
+PS1="$TMP/perm1"
+pev "$PS1" PermissionRequest Bash '{"command":"rm -rf\n  /tmp/x"}' ORCA_TERMINAL_HANDLE=term_x CLAUDE_CODE_ENTRYPOINT=cli
+check "perm hook: PermissionRequest → perm/term_x.json に tool / detail (改行は空白に畳む)" "$(field "$PS1/perm/term_x.json" tool) $(field "$PS1/perm/term_x.json" detail)" "Bash rm -rf /tmp/x"
+check "perm hook: terminal と id (8 桁 hex)" "$(field "$PS1/perm/term_x.json" terminal) $(field "$PS1/perm/term_x.json" id | grep -Ec '^[0-9a-f]{8}$')" "term_x 1"
+pev "$PS1" PostToolUse Bash '{}' ORCA_TERMINAL_HANDLE=term_x CLAUDE_CODE_ENTRYPOINT=cli
+check "perm hook: PostToolUse → ファイルが消える" "$([ -e "$PS1/perm/term_x.json" ] && echo kept || echo gone)" gone
+pev "$TMP/perm2" PermissionRequest Bash '{"command":"ls"}' ORCA_TERMINAL_HANDLE=term_x CLAUDE_CODE_ENTRYPOINT=sdk-cli
+check "perm hook: entrypoint=sdk-cli の PermissionRequest → 書かない" "$([ -e "$TMP/perm2/perm/term_x.json" ] && echo written || echo none)" none
+pev "$TMP/perm3" PermissionRequest Edit '{"file_path":"/x/a.ts"}' -u ORCA_TERMINAL_HANDLE CLAUDE_CODE_ENTRYPOINT=cli
+check "perm hook: 端末 handle 無しは session_id が key、detail は file_path、terminal は null" "$(field "$TMP/perm3/perm/sess-1.json" detail) $(field "$TMP/perm3/perm/sess-1.json" terminal)" "/x/a.ts null"
+# 親が claude -p の下 (偽 claude): entrypoint が cli でも書かない
+printf '{"hook_event_name":"PermissionRequest","session_id":"s","tool_name":"Bash","tool_input":{"command":"ls"}}' > "$TMP/perm-in.json"
+CLAUDE_CODE_ENTRYPOINT=cli ORCA_TERMINAL_HANDLE=term_x H="$PERMHOOK" F="$TMP/perm-in.json" RMX_STATE_DIR="$TMP/perm4" "$TMP/bin/claude" -c 'python3 "$H" < "$F"; :' x -p
+check "perm hook: 親が claude -p なら書かない" "$([ -e "$TMP/perm4/perm/term_x.json" ] && echo written || echo none)" none
+CLAUDE_CODE_ENTRYPOINT=sdk-cli ORCA_TERMINAL_HANDLE=term_x H="$PERMHOOK" F="$TMP/perm-in.json" RMX_STATE_DIR="$TMP/perm5" "$TMP/bin/claude" -c 'python3 "$H" < "$F"; :' x --permission-mode auto
+check "perm hook: 親が -p 無しの対話 claude なら書く (判定は stop-to-fragment の is_interactive)" "$([ -e "$TMP/perm5/perm/term_x.json" ] && echo written || echo none)" written
 
 # --- server ---
 # stub: argv を 1 行 1 個で書き出す + 呼び出しごとに "<サブコマンド 2 語> <handle>" を $TMP/calls へ追記。$TMP/fail があれば stderr に書いて exit 1
@@ -298,8 +319,35 @@ check "speak: 別 Origin → 403" "$(spk "https://evil.example")" 403
 check "speak: Origin なし → 403" "$(spk -)" 403
 check "speak: キーが env にもキーチェーンにも無い → 503" "$(spk "$GOOD")" 503
 
+# --- 許可待ち: /history の perm と POST /approve ---
+pev "$STATE" PermissionRequest Bash '{"command":"npm test"}' ORCA_TERMINAL_HANDLE=term_test CLAUDE_CODE_ENTRYPOINT=cli
+PID="$(field "$STATE/perm/term_test.json" id)"
+permof() { curl -s "$BASE/history" | python3 -c "import json,sys; p=[e['perm'] for e in json.load(sys.stdin) if e['name']==sys.argv[1]][0]; print(None if p is None else (p['id'], p['tool'], p['detail']))" "$1"; }
+check "/history: 許可待ちの端末の entry に perm が付く" "$(permof "$WITH")" "('$PID', 'Bash', 'npm test')"
+check "/history: 許可待ちの無い entry は perm null" "$(permof "$WITHOUT")" None
+apost() { local o=(); [ "$1" != "-" ] && o=(-H "Origin: $1"); curl -s -o "$TMP/body" -w '%{http_code}' -X POST "${o[@]}" -H 'content-type: application/json' --data "$2" "$BASE/approve"; }
+rm -f "$TMP/calls" "$TMP/argv"
+check "approve: Origin なし → 403" "$(apost - "{\"session\":\"term_test\",\"id\":\"$PID\"}")" 403
+check "approve: session に不正な文字 → 400" "$(apost "$GOOD" "{\"session\":\"../x\",\"id\":\"$PID\"}")" 400
+check "approve: id 不一致 (端末で先に答えて別のダイアログが出た) → 409" "$(apost "$GOOD" '{"session":"term_test","id":"deadbeef"}')" 409
+check "approve: 403 / 400 / 409 では orca を呼ばない" "$(calls)" ""
+check "approve: 正しい id → 200" "$(apost "$GOOD" "{\"session\":\"term_test\",\"id\":\"$PID\"}")" 200
+check "approve: orca send は 1 回だけ (switch も無し)" "$(calls)" "terminal send term_test,"
+check "approve: 送るのは 1 だけで Enter は送らない" "$(tr '\n' ' ' < "$TMP/argv")" "terminal send --terminal term_test --text 1 --json "
+check "approve: perm ファイルは消さない (PostToolUse の hook が消す)" "$([ -e "$STATE/perm/term_test.json" ] && echo kept || echo gone)" kept
+touch "$TMP/fail"
+check "approve: orca 失敗 → 502" "$(apost "$GOOD" "{\"session\":\"term_test\",\"id\":\"$PID\"}")" 502
+rm -f "$TMP/fail"
+python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["ts"]="2020-01-01T00:00:00+09:00"; json.dump(d,open(p,"w"))' "$STATE/perm/term_test.json"
+check "/history: 30 分より古い perm は null" "$(permof "$WITH")" None
+rm -f "$TMP/calls"
+check "approve: 30 分より古い perm → 409" "$(apost "$GOOD" "{\"session\":\"term_test\",\"id\":\"$PID\"}")" 409
+check "approve: TTL 切れでは orca を呼ばない" "$(calls)" ""
+rm -f "$STATE/perm/term_test.json"
+
 # --- index.html: 読み上げボタンが本文ペインの操作列に描画される ---
 check "page: 読み上げボタン (#speak) が index.html にある" "$(curl -s "$BASE/" | grep -c '<button id="speak"')" 1
+check "page: 状態行に許可ボタン (data-approve) の描画がある" "$(curl -s "$BASE/" | grep -c 'data-approve="')" 1
 
 echo "checked $N cases ($FAIL failed)"
 [ "$FAIL" -eq 0 ]
