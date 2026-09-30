@@ -117,6 +117,8 @@ upr "$TMP/pr5" 'x' ORCA_TERMINAL_HANDLE=term_p CLAUDE_CODE_ENTRYPOINT=sdk-cli
 check "prompt hook: entrypoint=sdk-cli (claude -p) の prompt は記録しない" "$(pfile "$TMP/pr5/prompt/term_p.json")" none
 upr "$TMP/pr6" 'x' -u ORCA_TERMINAL_HANDLE CLAUDE_CODE_ENTRYPOINT=cli
 check "prompt hook: 端末 handle 無しは session_id が key" "$(pfile "$TMP/pr6/prompt/sess-1.json")" written
+upr "$TMP/pr7" $'<pasted_content id="a1">\n貼った本文\n</pasted_content id="a1">' ORCA_TERMINAL_HANDLE=term_p CLAUDE_CODE_ENTRYPOINT=cli
+check "prompt hook: 貼り付けの目印タグ (pasted_content) は外す" "$(field "$TMP/pr7/prompt/term_p.json" prompt)" "貼った本文"
 
 # --- server ---
 # stub: argv を 1 行 1 個で書き出す + 呼び出しごとに "<サブコマンド 2 語> <handle>" を $TMP/calls へ追記。$TMP/fail があれば stderr に書いて exit 1

@@ -37,6 +37,7 @@ def main():
     key = re.sub(r"[^A-Za-z0-9_-]", "", os.environ.get("ORCA_TERMINAL_HANDLE") or str(data.get("session_id") or ""))
     if not key or not is_interactive():
         return
+    prompt = re.sub(r"</?pasted_content[^>]*>", "", prompt)  # 貼り付けの目印タグ (id 付き) は表示に要らない
     rec = {"prompt": prompt.strip()[:PROMPT_MAX], "ts": datetime.now().astimezone().isoformat(timespec="seconds"),
            "session_id": data.get("session_id")}
     os.makedirs(PROMPT, exist_ok=True)

@@ -75,6 +75,7 @@
   #tstat .trow.perm { color: inherit; font-weight: 700; }
   #tstat button { flex: none; font-size: 11px; padding: 0 8px; line-height: 18px; }
   #tstat i.idle { border: 2px solid var(--line); }
+  #tstat .task { white-space: pre-wrap; color: var(--fg); padding: 2px 6px 6px 15px; max-height: 40vh; overflow: auto; } /* 行を押すと開く依頼文の全文 */
   @keyframes tspin { to { transform: rotate(360deg); } }
   @media (prefers-reduced-motion: reduce) { #tstat i.busy { animation: none; border-top-color: var(--muted); } }
   #sug { border: 1px solid var(--line); border-radius: 6px; background: var(--panel); overflow: hidden; margin-bottom: 6px; }
@@ -951,16 +952,19 @@ function renderChat() {
 }
 // 端末ごとの待ち状態: title 先頭 ◑◐◓◒ = 作業中 / ✳ = 入力待ち (Claude Code が tab 題名に付ける)。行を押すと chip と同じ (pickChip)
 const tstat = document.getElementById("tstat");
-let tstatHtml = null;
+let tstatHtml = null, tstatList = [];
+const openAsk = new Set(); // 依頼文を開いている端末 (再描画しても開いたまま)
 function renderTstat(list) {
+  tstatList = list;
   const ago = (t) => { const m = Math.max(0, Math.floor((Date.now() - t) / 60000)); return m > 60 ? `${Math.floor(m / 60)} 時間` : `${m} 分`; };
   const html = list.map((e) => {
     const c = String(e.title ?? "").trim()[0] ?? "", wait = c === "✳", perm = e.perm;
     // 題名の記号は作業中でも付かない時がある (2026-09-29 実機) ので、記号が無ければ最終出力の新しさで見る
     const st = perm ? "perm" : wait ? "wait" : (c && "◑◐◓◒".includes(c)) || (e.lastOutputAt && Date.now() - e.lastOutputAt < 15000) ? "busy" : "idle";
     const stTitle = { perm: "許可待ち", wait: "入力待ち", busy: "作業中", idle: "静か" }[st];
+    const ask = e.asking?.prompt ?? e.prompt; // 返事待ちの依頼、無ければ最新の返事を引き出した依頼
     if (perm) return `<div class="trow perm" data-s="${esc(e.session)}" style="--rc:${repoColor(e.repo)}" title="許可待ち"><i class="perm"></i><span>${esc(e.repo || "?")} · ${esc(perm.tool)} 許可待ち · ${esc(perm.detail)}</span><button data-approve="${esc(e.session)}" data-id="${esc(perm.id)}">許可</button></div>`;
-    return `<div class="trow${wait ? " wait" : ""}" data-s="${esc(e.session)}" style="--rc:${repoColor(e.repo)}" title="${stTitle} · この端末を送り先にする"><i class="${st}"></i><span>${esc(hhmm(new Date(e.ts)))} ${esc(e.repo || "?")} · ${e.asking ? esc("依頼: " + e.asking.prompt.replace(/\s+/g, " ").slice(0, 60)) : esc(e.head || "")}</span><time>${e.lastOutputAt ? ago(e.lastOutputAt) : ""}</time></div>`;
+    return `<div class="trow${wait ? " wait" : ""}" data-s="${esc(e.session)}" style="--rc:${repoColor(e.repo)}" title="${stTitle} · 押すと依頼文を開き、この端末を送り先にする"><i class="${st}"></i><span>${esc(hhmm(new Date(e.ts)))} ${esc(e.repo || "?")} · ${e.asking ? esc("依頼: " + e.asking.prompt.replace(/\s+/g, " ").slice(0, 60)) : esc(e.head || "")}</span><time>${e.lastOutputAt ? ago(e.lastOutputAt) : ""}</time></div>` + (openAsk.has(e.session) && ask ? `<div class="task">${esc(ask)}</div>` : "");
   }).join("");
   if (html === tstatHtml) return; // chip と同じ: 同じ内容なら書き直さない
   tstatHtml = html;
@@ -968,7 +972,15 @@ function renderTstat(list) {
 }
 tstat.addEventListener("click", async (ev) => {
   const b = ev.target.closest("[data-approve]");
-  if (!b) { const r = ev.target.closest("[data-s]"); if (r) pickChip(r.dataset.s); return; }
+  if (!b) {
+    const r = ev.target.closest("[data-s]");
+    if (!r) return;
+    const s = r.dataset.s;
+    openAsk.has(s) ? openAsk.delete(s) : openAsk.add(s);
+    tstatHtml = null; renderTstat(tstatList);
+    pickChip(s);
+    return;
+  }
   // 許可ボタンは行の click (pickChip) に伝えない。id は render 時点のもの: 端末で先に答えていれば server が 409 で断る
   b.disabled = true;
   const say = document.getElementById("cmsg");
