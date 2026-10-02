@@ -93,6 +93,23 @@ async function file(p: string | null): Promise<Response> {
 const PORT = Number(process.env.RMX_PORT ?? 4310);
 const ORIGINS = new Set([`http://127.0.0.1:${PORT}`, `http://localhost:${PORT}`]);
 
+// POST /open {p, reveal?}: 返事中のパスを Mac の既定アプリで開く (reveal なら Finder に表示)。GET にしない: 任意の web ページから踏めてしまう
+// 不変条件: -R 無しの open が走るのは OPEN_EXT だけ (FILE_EXT と別の Set: 足すと GET /file が中身を配信する)。拡張子は index.html の OPEN_EXT と揃える
+const OPEN = process.env.RMX_OPEN_BIN || "open"; // env はテストの stub 差し替え用
+const OPEN_EXT = new Set("code-workspace xmind xlsx docx pptx csv".split(" "));
+async function open(req: Request): Promise<Response> {
+  if (!ORIGINS.has(req.headers.get("origin") ?? "")) return new Response("forbidden origin", { status: 403 });
+  const { p, reveal } = await req.json().catch(() => ({}));
+  if (typeof p !== "string" || !p) return new Response("missing p", { status: 400 });
+  const path = normalize(p);
+  if (p.split("/").includes("..") || !FILE_ROOTS.some((r) => path.startsWith(r))) return new Response("forbidden path", { status: 403 });
+  if (!reveal && !OPEN_EXT.has(extname(path).slice(1).toLowerCase())) return new Response("forbidden type", { status: 403 });
+  if (!(await Bun.file(path).exists())) return new Response("not found", { status: 404 });
+  const proc = Bun.spawn([OPEN, ...(reveal ? ["-R"] : []), path], { stdout: "ignore", stderr: "pipe" });
+  const [err, code] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
+  return code === 0 ? new Response("ok") : new Response(err || `open exited ${code}`, { status: 500 });
+}
+
 // 送信後に端末タブへ戻す (キー入力をすぐ端末で続けられるように)。失敗しても送信は成功扱い: log だけ残す。
 async function focusTerminal(handle: string): Promise<void> {
   try {
@@ -422,6 +439,7 @@ Bun.serve({
     if (pathname === "/send" && req.method === "POST") return send(req);
     if (pathname === "/approve" && req.method === "POST") return approve(req);
     if (pathname === "/paste" && req.method === "POST") return paste(req);
+    if (pathname === "/open" && req.method === "POST") return open(req);
     if (pathname === "/speak" && req.method === "POST") return speak(req);
     if (pathname === "/media") return media(searchParams.get("name"));
     if (pathname === "/skills") return skills(searchParams.get("cwd"));

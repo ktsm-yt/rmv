@@ -154,7 +154,7 @@ chmod +x "$PSSTUB"
 OSASTUB="$TMP/osa-stub"
 printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$2" >> "%s/osa"\n' "$TMP" > "$OSASTUB"
 chmod +x "$OSASTUB"
-GEMINI_API_KEY= RMX_TTS_KEYCHAIN_SERVICE="rmv-test-nonexistent-$$" RMX_PROJECTS_DIR="$TMP/projects" RMX_STATE_DIR="$STATE" RMX_PORT="$PORT" RMX_ORCA_BIN="$STUB" RMX_OSASCRIPT_BIN="$OSASTUB" RMX_PS_BIN="$PSSTUB" RMX_LIVE_TTL_MS=0 bun run "$SERVER" > "$TMP/server.log" 2>&1 &
+GEMINI_API_KEY= RMX_TTS_KEYCHAIN_SERVICE="rmv-test-nonexistent-$$" RMX_PROJECTS_DIR="$TMP/projects" RMX_STATE_DIR="$STATE" RMX_PORT="$PORT" RMX_ORCA_BIN="$STUB" RMX_OSASCRIPT_BIN="$OSASTUB" RMX_PS_BIN="$PSSTUB" RMX_OPEN_BIN="$TMP/open-stub" RMX_LIVE_TTL_MS=0 bun run "$SERVER" > "$TMP/server.log" 2>&1 &
 SRV=$!
 trap 'kill $SRV 2>/dev/null' EXIT
 for _ in $(seq 50); do curl -s -o /dev/null "$BASE/history" && break; sleep 0.1; done
@@ -308,6 +308,40 @@ check "paste: 画像以外 (text/plain) → 415" "$(pst "$GOOD" text/plain "$TMP
 : > "$TMP/empty.png"
 check "paste: 空 → 413" "$(pst "$GOOD" image/png "$TMP/empty.png")" 413
 check "paste: webp (クリップボードに載せられない型) → 415" "$(pst "$GOOD" image/webp "$TMP/p.png")" 415
+
+# --- /open: 返事中のパスを既定アプリ (open) で開く / ⌥ で Finder に表示 (open -R) ---
+# 実物の open を呼ぶとテストでアプリが立ち上がるので、引数を 1 行ずつ追記する stub に向ける (RMX_OPEN_BIN、server 起動行で指定)
+OPENLOG="$TMP/open.log"
+OPENSTUB="$TMP/open-stub"
+printf '#!/usr/bin/env bash\necho "$*" >> "%s"\n' "$OPENLOG" > "$OPENSTUB"
+chmod +x "$OPENSTUB"
+: > "$OPENLOG"
+echo '{}' > "$F/a.code-workspace"
+echo 'echo hi' > "$F/run.sh"
+opn() { curl -s -o "$TMP/body" -w '%{http_code}' -X POST -H "Origin: $1" -H 'content-type: application/json' --data "$2" "$BASE/open"; }
+opno() { curl -s -o "$TMP/body" -w '%{http_code}' -X POST -H 'content-type: application/json' --data "$1" "$BASE/open"; }
+lines() { wc -l < "$OPENLOG" | tr -d ' '; }
+check "open: .code-workspace → 200" "$(opn "$GOOD" "{\"p\":\"$F/a.code-workspace\"}")" 200
+check "open: -R 無しで path だけ渡す" "$(tail -n1 "$OPENLOG")" "$F/a.code-workspace"
+check "open: reveal:true → 200" "$(opn "$GOOD" "{\"p\":\"$F/a.code-workspace\",\"reveal\":true}")" 200
+check "open: reveal は -R 付き" "$(tail -n1 "$OPENLOG")" "-R $F/a.code-workspace"
+L0="$(lines)"
+check "open: .sh を reveal 無し → 403 (実行系は既定アプリで開かない)" "$(opn "$GOOD" "{\"p\":\"$F/run.sh\"}")" 403
+check "open: .sh を reveal 無しで拒否した時は open を呼ばない" "$(lines)" "$L0"
+check "open: .sh でも reveal:true → 200" "$(opn "$GOOD" "{\"p\":\"$F/run.sh\",\"reveal\":true}")" 200
+check "open: .sh の reveal は -R 付き" "$(tail -n1 "$OPENLOG")" "-R $F/run.sh"
+L0="$(lines)"
+check "open: 別 Origin → 403" "$(opn "https://evil.example" "{\"p\":\"$F/a.code-workspace\"}")" 403
+check "open: Origin 無し → 403" "$(opno "{\"p\":\"$F/a.code-workspace\"}")" 403
+check "open: .. を含む → 403" "$(opn "$GOOD" "{\"p\":\"$F/../files/a.code-workspace\"}")" 403
+check "open: root 外 (/etc/hosts) → 403" "$(opn "$GOOD" '{"p":"/etc/hosts","reveal":true}')" 403
+check "open: 存在しないパス → 404" "$(opn "$GOOD" "{\"p\":\"$F/none.xlsx\"}")" 404
+check "open: 拒否・失敗した要求では open を呼ばない" "$(lines)" "$L0"
+check "open: GET は作らない (→ 404)" "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/open?p=$F/a.code-workspace")" 404
+printf '#!/usr/bin/env bash\necho boom >&2; exit 1\n' > "$OPENSTUB"
+check "open: open が異常終了 → 500" "$(opn "$GOOD" "{\"p\":\"$F/a.code-workspace\"}")" 500
+check "open: 500 に stderr を返す" "$(cat "$TMP/body")" boom
+check "page: open 型リンクの描画 (data-open) がある" "$(grep -c 'data-open=' "$A/index.html")" 1
 
 # --- /send + images: クリップボード経由で端末に貼ってから本文 ---
 simg() { printf '{"name":"%s","text":"%s","images":%s,"focus":false}' "$WITH" "$1" "$2"; }
