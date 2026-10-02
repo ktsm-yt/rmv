@@ -96,7 +96,7 @@ const ORIGINS = new Set([`http://127.0.0.1:${PORT}`, `http://localhost:${PORT}`]
 // POST /open {p, reveal?}: 返事中のパスを Mac の既定アプリで開く (reveal なら Finder に表示)。GET にしない: 任意の web ページから踏めてしまう
 // 不変条件: -R 無しの open が走るのは OPEN_EXT だけ (FILE_EXT と別の Set: 足すと GET /file が中身を配信する)。拡張子は index.html の OPEN_EXT と揃える
 const OPEN = process.env.RMX_OPEN_BIN || "open"; // env はテストの stub 差し替え用
-const OPEN_EXT = new Set("code-workspace xmind xlsx docx pptx csv md".split(" "));
+const OPEN_EXT = new Set("code-workspace xmind xlsx docx pptx csv md json".split(" "));
 async function open(req: Request): Promise<Response> {
   if (!ORIGINS.has(req.headers.get("origin") ?? "")) return new Response("forbidden origin", { status: 403 });
   const { p, reveal } = await req.json().catch(() => ({}));

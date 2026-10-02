@@ -320,7 +320,7 @@ const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<
 // 返事中の絶対パス → server の GET /file?p=…。拡張子は server.ts の FILE_EXT と揃える (root の最終判定は server)
 const FILE_EXT = "png|jpe?g|gif|webp|svg|mp4|mov|webm|m4a|mp3|wav|html?|pdf|txt|json";
 // 既定アプリで開く拡張子 (普通のクリック = POST /open)。server.ts の OPEN_EXT と揃える。GET /file では配信しない
-const OPEN_EXT = "code-workspace|xmind|xlsx|docx|pptx|csv|md";
+const OPEN_EXT = "code-workspace|xmind|xlsx|docx|pptx|csv|md|json";
 const OPEN_RE = new RegExp(`\\.(?:${OPEN_EXT})$`, "i");
 const IS_ROOT = /^\/(Users|private|tmp|var)\//;
 const MEDIA = [["img", /\.(png|jpe?g|gif|webp|svg)$/i], ["video", /\.(mp4|mov|webm)$/i], ["audio", /\.(m4a|mp3|wav)$/i]];
