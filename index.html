@@ -1066,6 +1066,11 @@ ctext.addEventListener("paste", async (ev) => {
   renderImgs();
 });
 document.getElementById("cact").addEventListener("click", (ev) => { const b = ev.target.closest(".q"); if (b) sendText(b.dataset.t, false); });
+// state/keys.json の上書きをボタンに反映する (数字キーは N 番目のボタンを押すので、ボタンを変えればキーも変わる)
+fetch("/keys").then((r) => r.json()).then((m) => document.querySelectorAll("#cact .q").forEach((b, i) => {
+  const t = m[i + 1]; if (typeof t !== "string" || !t) return;
+  b.dataset.t = t; b.title = `${t} を送る (${i + 1})`; b.firstChild.textContent = t;
+})).catch(() => {});
 // "/" 補完: 入力が ^/(\S*)$ の間だけ候補 (server /skills) を出す。取得は送り先 (cwd) が変わった時か 60 秒経過で 1 回。
 const sug = document.getElementById("sug");
 let skillList = [], skillCwd = null, skillAt = 0, sugItems = [], sugI = 0;

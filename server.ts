@@ -443,6 +443,8 @@ Bun.serve({
     if (pathname === "/speak" && req.method === "POST") return speak(req);
     if (pathname === "/media") return media(searchParams.get("name"));
     if (pathname === "/skills") return skills(searchParams.get("cwd"));
+    // GET /keys: 数字キー 1〜6 の送る文を手元で上書きする ({"6": "/cf down"})。state/ は公開しないので個人のコマンドを書ける
+    if (pathname === "/keys") { const f = Bun.file(`${STATE}/keys.json`); return (await f.exists()) ? new Response(f, { headers: { "content-type": "application/json" } }) : Response.json({}); }
     if (pathname === "/file") return file(searchParams.get("p"));
     const m = pathname.match(/^\/history\/(.+)$/);
     if (m && NAME.test(m[1])) {
