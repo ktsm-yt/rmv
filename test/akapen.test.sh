@@ -289,6 +289,8 @@ echo '<svg xmlns="http://www.w3.org/2000/svg"/>' > "$F/x.svg"
 check "file: svg → 200" "$(fget "$F/x.svg")" 200
 case "$(hdr content-security-policy)" in *sandbox*) ok "file: svg にも CSP sandbox (中の script から /send を叩かせない)" ;; *) ng "file: svg の CSP に sandbox が無い: $(hdr content-security-policy)" ;; esac
 check "file: 許可外の拡張子 (.ts) → 403" "$(fget "$F/x.ts")" 403
+echo '# hi' > "$F/x.md"
+check "file: .md は配信しない (既定アプリで開く型) → 403" "$(fget "$F/x.md")" 403
 check "file: root 外 (/etc/hosts) → 403" "$(fget /etc/hosts)" 403
 check "file: .. で root 外へ出る → 403" "$(fget "$F/../../../../../../etc/hosts")" 403
 check "file: 存在しない png → 404" "$(fget "$F/none.png")" 404
@@ -318,11 +320,14 @@ chmod +x "$OPENSTUB"
 : > "$OPENLOG"
 echo '{}' > "$F/a.code-workspace"
 echo 'echo hi' > "$F/run.sh"
+echo '# hi' > "$F/n.md"
 opn() { curl -s -o "$TMP/body" -w '%{http_code}' -X POST -H "Origin: $1" -H 'content-type: application/json' --data "$2" "$BASE/open"; }
 opno() { curl -s -o "$TMP/body" -w '%{http_code}' -X POST -H 'content-type: application/json' --data "$1" "$BASE/open"; }
 lines() { wc -l < "$OPENLOG" | tr -d ' '; }
 check "open: .code-workspace → 200" "$(opn "$GOOD" "{\"p\":\"$F/a.code-workspace\"}")" 200
 check "open: -R 無しで path だけ渡す" "$(tail -n1 "$OPENLOG")" "$F/a.code-workspace"
+check "open: .md → 200" "$(opn "$GOOD" "{\"p\":\"$F/n.md\"}")" 200
+check "open: .md も -R 無しで path だけ渡す" "$(tail -n1 "$OPENLOG")" "$F/n.md"
 check "open: reveal:true → 200" "$(opn "$GOOD" "{\"p\":\"$F/a.code-workspace\",\"reveal\":true}")" 200
 check "open: reveal は -R 付き" "$(tail -n1 "$OPENLOG")" "-R $F/a.code-workspace"
 L0="$(lines)"

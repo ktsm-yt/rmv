@@ -74,8 +74,8 @@ async function history(repo: string | null): Promise<Response> {
 // GET /file?p=<絶対パス>: 返事に出た絶対パス (スクショ・動画・生成 html 等) を viewer にそのまま出す口。
 // ponytail: ローカル単一ユーザ前提 (root 配下なら何でも読める)。LAN 公開時は認証。root 内の symlink の先は追わずに通す。
 const FILE_ROOTS = [`${process.env.HOME}/`, "/private/tmp/", "/tmp/", "/private/var/folders/", "/var/folders/"];
-const FILE_EXT = new Set("png jpg jpeg gif webp svg mp4 mov webm m4a mp3 wav html htm pdf md txt json".split(" "));
-const FILE_TYPE: Record<string, string> = { svg: "image/svg+xml", md: TEXT["content-type"], txt: TEXT["content-type"], mov: "video/quicktime" };
+const FILE_EXT = new Set("png jpg jpeg gif webp svg mp4 mov webm m4a mp3 wav html htm pdf txt json".split(" "));
+const FILE_TYPE: Record<string, string> = { svg: "image/svg+xml", txt: TEXT["content-type"], mov: "video/quicktime" };
 async function file(p: string | null): Promise<Response> {
   if (!p) return new Response("missing p", { status: 400 });
   const path = normalize(p);
@@ -96,7 +96,7 @@ const ORIGINS = new Set([`http://127.0.0.1:${PORT}`, `http://localhost:${PORT}`]
 // POST /open {p, reveal?}: 返事中のパスを Mac の既定アプリで開く (reveal なら Finder に表示)。GET にしない: 任意の web ページから踏めてしまう
 // 不変条件: -R 無しの open が走るのは OPEN_EXT だけ (FILE_EXT と別の Set: 足すと GET /file が中身を配信する)。拡張子は index.html の OPEN_EXT と揃える
 const OPEN = process.env.RMX_OPEN_BIN || "open"; // env はテストの stub 差し替え用
-const OPEN_EXT = new Set("code-workspace xmind xlsx docx pptx csv".split(" "));
+const OPEN_EXT = new Set("code-workspace xmind xlsx docx pptx csv md".split(" "));
 async function open(req: Request): Promise<Response> {
   if (!ORIGINS.has(req.headers.get("origin") ?? "")) return new Response("forbidden origin", { status: 403 });
   const { p, reveal } = await req.json().catch(() => ({}));
