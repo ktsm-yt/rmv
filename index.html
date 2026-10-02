@@ -317,18 +317,23 @@ const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<
 
 // 返事中の絶対パス → server の GET /file?p=…。拡張子は server.ts の FILE_EXT と揃える (root の最終判定は server)
 const FILE_EXT = "png|jpe?g|gif|webp|svg|mp4|mov|webm|m4a|mp3|wav|html?|pdf|md|txt|json";
+// 既定アプリで開く拡張子 (普通のクリック = POST /open)。server.ts の OPEN_EXT と揃える。GET /file では配信しない
+const OPEN_EXT = "code-workspace|xmind|xlsx|docx|pptx|csv";
+const OPEN_RE = new RegExp(`\\.(?:${OPEN_EXT})$`, "i");
 const IS_ROOT = /^\/(Users|private|tmp|var)\//;
 const MEDIA = [["img", /\.(png|jpe?g|gif|webp|svg)$/i], ["video", /\.(mp4|mov|webm)$/i], ["audio", /\.(m4a|mp3|wav)$/i]];
 // 生の絶対パス: 直前が語・"/"・`](`・< " ' = (markdown リンク/画像や HTML 属性の中) なら置換しない。末尾の "." は句点として外す
-const RAWPATH = new RegExp(`(?<![\\w/<"'=]|\\]\\()/(?:Users|private|tmp|var)/[^\\s)\\]"'<>]*\\.(?:${FILE_EXT})(?![\\w-]|\\.\\w)`, "gi");
+const RAWPATH = new RegExp(`(?<![\\w/<"'=]|\\]\\()/(?:Users|private|tmp|var)/[^\\s)\\]"'<>]*\\.(?:${FILE_EXT}|${OPEN_EXT})(?![\\w-]|\\.\\w)`, "gi");
 const fileURL = (p) => `/file?p=${encodeURIComponent(p)}`;
+// open 型は navigable な URL にしない (renderer が <a href="#" data-open> にする)。それ以外は /file
+const pathHref = (p) => OPEN_RE.test(p) ? `#open:${encodeURIComponent(p)}` : fileURL(p);
 const mdText = (s) => s.replace(/[[\]\\*_]/g, "\\$&");
 // 1 行の生パスを [basename](/file?p=…) に置き換え、画像・動画・音声のパスを media に集める。code span の中は触らない
 function linkPaths(t) {
   const media = [];
   const md = t.split(/(`[^`]*`)/).map((s, i) => i % 2 ? s : s.replace(RAWPATH, (p) => {
     if (MEDIA.some(([, re]) => re.test(p))) media.push(p);
-    return `[${mdText(p.split("/").pop())}](${fileURL(p)})`;
+    return `[${mdText(p.split("/").pop())}](${pathHref(p)})`;
   })).join("");
   return { md, media };
 }
@@ -349,13 +354,14 @@ function mediaHTML(paths) {
 // 返事が web ページ等の外部文を引いた時に、その HTML が viewer と同じ origin で /send (端末へのキー入力) を叩けないように
 marked.use({
   // markdown リンク・画像の href が絶対パスなら /file 経由にする (renderer より前に token を書き換える)
-  walkTokens(t) { if ((t.type === "link" || t.type === "image") && IS_ROOT.test(t.href)) t.href = fileURL(t.href); },
+  walkTokens(t) { if ((t.type === "link" || t.type === "image") && IS_ROOT.test(t.href)) t.href = t.type === "link" ? pathHref(t.href) : fileURL(t.href); },
   renderer: {
     html({ text }) { return DOMPurify.sanitize(text); },
     // http(s) と /file は新タブ: Orca のフローティングブラウザの viewer から離れないように。他は既定の描画
     // それ以外のスキーム (javascript: 等) は文字だけにする: 返事に混ざった外部文のリンクから /send を叩かせない。href は esc して文字参照でのすり抜けも止める
     link({ href, title, tokens }) {
       const text = this.parser.parseInline(tokens);
+      if (href.startsWith("#open:")) return `<a href="#" data-open="${esc(decodeURIComponent(href.slice(6)))}"${title ? ` title="${esc(title)}"` : ""}>${text}</a>`;
       if (/^[a-z][\w+.-]*:/i.test(href) && !/^(https?|mailto):/i.test(href)) return text;
       const tab = /^(https?:\/\/|\/file\?)/i.test(href) ? ` target="_blank" rel="noopener"` : "";
       return `<a href="${esc(href)}"${title ? ` title="${esc(title)}"` : ""}${tab}>${text}</a>`;
@@ -825,6 +831,15 @@ document.getElementById("reply").addEventListener("click", (ev) => {
   if (im) { zoomSet = [...document.querySelectorAll("#reply .media img")]; return zoomGallery(zoomSet.indexOf(im)); } // 画像は mermaid と同じ全画面 (ホイール拡大・ドラッグ・Esc・← →)
   const cb = ev.target.closest(".cpbtn");
   if (cb) { navigator.clipboard.writeText(cb.previousElementSibling.textContent.replace(/\n$/, "")); cb.textContent = "✓"; setTimeout(() => (cb.textContent = "⧉"), 1200); return; }
+  // パスのリンク: 普通のクリックで既定アプリ (open 型) / ⌥クリックで Finder に表示 (open 型も /file 型も)。⌥クリックの既定動作 (Chromium はリンク先をダウンロードする) は止める
+  const pa = ev.target.closest("a");
+  const pp = pa?.dataset.open ?? (ev.altKey && pa?.getAttribute("href")?.startsWith("/file?p=") ? new URL(pa.href).searchParams.get("p") : null);
+  if (pp) {
+    ev.preventDefault();
+    fetch("/open", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ p: pp, reveal: ev.altKey }) })
+      .then(async (res) => { if (!res.ok) pa.title = await res.text(); }, (e) => { pa.title = String(e); }); // 失敗は title に出す
+    return;
+  }
   if (ev.target.closest("a, input, textarea, iframe, .media")) return; // 画像・動画・音声の操作でピンを付けない
   const d = draftOf(curName());
   const pick = ev.target.closest(".pick");
