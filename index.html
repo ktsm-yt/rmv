@@ -23,14 +23,18 @@
   }
   /* 左のプロジェクト列: 畳むと ☰ だけの細帯。開閉は広い幅でだけ localStorage "rmx.proj" に覚える */
   #proj { overflow-y: auto; padding: 12px 8px; border-right: 1px solid var(--line); background: var(--bg); font-size: 13px; line-height: 1.5; }
-  #phead { display: flex; gap: 6px; }
-  body.proj-closed #phead { flex-direction: column; gap: 0; }
+  #phead { display: flex; flex-direction: column; align-items: flex-start; } /* ☰ の真下に ＋ (開閉どちらでも縦) */
+  #phead #ptoggle { margin-bottom: 4px; }
+  #newbtn { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+  #newbtn .nl { display: none; font-size: 12px; }
+  /* 列が広がっている時 (開いた状態 / 畳んだ列のホバー展開 / 一覧を開いて固定中) だけ ＋ の右にラベルを出す。細帯では隠す */
+  body:not(.proj-closed) #newbtn, body.proj-closed #proj:hover #newbtn, body.proj-closed.new-open #newbtn { width: auto; padding: 0 8px 0 7px; }
+  body:not(.proj-closed) #newbtn .nl, body.proj-closed #proj:hover #newbtn .nl, body.proj-closed.new-open #newbtn .nl { display: inline; }
   #ptoggle, #newbtn, #ctoggle { display: block; font: inherit; font-size: 14px; line-height: 1; width: 24px; height: 24px; padding: 0; margin-bottom: 8px; color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; cursor: pointer; }
   /* ＋ 新規の一覧 (fixed): 開いている間は畳んだ列を広げたまま固定する (body.new-open)。行を押すと即 POST /new */
   body.proj-closed.new-open #proj { position: fixed; left: 0; top: 0; bottom: 0; width: 240px; padding: 12px 8px; overflow-y: auto; z-index: 20; box-shadow: 6px 0 18px rgb(0 0 0 / .18); }
   body.proj-closed.new-open #plist { display: block; }
-  #newpop { position: fixed; left: 8px; top: 44px; width: min(300px, 92vw); max-height: 70vh; overflow-y: auto; z-index: 30; padding: 6px; background: var(--panel); color: var(--fg); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 18px rgb(0 0 0 / .4); font-size: 13px; line-height: 1.5; }
-  body.proj-closed #newpop { top: 84px; } /* 畳んだ列は ☰ の下に ＋ が縦に並ぶので、その下に出す */
+  #newpop { position: fixed; left: 8px; top: 72px; width: min(300px, 92vw); max-height: 70vh; overflow-y: auto; z-index: 30; padding: 6px; background: var(--panel); color: var(--fg); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 18px rgb(0 0 0 / .4); font-size: 13px; line-height: 1.5; }
   #newpop[hidden] { display: none; }
   #newpop .hd { font-size: 11px; color: var(--muted); padding: 2px 8px 4px; }
   #newpop .it { display: flex; justify-content: space-between; gap: 8px; align-items: center; width: 100%; min-height: 40px; box-sizing: border-box; padding: 5px 8px; font: inherit; text-align: left; color: var(--fg); background: none; border: 0; border-radius: 6px; cursor: pointer; }
@@ -277,7 +281,7 @@ applyProjDefault();
 try { document.body.classList.toggle("chat-closed", localStorage.getItem("rmx.chat.open") === "0"); } catch {} // チャット欄の開閉 (既定は開)
 </script>
 <aside id="proj">
-  <div id="phead"><button id="ptoggle" title="プロジェクト列を開く / 畳む">☰</button><button id="newbtn" title="まっさらな Claude Code を Orca の新しい端末タブで起動する">＋</button></div>
+  <div id="phead"><button id="ptoggle" title="プロジェクト列を開く / 畳む">☰</button><button id="newbtn" title="まっさらな Claude Code を Orca の新しい端末タブで起動する"><span>＋</span><span class="nl">新規セッション</span></button></div>
   <nav id="plist"></nav>
 </aside>
 <div id="newpop" hidden></div>
