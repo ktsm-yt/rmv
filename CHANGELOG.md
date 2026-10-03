@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- ファイルを開く処理の拡張子一覧をやめた。返事中の拡張子付きの絶対パスは全部リンクになり、`.tsx` なども開ける。server が判断する: `.xmind` `.xlsx` `.docx` `.pptx` `.code-workspace` は既定アプリ、先頭 8KB に NUL が無いテキストは `open -a` でエディタ (環境変数 `RMX_EDITOR_APP`、既定 `Visual Studio Code`。Mac の既定アプリは ts / tsx / csv を Devin で開くため)、それ以外のバイナリ・ディレクトリは 403。`.sh` などもエディタで開くだけで実行はしない。`.md` `.csv` `.json` もエディタで開く
 - 新しい Claude Code セッションを Orca の新しい端末タブで起動する口 `POST /new {cwd}` と、候補の `GET /worktrees` を足した。`cwd` は `orca worktree list` に載る path だけ。起動コマンドは環境変数 `RMX_NEW_CMD` (既定 `claude`)。画面のボタンはまだ無い
 
 ## v0.9.0 (2026-10-03)

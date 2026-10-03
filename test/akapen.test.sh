@@ -332,25 +332,38 @@ lines() { wc -l < "$OPENLOG" | tr -d ' '; }
 check "open: .code-workspace → 200" "$(opn "$GOOD" "{\"p\":\"$F/a.code-workspace\"}")" 200
 check "open: -R 無しで path だけ渡す" "$(tail -n1 "$OPENLOG")" "$F/a.code-workspace"
 check "open: .md → 200" "$(opn "$GOOD" "{\"p\":\"$F/n.md\"}")" 200
-check "open: .md も -R 無しで path だけ渡す" "$(tail -n1 "$OPENLOG")" "$F/n.md"
+check "open: .md はエディタで開く" "$(tail -n1 "$OPENLOG")" "-a Visual Studio Code $F/n.md"
 check "open: reveal:true → 200" "$(opn "$GOOD" "{\"p\":\"$F/a.code-workspace\",\"reveal\":true}")" 200
 check "open: reveal は -R 付き" "$(tail -n1 "$OPENLOG")" "-R $F/a.code-workspace"
+check "open: .sh (テキスト) を reveal 無し → 200 (エディタで開くだけで実行しない)" "$(opn "$GOOD" "{\"p\":\"$F/run.sh\"}")" 200
+check "open: テキストは open -a <エディタ> path" "$(tail -n1 "$OPENLOG")" "-a Visual Studio Code $F/run.sh"
+echo 'const a = <div/>;' > "$F/c.tsx"
+check "open: .tsx (一覧に無いテキスト) → 200" "$(opn "$GOOD" "{\"p\":\"$F/c.tsx\"}")" 200
+check "open: .tsx は open -a Visual Studio Code path" "$(tail -n1 "$OPENLOG")" "-a Visual Studio Code $F/c.tsx"
+printf 'PK\0\0binary' > "$F/x.xlsx"
+check "open: .xlsx → 200" "$(opn "$GOOD" "{\"p\":\"$F/x.xlsx\"}")" 200
+check "open: .xlsx は既定アプリ (path だけ)" "$(tail -n1 "$OPENLOG")" "$F/x.xlsx"
+printf 'abc\0def' > "$F/b.bin"
 L0="$(lines)"
-check "open: .sh を reveal 無し → 403 (実行系は既定アプリで開かない)" "$(opn "$GOOD" "{\"p\":\"$F/run.sh\"}")" 403
-check "open: .sh を reveal 無しで拒否した時は open を呼ばない" "$(lines)" "$L0"
-check "open: .sh でも reveal:true → 200" "$(opn "$GOOD" "{\"p\":\"$F/run.sh\",\"reveal\":true}")" 200
-check "open: .sh の reveal は -R 付き" "$(tail -n1 "$OPENLOG")" "-R $F/run.sh"
+check "open: NUL を含むバイナリ (.bin) → 403" "$(opn "$GOOD" "{\"p\":\"$F/b.bin\"}")" 403
+mkdir -p "$F/d.app"
+check "open: ディレクトリ → 403" "$(opn "$GOOD" "{\"p\":\"$F/d.app\"}")" 403
+check "open: 403 では open を呼ばない" "$(lines)" "$L0"
+check "open: バイナリでも reveal:true → 200" "$(opn "$GOOD" "{\"p\":\"$F/b.bin\",\"reveal\":true}")" 200
+check "open: reveal は -R 付き" "$(tail -n1 "$OPENLOG")" "-R $F/b.bin"
 L0="$(lines)"
 check "open: 別 Origin → 403" "$(opn "https://evil.example" "{\"p\":\"$F/a.code-workspace\"}")" 403
 check "open: Origin 無し → 403" "$(opno "{\"p\":\"$F/a.code-workspace\"}")" 403
 check "open: .. を含む → 403" "$(opn "$GOOD" "{\"p\":\"$F/../files/a.code-workspace\"}")" 403
 check "open: root 外 (/etc/hosts) → 403" "$(opn "$GOOD" '{"p":"/etc/hosts","reveal":true}')" 403
+check "open: root 外のテキスト (/etc/hosts) reveal 無し → 403" "$(opn "$GOOD" '{"p":"/etc/hosts"}')" 403
 check "open: 存在しないパス → 404" "$(opn "$GOOD" "{\"p\":\"$F/none.xlsx\"}")" 404
 check "open: 拒否・失敗した要求では open を呼ばない" "$(lines)" "$L0"
 check "open: GET は作らない (→ 404)" "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/open?p=$F/a.code-workspace")" 404
 printf '#!/usr/bin/env bash\necho boom >&2; exit 1\n' > "$OPENSTUB"
 check "open: open が異常終了 → 500" "$(opn "$GOOD" "{\"p\":\"$F/a.code-workspace\"}")" 500
 check "open: 500 に stderr を返す" "$(cat "$TMP/body")" boom
+check "page: index.html に拡張子一覧 OPEN_EXT が残っていない (判定は server だけ)" "$(grep -c 'OPEN_EXT' "$A/index.html")" 0
 check "page: open 型リンクの描画 (data-open) がある" "$(grep -c 'data-open=' "$A/index.html")" 1
 
 # --- /worktrees と /new: orca worktree list に載る cwd だけ新規セッションを起動 ---

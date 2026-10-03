@@ -324,18 +324,17 @@ mermaid.initialize({
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 
-// 返事中の絶対パス → server の GET /file?p=…。拡張子は server.ts の FILE_EXT と揃える (root の最終判定は server)
-const FILE_EXT = "png|jpe?g|gif|webp|svg|mp4|mov|webm|m4a|mp3|wav|html?|pdf|txt|json";
-// 既定アプリで開く拡張子 (普通のクリック = POST /open)。server.ts の OPEN_EXT と揃える。GET /file では配信しない
-const OPEN_EXT = "code-workspace|xmind|xlsx|docx|pptx|csv|md|json";
-const OPEN_RE = new RegExp(`\\.(?:${OPEN_EXT})$`, "i");
+// 返事中の絶対パス: GET /file でその場に出す型 (server.ts の FILE_EXT と揃える。json は除く) 以外は全部 POST /open。
+// 開けるかの最終判定は server だけ (拡張子一覧は持たない。403 は title に出る)
+const FILE_EXT = "png|jpe?g|gif|webp|svg|mp4|mov|webm|m4a|mp3|wav|html?|pdf|txt";
+const FILE_RE = new RegExp(`\\.(?:${FILE_EXT})$`, "i");
 const IS_ROOT = /^\/(Users|private|tmp|var)\//;
 const MEDIA = [["img", /\.(png|jpe?g|gif|webp|svg)$/i], ["video", /\.(mp4|mov|webm)$/i], ["audio", /\.(m4a|mp3|wav)$/i]];
 // 生の絶対パス: 直前が語・"/"・`](`・< " ' = (markdown リンク/画像や HTML 属性の中) なら置換しない。末尾の "." は句点として外す
-const RAWPATH = new RegExp(`(?<![\\w/<"'=]|\\]\\()/(?:Users|private|tmp|var)/[^\\s)\\]"'<>]*\\.(?:${FILE_EXT}|${OPEN_EXT})(?![\\w-]|\\.\\w)`, "gi");
+const RAWPATH = new RegExp(`(?<![\\w/<"'=]|\\]\\()/(?:Users|private|tmp|var)/[^\\s)\\]"'<>]*\\.[A-Za-z0-9]{1,12}(?![\\w/-]|\\.\\w)`, "gi");
 const fileURL = (p) => `/file?p=${encodeURIComponent(p)}`;
-// open 型は navigable な URL にしない (renderer が <a href="#" data-open> にする)。それ以外は /file
-const pathHref = (p) => OPEN_RE.test(p) ? `#open:${encodeURIComponent(p)}` : fileURL(p);
+// open 型 (/file 型以外) は navigable な URL にしない (renderer が <a href="#" data-open> にする)
+const pathHref = (p) => !FILE_RE.test(p) ? `#open:${encodeURIComponent(p)}` : fileURL(p);
 const mdText = (s) => s.replace(/[[\]\\*_]/g, "\\$&");
 // 1 行の生パスを [basename](/file?p=…) に置き換え、画像・動画・音声のパスを media に集める。code span の中は触らない
 function linkPaths(t) {

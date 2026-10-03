@@ -1,6 +1,6 @@
 // 実験 A: 固定シェル (index.html) + AI 断片 (state/latest.html, state/history/) を配る最小サーバ。Bun 専用、依存なし。
 // ponytail: 127.0.0.1 固定・認証なし。上限 = 単一ユーザのローカル実験。他の端末からは tailscale serve 等の中継 + RMX_ORIGINS で開く (README)。他人に見せる段階で認証を足す。
-import { appendFile, readdir } from "node:fs/promises";
+import { appendFile, readdir, stat } from "node:fs/promises";
 import { extname, normalize } from "node:path";
 
 const DIR = import.meta.dir;
@@ -95,19 +95,35 @@ const PORT = Number(process.env.RMX_PORT ?? 4310);
 const ORIGINS = new Set([`http://127.0.0.1:${PORT}`, `http://localhost:${PORT}`, ...(process.env.RMX_ORIGINS ?? "").split(",").map((o) => o.trim()).filter(Boolean)]);
 const HOSTS = new Set([...ORIGINS].map((o) => new URL(o).host));
 
-// POST /open {p, reveal?}: 返事中のパスを Mac の既定アプリで開く (reveal なら Finder に表示)。GET にしない: 任意の web ページから踏めてしまう
-// 不変条件: -R 無しの open が走るのは OPEN_EXT だけ (FILE_EXT と別の Set: 足すと GET /file が中身を配信する)。拡張子は index.html の OPEN_EXT と揃える
+// POST /open {p, reveal?}: 返事中のパスを Mac で開く (reveal なら Finder に表示)。GET にしない: 任意の web ページから踏めてしまう
+// 不変条件: -R 無しの open が走るのは (1) DEFAULT_APP_EXT の非テキスト書類か (2) 先頭 8KB に NUL が無いテキストを `open -a <エディタ>` で開く時だけ。
+//   バイナリで一覧外 / ディレクトリは 403。素の `open` に任せると .app や実行ファイル (.command 等) を起動してしまうための守り。
+//   エディタで開くだけなので .sh / .command のテキストは実行されない。Mac の既定アプリは ts / tsx / csv が Devin に紐づくので、テキストは既定アプリに任せない。
+//   開けるかの判定は server だけが持つ (index.html に拡張子一覧は置かない)。GET /file の FILE_EXT とは別物 (そちらは中身を配信する)
 const OPEN = process.env.RMX_OPEN_BIN || "open"; // env はテストの stub 差し替え用
-const OPEN_EXT = new Set("code-workspace xmind xlsx docx pptx csv md json".split(" "));
+const EDITOR_APP = process.env.RMX_EDITOR_APP || "Visual Studio Code";
+const DEFAULT_APP_EXT = new Set("code-workspace xmind xlsx docx pptx".split(" "));
+async function isText(path: string): Promise<boolean> {
+  try {
+    const head = new Uint8Array(await Bun.file(path).slice(0, 8192).arrayBuffer());
+    return !head.includes(0);
+  } catch { return false; } // ディレクトリ・読めないファイルは text 扱いしない
+}
 async function open(req: Request): Promise<Response> {
   if (!ORIGINS.has(req.headers.get("origin") ?? "")) return new Response("forbidden origin", { status: 403 });
   const { p, reveal } = await req.json().catch(() => ({}));
   if (typeof p !== "string" || !p) return new Response("missing p", { status: 400 });
   const path = normalize(p);
   if (p.split("/").includes("..") || !FILE_ROOTS.some((r) => path.startsWith(r))) return new Response("forbidden path", { status: 403 });
-  if (!reveal && !OPEN_EXT.has(extname(path).slice(1).toLowerCase())) return new Response("forbidden type", { status: 403 });
-  if (!(await Bun.file(path).exists())) return new Response("not found", { status: 404 });
-  const proc = Bun.spawn([OPEN, ...(reveal ? ["-R"] : []), path], { stdout: "ignore", stderr: "pipe" });
+  const st = await stat(path).catch(() => null);
+  if (!st) return new Response("not found", { status: 404 });
+  let args: string[];
+  if (reveal) args = ["-R", path];
+  else if (!st.isFile()) return new Response("forbidden type", { status: 403 });
+  else if (DEFAULT_APP_EXT.has(extname(path).slice(1).toLowerCase())) args = [path];
+  else if (await isText(path)) args = ["-a", EDITOR_APP, path];
+  else return new Response("forbidden type", { status: 403 });
+  const proc = Bun.spawn([OPEN, ...args], { stdout: "ignore", stderr: "pipe" });
   const [err, code] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
   return code === 0 ? new Response("ok") : new Response(err || `open exited ${code}`, { status: 500 });
 }
