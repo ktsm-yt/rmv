@@ -175,6 +175,19 @@ AI には HTML を書かせません。
 
 常駐させたい時は、launchd などで `bun run server.ts` を起動しっぱなしにしてください。
 
+### スマホなど別の端末から開く (任意)
+
+rmv は Mac の中 (`127.0.0.1`) でしか待ち受けません。
+別の端末から開く時は、Tailscale の `tailscale serve` に中継させ、その URL を環境変数 `RMX_ORIGINS` で許可します。
+
+```bash
+tailscale serve --bg 4310                # https://<Mac の名前>.<tailnet>.ts.net → 127.0.0.1:4310
+RMX_ORIGINS=https://<Mac の名前>.<tailnet>.ts.net bun run server.ts
+```
+
+届くのは同じ Tailscale につながった端末だけです。
+返事の中のファイルを開くボタンは、押した端末でなく Mac の画面で開きます。
+
 ### 読み上げの声 (任意)
 
 🔊 は Gemini の読み上げモデルで声を作ります。

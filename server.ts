@@ -1,5 +1,5 @@
 // 実験 A: 固定シェル (index.html) + AI 断片 (state/latest.html, state/history/) を配る最小サーバ。Bun 専用、依存なし。
-// ponytail: 127.0.0.1 固定・認証なし。上限 = 単一ユーザのローカル実験。LAN や他人に見せる段階で認証と bind 設定を足す。
+// ponytail: 127.0.0.1 固定・認証なし。上限 = 単一ユーザのローカル実験。他の端末からは tailscale serve 等の中継 + RMX_ORIGINS で開く (README)。他人に見せる段階で認証を足す。
 import { appendFile, readdir } from "node:fs/promises";
 import { extname, normalize } from "node:path";
 
@@ -91,7 +91,9 @@ async function file(p: string | null): Promise<Response> {
 }
 
 const PORT = Number(process.env.RMX_PORT ?? 4310);
-const ORIGINS = new Set([`http://127.0.0.1:${PORT}`, `http://localhost:${PORT}`]);
+// RMX_ORIGINS: 中継越しに開く時の origin (カンマ区切り、例 https://mac.tailXXXX.ts.net)。中継が Host を書き換えても残しても通るよう、Host は origin の host 部と照合する
+const ORIGINS = new Set([`http://127.0.0.1:${PORT}`, `http://localhost:${PORT}`, ...(process.env.RMX_ORIGINS ?? "").split(",").map((o) => o.trim()).filter(Boolean)]);
+const HOSTS = new Set([...ORIGINS].map((o) => new URL(o).host));
 
 // POST /open {p, reveal?}: 返事中のパスを Mac の既定アプリで開く (reveal なら Finder に表示)。GET にしない: 任意の web ページから踏めてしまう
 // 不変条件: -R 無しの open が走るのは OPEN_EXT だけ (FILE_EXT と別の Set: 足すと GET /file が中身を配信する)。拡張子は index.html の OPEN_EXT と揃える
@@ -424,7 +426,7 @@ Bun.serve({
   async fetch(req) {
     const { pathname, searchParams } = new URL(req.url);
     // DNS rebinding 対策: 他サイトが自分のドメインを 127.0.0.1 に向けても Host が違うので読ませない
-    if (!ORIGINS.has(`http://${req.headers.get("host")}`)) return new Response("forbidden host", { status: 403 });
+    if (!HOSTS.has(req.headers.get("host") ?? "")) return new Response("forbidden host", { status: 403 });
     if (pathname === "/") return new Response(Bun.file(`${DIR}/index.html`), { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } }); // no-store: ブラウザが古い index.html を使い回さない
     if (pathname === "/fragment") {
       const f = Bun.file(FRAGMENT);

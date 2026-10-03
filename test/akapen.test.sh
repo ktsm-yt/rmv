@@ -154,7 +154,7 @@ chmod +x "$PSSTUB"
 OSASTUB="$TMP/osa-stub"
 printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$2" >> "%s/osa"\n' "$TMP" > "$OSASTUB"
 chmod +x "$OSASTUB"
-GEMINI_API_KEY= RMX_TTS_KEYCHAIN_SERVICE="rmv-test-nonexistent-$$" RMX_PROJECTS_DIR="$TMP/projects" RMX_STATE_DIR="$STATE" RMX_PORT="$PORT" RMX_ORCA_BIN="$STUB" RMX_OSASCRIPT_BIN="$OSASTUB" RMX_PS_BIN="$PSSTUB" RMX_OPEN_BIN="$TMP/open-stub" RMX_LIVE_TTL_MS=0 bun run "$SERVER" > "$TMP/server.log" 2>&1 &
+GEMINI_API_KEY= RMX_TTS_KEYCHAIN_SERVICE="rmv-test-nonexistent-$$" RMX_PROJECTS_DIR="$TMP/projects" RMX_STATE_DIR="$STATE" RMX_PORT="$PORT" RMX_ORCA_BIN="$STUB" RMX_OSASCRIPT_BIN="$OSASTUB" RMX_PS_BIN="$PSSTUB" RMX_OPEN_BIN="$TMP/open-stub" RMX_LIVE_TTL_MS=0 RMX_ORIGINS="https://mac.tailtest.ts.net" bun run "$SERVER" > "$TMP/server.log" 2>&1 &
 SRV=$!
 trap 'kill $SRV 2>/dev/null' EXIT
 for _ in $(seq 50); do curl -s -o /dev/null "$BASE/history" && break; sleep 0.1; done
@@ -306,6 +306,9 @@ case "$PP" in "$STATE"/paste/*.png) ok "paste: state/paste/ 配下の png パス
 check "paste: 保存した中身が貼った画像と同じ" "$(cmp -s "$PP" "$TMP/p.png" && echo same || echo diff)" same
 check "paste: 別 Origin → 403" "$(pst "https://evil.example" image/png "$TMP/p.png")" 403
 check "paste: Origin 無し → 403" "$(pst - image/png "$TMP/p.png")" 403
+check "paste: RMX_ORIGINS の origin (中継越し) → 200" "$(pst "https://mac.tailtest.ts.net" image/png "$TMP/p.png")" 200
+check "host: RMX_ORIGINS の host (中継が Host を残す) → 200" "$(curl -s -o /dev/null -w '%{http_code}' -H "Host: mac.tailtest.ts.net" "$BASE/history")" 200
+check "host: RMX_ORIGINS と違う ts.net の host → 403" "$(curl -s -o /dev/null -w '%{http_code}' -H "Host: other.tailtest.ts.net" "$BASE/history")" 403
 check "paste: 画像以外 (text/plain) → 415" "$(pst "$GOOD" text/plain "$TMP/p.png")" 415
 : > "$TMP/empty.png"
 check "paste: 空 → 413" "$(pst "$GOOD" image/png "$TMP/empty.png")" 413
