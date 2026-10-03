@@ -119,15 +119,17 @@
     body { grid-template-rows: auto minmax(0, 1fr); }
     #proj { grid-row: 1 / -1; }
     main { grid-row: 2; }
-    #tstat, #cmedia { display: none; }
+    #cmedia { display: none; }
+    /* 狭い幅の進行状況: 欄の上に、作業中と許可待ちの端末だけ出す (全端末の一覧は高さを食う。2026-10-03 user: ぐるぐるが消えていた) */
+    #cform, #cmsg { order: 1; }
+    #tstat .trow:not(.perm):not(:has(i.busy)), #tstat .task { display: none; }
     #chat { grid-column: 2; grid-row: 1; gap: 4px; padding: 6px 12px; border-left: 0; border-bottom: 1px solid var(--line); }
     body.chat-closed #chat { padding: 4px 12px; }
     /* 狭い幅: 左に縦長の欄、右にボタン列、送信は列の一番下 (幅より高さが欲しい / 送信が段の間に浮いていた、2026-10-03 user) */
     #cform { flex-direction: row; align-items: stretch; }
-    #ctext { flex: 1; min-width: 0; min-height: 9em; max-height: 40vh; }
-    #cact { flex: none; max-width: 55%; align-content: space-between; }
-    #copt { order: 1; }
-    #csend { order: 2; margin-left: auto; }
+    #ctext { flex: 1; min-width: 0; min-height: 8em; max-height: 40vh; }
+    #cact { flex: none; max-width: 55%; align-content: flex-start; position: relative; padding-bottom: 32px; } /* ボタンは上に詰め、空けた下端に送信を貼る (折り返しの段の中では margin-top: auto が下まで効かない) */
+    #csend { position: absolute; right: 0; bottom: 0; }
   }
 
   /* 上部: どのセッションの返事か + 履歴の送り */
