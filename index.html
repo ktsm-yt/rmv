@@ -22,7 +22,9 @@
     line-height: 1.8; background: var(--bg); color: var(--fg);
   }
   /* 左のプロジェクト列: 畳むと ☰ だけの細帯。開閉は広い幅でだけ localStorage "rmx.proj" に覚える */
-  #proj { overflow-y: auto; padding: 12px 8px; border-right: 1px solid var(--line); background: var(--bg); font-size: 13px; line-height: 1.5; }
+  #proj { overflow-y: auto; padding: 8px 4px; border-right: 1px solid var(--line); background: var(--bg); font-size: 13px; line-height: 1.5; }
+  /* ☰ / ＋ の位置は畳んだ細帯 (32px = 4 + 24 + 4) に合わせて全状態で同じ。開いた時に動かさない。一覧だけ左右に余白を足す */
+  #plist { padding: 4px 4px 0; }
   #phead { display: flex; flex-direction: column; align-items: flex-start; } /* ☰ の真下に ＋ (開閉どちらでも縦) */
   #phead #ptoggle { margin-bottom: 4px; }
   #newbtn { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
@@ -32,9 +34,9 @@
   body:not(.proj-closed) #newbtn .nl, body.proj-closed #proj:hover #newbtn .nl, body.proj-closed.new-open #newbtn .nl { display: inline; }
   #ptoggle, #newbtn, #ctoggle { display: block; font: inherit; font-size: 14px; line-height: 1; width: 24px; height: 24px; padding: 0; margin-bottom: 8px; color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; cursor: pointer; }
   /* ＋ 新規の一覧 (fixed): 開いている間は畳んだ列を広げたまま固定する (body.new-open)。行を押すと即 POST /new */
-  body.proj-closed.new-open #proj { position: fixed; left: 0; top: 0; bottom: 0; width: 240px; padding: 12px 8px; overflow-y: auto; z-index: 20; box-shadow: 6px 0 18px rgb(0 0 0 / .18); }
+  body.proj-closed.new-open #proj { position: fixed; left: 0; top: 0; bottom: 0; width: 240px; padding: 8px 4px; overflow-y: auto; z-index: 20; box-shadow: 6px 0 18px rgb(0 0 0 / .18); }
   body.proj-closed.new-open #plist { display: block; }
-  #newpop { position: fixed; left: 8px; top: 72px; width: min(300px, 92vw); max-height: 70vh; overflow-y: auto; z-index: 30; padding: 6px; background: var(--panel); color: var(--fg); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 18px rgb(0 0 0 / .4); font-size: 13px; line-height: 1.5; }
+  #newpop { position: fixed; left: 4px; top: 72px; width: min(300px, 92vw); max-height: 70vh; overflow-y: auto; z-index: 30; padding: 6px; background: var(--panel); color: var(--fg); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 18px rgb(0 0 0 / .4); font-size: 13px; line-height: 1.5; }
   #newpop[hidden] { display: none; }
   #newpop .hd { font-size: 11px; color: var(--muted); padding: 2px 8px 4px; }
   #newpop .it { display: flex; justify-content: space-between; gap: 8px; align-items: center; width: 100%; min-height: 40px; box-sizing: border-box; padding: 5px 8px; font: inherit; text-align: left; color: var(--fg); background: none; border: 0; border-radius: 6px; cursor: pointer; }
@@ -45,10 +47,10 @@
   #newpop .it:disabled { opacity: .5; cursor: default; }
   #ptoggle.unread { border-color: var(--red); color: var(--red); }
   body.proj-closed { grid-template-columns: 32px minmax(0, 1fr); }
-  body.proj-closed #proj { padding: 8px 4px; overflow: hidden; }
+  body.proj-closed #proj { overflow: hidden; }
   body.proj-closed #plist { display: none; }
   /* 畳んでいてもホバーで重ねて開く (離すと閉じる)。☰ で開きっぱなしにもできる (2026-09-29 user) */
-  body.proj-closed #proj:hover { position: fixed; left: 0; top: 0; bottom: 0; width: 240px; padding: 12px 8px; overflow-y: auto; z-index: 20; box-shadow: 6px 0 18px rgb(0 0 0 / .18); }
+  body.proj-closed #proj:hover { position: fixed; left: 0; top: 0; bottom: 0; width: 240px; padding: 8px 4px; overflow-y: auto; z-index: 20; box-shadow: 6px 0 18px rgb(0 0 0 / .18); }
   body.proj-closed #proj:hover #plist { display: block; }
   @media (max-width: 699px) {
     /* 狭い幅では開いても返事を押し潰さず、上に重ねる */
