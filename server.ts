@@ -167,9 +167,10 @@ async function newSession(req: Request): Promise<Response> {
   const paths = await worktreePaths();
   if (!paths?.includes(cwd)) return new Response("forbidden cwd", { status: 403 });
   try {
-    // split: near (画面の送り先の端末) が orca terminal list に載っている (生きていて書ける) 時だけ。無ければ tab と同じ create に落とす
+    // split: near (画面の送り先の端末) が orca terminal list に載っていて (生きていて書ける)、かつ選んだ cwd がその端末の worktreePath と一致する時だけ。
+    // 別フォルダを split すると、Orca 上は near の worktree のタブに入ってしまい「新しいフォルダで開いた」と見えない (2026-10-04 実機)。それ以外は tab と同じ create に落とす
     // direction は cfork の「下に分割」(down) と同じ horizontal。cwd は単引用符で囲む (中の ' は '\'' に)。cwd は上で許可リストと完全一致済み
-    const nearOk = NEW_MODE === "split" && typeof near === "string" && !!near && !!(await liveTerminals(0))?.some((t) => t.handle === near);
+    const nearOk = NEW_MODE === "split" && typeof near === "string" && !!near && !!(await liveTerminals(0))?.some((t) => t.handle === near && t.worktreePath === cwd);
     const mode = nearOk ? "split" : "tab";
     const argv = nearOk
       ? [ORCA, "terminal", "split", "--terminal", near, "--direction", "horizontal", "--command", `cd '${cwd.replace(/'/g, `'\\''`)}' && ${NEW_CMD}`, "--json"]

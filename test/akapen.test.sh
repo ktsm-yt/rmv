@@ -233,18 +233,11 @@ case "$ARGV" in
   *) ng "send: stub argv が想定外: $ARGV" ;;
 esac
 check "send: localhost Origin も 200" "$(post "http://localhost:$PORT" "$(body "$WITH" x)")" 200
-# プルダウンが送る `/model X` / `/effort Y` は通常の本文として端末に届く ([1m] の括弧も崩れない)
+# model / effort は表示だけ (v0.13.0 でプルダウンを外した)。選択 UI は無く、表示用の #cnow が最下段 (#copt の後ろの #cbar) にある
 rm -f "$TMP/argv"
-check "send: /model opus[1m] → 200" "$(post "$GOOD" "$(body "$WITH" '/model opus[1m]')")" 200
-check "send: /model opus[1m] が本文のまま orca に届く" "$(sed -n 6p "$TMP/argv")" "/model opus[1m]"
-check "page: モデル / エフォートのプルダウンがある" "$(curl -s "$BASE/" | grep -c 'data-cmd="model"\|data-cmd="effort"')" 1
-# state/keys.json の "models" はそのまま /keys で返り、ページ側 (renderKeys) が候補の置き換えに読む。keys.json 無しは {}
+check "page: model / effort のプルダウンは無い (select.cpick / data-cmd が無い)" "$(curl -s "$BASE/" | grep -c 'class="cpick"\|data-cmd=')" 0
+check "page: 表示だけの #cnow が最下段にある (#copt の後ろに #cbar > #cnow)" "$(curl -s "$BASE/" | grep -c '<div id="copt"></div><div id="cbar"><span id="cnow"')" 1
 check "keys: keys.json 無し → {}" "$(curl -s "$BASE/keys")" "{}"
-printf '{"models": ["sonnet[1m]", "opus[1m]", "fable[1m]"]}' > "$STATE/keys.json"
-check "keys: models が /keys で返る" "$(curl -s "$BASE/keys" | python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)["models"]))')" "sonnet[1m],opus[1m],fable[1m]"
-rm -f "$STATE/keys.json"
-check "page: renderKeys が models を読んで候補を置き換える" "$(curl -s "$BASE/" | grep -c 'Array.isArray(m.models)')" 1
-check "page: プルダウンは送信と同じ最下段 (#copt の後ろに #cbar)" "$(curl -s "$BASE/" | grep -c '<div id="copt"></div><div id="cbar"><select class="cpick" data-cmd="model"')" 1
 check "page: context 使用量は送信欄の見出しの右" "$(curl -s "$BASE/" | grep -c '<span id="cto"></span><span id="cctx"></span></div>')" 1
 check "send: 別 Origin → 403" "$(post "https://evil.example" "$(body "$WITH" x)")" 403
 check "send: 別ポートの 127.0.0.1 → 403" "$(post "http://127.0.0.1:1" "$(body "$WITH" x)")" 403
@@ -421,7 +414,7 @@ check "page: ＋ 新規ボタン (#newbtn) と一覧 (#newpop) がある" "$(cur
 # --- RMX_NEW_MODE=split: near が list に載っていれば画面の送り先の端末を分割 (direction = cfork の down = horizontal) ---
 WTQ="$TMP/it's wt"
 printf '{"ok":true,"result":{"worktrees":[{"path":"%s"},{"path":"%s"}]}}' "$WTA" "$WTQ" > "$TMP/wt.json"
-list "$(term term_near "$WTA" 1)" "$(term term_ro "$WTA" 1 true false)"
+list "$(term term_near "$WTA" 1)" "$(term term_ro "$WTA" 1 true false)" "$(term term_nearq "$WTQ" 1)"
 PORT2="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')"
 RMX_NEW_MODE=split RMX_STATE_DIR="$STATE" RMX_PORT="$PORT2" RMX_ORCA_BIN="$STUB" RMX_WT_TTL_MS=0 RMX_LIVE_TTL_MS=0 bun run "$SERVER" > "$TMP/server2.log" 2>&1 &
 SRV2=$!
@@ -433,7 +426,7 @@ check "new(split): near が list に載る → 200" "$(nw2 "{\"cwd\":\"$WTA\",\"
 check "new(split): terminal split --terminal <near> --direction horizontal --command cd '<cwd>' && claude" "$(tr '\n' ' ' < "$TMP/newargv")" "terminal split --terminal term_near --direction horizontal --command cd '$WTA' && claude --json "
 check "new(split): 戻りに mode split" "$(cat "$TMP/body")" '{"handle":"term_split","mode":"split"}'
 rm -f "$TMP/newargv"
-check "new(split): cwd に ' を含む → '\\'' にエスケープ" "$(nw2 "{\"cwd\":\"$WTQ\",\"near\":\"term_near\"}") $(sed -n 8p "$TMP/newargv")" "200 cd '$TMP/it'\\''s wt' && claude"
+check "new(split): cwd に ' を含む → '\\'' にエスケープ" "$(nw2 "{\"cwd\":\"$WTQ\",\"near\":\"term_nearq\"}") $(sed -n 8p "$TMP/newargv")" "200 cd '$TMP/it'\\''s wt' && claude"
 rm -f "$TMP/newargv"
 check "new(split): near が list に無い → create にフォールバック (mode tab)" "$(nw2 "{\"cwd\":\"$WTA\",\"near\":\"term_dead\"}") $(cat "$TMP/body")" '200 {"handle":"term_new","mode":"tab"}'
 check "new(split): フォールバックは terminal create" "$(tr '\n' ' ' < "$TMP/newargv" | cut -c1-15)" "terminal create"
@@ -441,6 +434,11 @@ rm -f "$TMP/newargv"
 check "new(split): near が書けない端末 (writable false) → create" "$(nw2 "{\"cwd\":\"$WTA\",\"near\":\"term_ro\"}")$(tr '\n' ' ' < "$TMP/newargv" | cut -c1-15)" "200terminal create"
 rm -f "$TMP/newargv"
 check "new(split): near 無し → create" "$(nw2 "{\"cwd\":\"$WTA\"}")$(tr '\n' ' ' < "$TMP/newargv" | cut -c1-15)" "200terminal create"
+rm -f "$TMP/newargv"
+# 別フォルダを split すると Orca 上は near の worktree のタブに入る (2026-10-04 実機)。cwd が near の worktreePath と違えば create
+rm -f "$TMP/newargv"
+check "new(split): cwd が near の worktreePath と違う → create (mode tab)" "$(nw2 "{\"cwd\":\"$WTQ\",\"near\":\"term_near\"}") $(cat "$TMP/body")" '200 {"handle":"term_new","mode":"tab"}'
+check "new(split): 別フォルダは terminal create --worktree path:<cwd>" "$(tr '\n' ' ' < "$TMP/newargv")" "terminal create --worktree path:$WTQ --command claude --focus --json "
 rm -f "$TMP/newargv"
 check "new(split): 許可リスト外の cwd は near があっても 403" "$(nw2 '{"cwd":"/Users/i/elsewhere","near":"term_near"}')" 403
 check "new(split): 403 では split も create も呼ばない" "$([ -e "$TMP/newargv" ] && echo called || echo none)" none

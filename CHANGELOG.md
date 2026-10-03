@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.13.0 (2026-10-04)
+
+- model / effort のプルダウンを外し、送り先セッションの今の値を「opus · high」の形で出すだけにした (送信ボタンの左)。rmv から `/model` `/effort` を送る機能は無くなった (切り替えは Orca / 端末側。端末の入力欄に書きかけがあると、そこへ連結されて混ざる事故があったため)。値の取り方 (`GET /now`、送り先が変わった時と新しい返事が来た時に取り直す) は同じ。`state/keys.json` の `"models"` は読まなくなった
+- `POST /new` の split (`RMX_NEW_MODE=split`) は、選んだ cwd が送り先の端末の worktreePath と一致する時だけにした。別フォルダを選んだ時は tab と同じ `orca terminal create --worktree path:<cwd>` で開く (別フォルダを split すると、Orca 上は送り先の worktree のタブの中に入り、新しいフォルダで開いたように見えなかった)
+
 ## v0.12.0 (2026-10-04)
 
 - チャット欄の見出し (送り先の名前) の右に送り先セッションの context 使用量を「268k / 1M」の形で出す (割合は title に「26.8% 使用」、60% 以上で黄・80% 以上で赤、取れなければ出さない)。`GET /now` の返り値に `ctx: {used, limit}` を足した (used = transcript の最後の本体 assistant 行 (subagent は除く) の usage の input + cache_creation + cache_read + output、limit = model が `[1m]` で終われば 1,000,000、それ以外は 200,000 の推定)。取り直しは model / effort と同じ
