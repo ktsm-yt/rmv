@@ -127,6 +127,7 @@ check "prompt hook: 貼り付けの目印タグ (pasted_content) は外す" "$(f
 cat > "$STUB" <<EOF
 #!/usr/bin/env bash
 if [ "\$1" = worktree ]; then cat "$TMP/wt.json" 2>/dev/null || exit 1; exit 0; fi
+if [ "\$1 \$2" = "terminal split" ]; then printf '%s\n' "\$@" > "$TMP/newargv"; echo '{"ok":true,"result":{"terminal":{"handle":"term_split"}}}'; exit 0; fi
 if [ "\$1 \$2" = "terminal create" ]; then printf '%s\n' "\$@" > "$TMP/newargv"; echo '{"ok":true,"result":{"terminal":{"handle":"term_new"}}}'; exit 0; fi
 if [ "\$2" = list ]; then echo list >> "$TMP/lists"; cat "$TMP/list.json" 2>/dev/null || exit 1; exit 0; fi
 # read: 下書き欄の [Image #N] = これまでに届いた Ctrl+V の数 ($TMP/noimg があれば増やさない = 貼れなかった)
@@ -394,7 +395,9 @@ rm -f "$TMP/newargv"
 nw() { curl -s -o "$TMP/body" -w '%{http_code}' -X POST ${1:+-H "Origin: $1"} -H 'content-type: application/json' --data "$2" "$BASE/new"; }
 check "new: 一覧に載る cwd → 200" "$(nw "$GOOD" "{\"cwd\":\"$WTA\"}")" 200
 check "new: orca terminal create の引数" "$(tr '\n' ' ' < "$TMP/newargv")" "terminal create --worktree path:$WTA --command claude --focus --json "
-check "new: 戻りに handle" "$(cat "$TMP/body")" '{"handle":"term_new"}'
+check "new: 戻りに handle と mode (RMX_NEW_MODE 未設定 = tab)" "$(cat "$TMP/body")" '{"handle":"term_new","mode":"tab"}'
+rm -f "$TMP/newargv"
+check "new: RMX_NEW_MODE 未設定なら near があっても create" "$(nw "$GOOD" "{\"cwd\":\"$WTA\",\"near\":\"term_near\"}")$(tr '\n' ' ' < "$TMP/newargv" | cut -c1-15)" "200terminal create"
 rm -f "$TMP/newargv"
 check "new: 一覧に無い cwd → 403" "$(nw "$GOOD" '{"cwd":"/Users/i/elsewhere"}')" 403
 check "new: Origin 無し → 403" "$(nw "" "{\"cwd\":\"$WTA\"}")" 403
@@ -402,6 +405,33 @@ check "new: 別 Origin → 403" "$(nw "bad-origin" "{\"cwd\":\"$WTA\"}")" 403
 check "new: 403 では terminal create を呼ばない" "$([ -e "$TMP/newargv" ] && echo called || echo none)" none
 check "new: cwd 無し → 400" "$(nw "$GOOD" '{}')" 400
 check "page: ＋ 新規ボタン (#newbtn) と一覧 (#newpop) がある" "$(curl -s "$BASE/" | grep -c 'id="newbtn"\|id="newpop"')" 2
+# --- RMX_NEW_MODE=split: near が list に載っていれば画面の送り先の端末を分割 (direction = cfork の down = horizontal) ---
+WTQ="$TMP/it's wt"
+printf '{"ok":true,"result":{"worktrees":[{"path":"%s"},{"path":"%s"}]}}' "$WTA" "$WTQ" > "$TMP/wt.json"
+list "$(term term_near "$WTA" 1)" "$(term term_ro "$WTA" 1 true false)"
+PORT2="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')"
+RMX_NEW_MODE=split RMX_STATE_DIR="$STATE" RMX_PORT="$PORT2" RMX_ORCA_BIN="$STUB" RMX_WT_TTL_MS=0 RMX_LIVE_TTL_MS=0 bun run "$SERVER" > "$TMP/server2.log" 2>&1 &
+SRV2=$!
+trap 'kill $SRV $SRV2 2>/dev/null' EXIT
+for _ in $(seq 50); do curl -s -o /dev/null "http://127.0.0.1:$PORT2/history" && break; sleep 0.1; done
+nw2() { curl -s -o "$TMP/body" -w '%{http_code}' -X POST -H "Origin: http://127.0.0.1:$PORT2" -H 'content-type: application/json' --data "$1" "http://127.0.0.1:$PORT2/new"; }
+rm -f "$TMP/newargv"
+check "new(split): near が list に載る → 200" "$(nw2 "{\"cwd\":\"$WTA\",\"near\":\"term_near\"}")" 200
+check "new(split): terminal split --terminal <near> --direction horizontal --command cd '<cwd>' && claude" "$(tr '\n' ' ' < "$TMP/newargv")" "terminal split --terminal term_near --direction horizontal --command cd '$WTA' && claude --json "
+check "new(split): 戻りに mode split" "$(cat "$TMP/body")" '{"handle":"term_split","mode":"split"}'
+rm -f "$TMP/newargv"
+check "new(split): cwd に ' を含む → '\\'' にエスケープ" "$(nw2 "{\"cwd\":\"$WTQ\",\"near\":\"term_near\"}") $(sed -n 8p "$TMP/newargv")" "200 cd '$TMP/it'\\''s wt' && claude"
+rm -f "$TMP/newargv"
+check "new(split): near が list に無い → create にフォールバック (mode tab)" "$(nw2 "{\"cwd\":\"$WTA\",\"near\":\"term_dead\"}") $(cat "$TMP/body")" '200 {"handle":"term_new","mode":"tab"}'
+check "new(split): フォールバックは terminal create" "$(tr '\n' ' ' < "$TMP/newargv" | cut -c1-15)" "terminal create"
+rm -f "$TMP/newargv"
+check "new(split): near が書けない端末 (writable false) → create" "$(nw2 "{\"cwd\":\"$WTA\",\"near\":\"term_ro\"}")$(tr '\n' ' ' < "$TMP/newargv" | cut -c1-15)" "200terminal create"
+rm -f "$TMP/newargv"
+check "new(split): near 無し → create" "$(nw2 "{\"cwd\":\"$WTA\"}")$(tr '\n' ' ' < "$TMP/newargv" | cut -c1-15)" "200terminal create"
+rm -f "$TMP/newargv"
+check "new(split): 許可リスト外の cwd は near があっても 403" "$(nw2 '{"cwd":"/Users/i/elsewhere","near":"term_near"}')" 403
+check "new(split): 403 では split も create も呼ばない" "$([ -e "$TMP/newargv" ] && echo called || echo none)" none
+list "$(term term_test "$CWD" 1)"
 
 # --- /send + images: クリップボード経由で端末に貼ってから本文 ---
 simg() { printf '{"name":"%s","text":"%s","images":%s,"focus":false}' "$WITH" "$1" "$2"; }

@@ -1301,7 +1301,7 @@ newpop.addEventListener("click", async (ev) => {
   const say = document.getElementById("cmsg");
   b.disabled = true;
   try {
-    const r = await fetch("/new", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ cwd: b.dataset.cwd }) });
+    const r = await fetch("/new", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ cwd: b.dataset.cwd, near: chatTo()?.terminal ? chatTo().session : undefined }) }); // near = 送り先の端末 (RMX_NEW_MODE=split の時だけ server が使う)
     if (!r.ok) throw new Error((await r.text()) || String(r.status));
     say.textContent = "";
     closeNew();

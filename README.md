@@ -200,6 +200,7 @@ launchd で常駐させている時は、`RMX_ORIGINS=…` の行を `state/env`
 候補の一覧は `GET /worktrees` で取れます (60 秒 memo)。
 
 - `RMX_NEW_CMD`: 端末で走らせるコマンド (既定 `claude`)
+- `RMX_NEW_MODE`: `tab` (既定、新しいタブ) / `split` (画面が今の送り先にしている端末を下に分割。その端末が見つからない時は tab)
 
 ### 読み上げの声 (任意)
 

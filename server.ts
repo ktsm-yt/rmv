@@ -158,19 +158,27 @@ async function worktrees(): Promise<Response> {
 // POST /new {cwd}: まっさらな Claude Code セッションを Orca の新しい端末タブで起動する。
 // cwd は orca worktree list に載っている path と完全一致する時だけ (任意の dir で任意の command を走らせない)。command は RMX_NEW_CMD (既定 claude)。shell は通さない
 const NEW_CMD = process.env.RMX_NEW_CMD || "claude";
+const NEW_MODE = process.env.RMX_NEW_MODE === "split" ? "split" : "tab"; // tab = 新しいタブ (既定) / split = 画面の送り先の端末を分割
 async function newSession(req: Request): Promise<Response> {
   if (!ORIGINS.has(req.headers.get("origin") ?? "")) return new Response("forbidden origin", { status: 403 });
-  const { cwd } = await req.json().catch(() => ({}));
+  const { cwd, near } = await req.json().catch(() => ({}));
   if (typeof cwd !== "string" || !cwd) return new Response("missing cwd", { status: 400 });
   const paths = await worktreePaths();
   if (!paths?.includes(cwd)) return new Response("forbidden cwd", { status: 403 });
   try {
-    const proc = Bun.spawn([ORCA, "terminal", "create", "--worktree", `path:${cwd}`, "--command", NEW_CMD, "--focus", "--json"], { stdout: "pipe", stderr: "pipe" });
+    // split: near (画面の送り先の端末) が orca terminal list に載っている (生きていて書ける) 時だけ。無ければ tab と同じ create に落とす
+    // direction は cfork の「下に分割」(down) と同じ horizontal。cwd は単引用符で囲む (中の ' は '\'' に)。cwd は上で許可リストと完全一致済み
+    const nearOk = NEW_MODE === "split" && typeof near === "string" && !!near && !!(await liveTerminals(0))?.some((t) => t.handle === near);
+    const mode = nearOk ? "split" : "tab";
+    const argv = nearOk
+      ? [ORCA, "terminal", "split", "--terminal", near, "--direction", "horizontal", "--command", `cd '${cwd.replace(/'/g, `'\\''`)}' && ${NEW_CMD}`, "--json"]
+      : [ORCA, "terminal", "create", "--worktree", `path:${cwd}`, "--command", NEW_CMD, "--focus", "--json"];
+    const proc = Bun.spawn(argv, { stdout: "pipe", stderr: "pipe" });
     const [out, err, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
     if (code !== 0) return new Response(err.trim() || out.trim() || `orca exited ${code}`, { status: 500 });
     let handle: string | null = null;
     try { const r = JSON.parse(out)?.result; handle = r?.terminal?.handle ?? r?.handle ?? null; } catch {}
-    return Response.json({ handle });
+    return Response.json({ handle, mode });
   } catch (e) {
     return new Response(`orca spawn failed: ${e}`, { status: 500 });
   }
