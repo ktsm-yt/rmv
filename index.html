@@ -23,7 +23,22 @@
   }
   /* 左のプロジェクト列: 畳むと ☰ だけの細帯。開閉は広い幅でだけ localStorage "rmx.proj" に覚える */
   #proj { overflow-y: auto; padding: 12px 8px; border-right: 1px solid var(--line); background: var(--bg); font-size: 13px; line-height: 1.5; }
-  #ptoggle, #ctoggle { display: block; font: inherit; font-size: 14px; line-height: 1; width: 24px; height: 24px; padding: 0; margin-bottom: 8px; color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; cursor: pointer; }
+  #phead { display: flex; gap: 6px; }
+  body.proj-closed #phead { flex-direction: column; gap: 0; }
+  #ptoggle, #newbtn, #ctoggle { display: block; font: inherit; font-size: 14px; line-height: 1; width: 24px; height: 24px; padding: 0; margin-bottom: 8px; color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; cursor: pointer; }
+  /* ＋ 新規の一覧 (fixed): 開いている間は畳んだ列を広げたまま固定する (body.new-open)。行を押すと即 POST /new */
+  body.proj-closed.new-open #proj { position: fixed; left: 0; top: 0; bottom: 0; width: 240px; padding: 12px 8px; overflow-y: auto; z-index: 20; box-shadow: 6px 0 18px rgb(0 0 0 / .18); }
+  body.proj-closed.new-open #plist { display: block; }
+  #newpop { position: fixed; left: 8px; top: 44px; width: min(300px, 92vw); max-height: 70vh; overflow-y: auto; z-index: 30; padding: 6px; background: var(--panel); color: var(--fg); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 18px rgb(0 0 0 / .4); font-size: 13px; line-height: 1.5; }
+  body.proj-closed #newpop { top: 84px; } /* 畳んだ列は ☰ の下に ＋ が縦に並ぶので、その下に出す */
+  #newpop[hidden] { display: none; }
+  #newpop .hd { font-size: 11px; color: var(--muted); padding: 2px 8px 4px; }
+  #newpop .it { display: flex; justify-content: space-between; gap: 8px; align-items: center; width: 100%; min-height: 40px; box-sizing: border-box; padding: 5px 8px; font: inherit; text-align: left; color: var(--fg); background: none; border: 0; border-radius: 6px; cursor: pointer; }
+  #newpop .it:hover { background: color-mix(in srgb, var(--fg) 8%, transparent); }
+  #newpop .it.sub { padding-left: 22px; color: var(--muted); font-size: 12px; }
+  #newpop .it.cur { background: color-mix(in srgb, var(--red) 22%, transparent); font-weight: 600; }
+  #newpop .it .k { font-size: 11px; color: var(--red); white-space: nowrap; }
+  #newpop .it:disabled { opacity: .5; cursor: default; }
   #ptoggle.unread { border-color: var(--red); color: var(--red); }
   body.proj-closed { grid-template-columns: 32px minmax(0, 1fr); }
   body.proj-closed #proj { padding: 8px 4px; overflow: hidden; }
@@ -262,9 +277,10 @@ applyProjDefault();
 try { document.body.classList.toggle("chat-closed", localStorage.getItem("rmx.chat.open") === "0"); } catch {} // チャット欄の開閉 (既定は開)
 </script>
 <aside id="proj">
-  <button id="ptoggle" title="プロジェクト列を開く / 畳む">☰</button>
+  <div id="phead"><button id="ptoggle" title="プロジェクト列を開く / 畳む">☰</button><button id="newbtn" title="まっさらな Claude Code を Orca の新しい端末タブで起動する">＋</button></div>
   <nav id="plist"></nav>
 </aside>
+<div id="newpop" hidden></div>
 <main>
   <div id="bar">
     <span id="filter"></span><span id="stamp"></span><span id="sent"></span>
@@ -1235,6 +1251,57 @@ document.getElementById("ptoggle").onclick = () => {
   if (!narrow.matches) try { localStorage.setItem("rmx.proj", closed ? "closed" : "open"); } catch {}
 };
 renderFilter();
+
+// ＋ 新規: GET /worktrees の path を一覧にし、行を押したら即 POST /new (許可する cwd の判定は server だけ)。
+// 並び = /history で最近返事があった順 (repo 基準)。worktree (/.worktrees/ /.harness-worktrees/) は親の下に字下げ。先頭 = 選んでいる repo に一致する path
+const newpop = document.getElementById("newpop");
+const closeNew = () => { newpop.hidden = true; document.body.classList.remove("new-open"); };
+const WT_RE = /^(.*?)\/\.(?:harness-)?worktrees\//;
+async function openNew() {
+  const say = document.getElementById("cmsg");
+  try {
+    const r = await fetch("/worktrees", { cache: "no-store" });
+    if (!r.ok) throw new Error((await r.text()) || String(r.status));
+    const paths = await r.json();
+    if (!Array.isArray(paths) || !paths.length) throw new Error("worktree が無い");
+    const base = (p) => p.split("/").filter(Boolean).pop();
+    const last = new Map(); // repo (小文字) → 最後の返事の時刻
+    for (const e of all) { const k = e.repo.toLowerCase(), t = Date.parse(e.ts ?? "") || 0; if (t > (last.get(k) ?? -1)) last.set(k, t); }
+    const rank = (p) => last.get(base(p).toLowerCase()) ?? -1;
+    const byRank = (a, b) => rank(b) - rank(a);
+    const want = (REPO || cur?.repo || "").toLowerCase();
+    const curPath = want ? paths.find((p) => base(p).toLowerCase() === want && !WT_RE.test(p)) ?? paths.find((p) => base(p).toLowerCase() === want) : null;
+    const parentOf = (p) => WT_RE.exec(p)?.[1];
+    const mains = paths.filter((p) => !parentOf(p) || !paths.includes(parentOf(p)));
+    const kids = (m) => paths.filter((p) => parentOf(p) === m).sort(byRank);
+    const groupRank = (m) => Math.max(rank(m), ...kids(m).map(rank));
+    mains.sort((a, b) => groupRank(b) - groupRank(a));
+    if (curPath) { const i = mains.indexOf(curPath); if (i >= 0) mains.splice(i, 1); mains.unshift(curPath); }
+    const cnt = new Map(); for (const m of mains) cnt.set(base(m), (cnt.get(base(m)) ?? 0) + 1);
+    const label = (p) => cnt.get(base(p)) > 1 ? p.split("/").filter(Boolean).slice(-2).join("/") : base(p);
+    const row = (p, sub) => `<button class="it${sub ? " sub" : ""}${p === curPath ? " cur" : ""}" data-cwd="${esc(p)}" title="${esc(p)}"><span>${sub ? "└ " : ""}${esc(sub ? base(p) : label(p))}</span>${p === curPath ? '<span class="k">選択中</span>' : ""}</button>`;
+    newpop.innerHTML = `<div class="hd">どのフォルダで新しく始める?</div>` + mains.map((m) => row(m, false) + kids(m).filter((c) => c !== curPath).map((c) => row(c, true)).join("")).join("");
+    newpop.hidden = false;
+    document.body.classList.add("new-open");
+    say.textContent = "";
+  } catch (e) { say.textContent = e.message ?? String(e); }
+}
+document.getElementById("newbtn").onclick = (ev) => { ev.stopPropagation(); if (newpop.hidden) openNew(); else closeNew(); };
+newpop.addEventListener("click", async (ev) => {
+  ev.stopPropagation();
+  const b = ev.target.closest("[data-cwd]");
+  if (!b) return;
+  const say = document.getElementById("cmsg");
+  b.disabled = true;
+  try {
+    const r = await fetch("/new", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ cwd: b.dataset.cwd }) });
+    if (!r.ok) throw new Error((await r.text()) || String(r.status));
+    say.textContent = "";
+    closeNew();
+  } catch (e) { say.textContent = e.message ?? String(e); b.disabled = false; }
+});
+document.addEventListener("click", () => { if (!newpop.hidden) closeNew(); });
+document.addEventListener("keydown", (ev) => { if (ev.code === "Escape" && !newpop.hidden) closeNew(); });
 
 let fragMod = null;
 async function poll() {

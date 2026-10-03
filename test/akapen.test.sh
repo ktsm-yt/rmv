@@ -401,6 +401,7 @@ check "new: Origin 無し → 403" "$(nw "" "{\"cwd\":\"$WTA\"}")" 403
 check "new: 別 Origin → 403" "$(nw "bad-origin" "{\"cwd\":\"$WTA\"}")" 403
 check "new: 403 では terminal create を呼ばない" "$([ -e "$TMP/newargv" ] && echo called || echo none)" none
 check "new: cwd 無し → 400" "$(nw "$GOOD" '{}')" 400
+check "page: ＋ 新規ボタン (#newbtn) と一覧 (#newpop) がある" "$(curl -s "$BASE/" | grep -c 'id="newbtn"\|id="newpop"')" 2
 
 # --- /send + images: クリップボード経由で端末に貼ってから本文 ---
 simg() { printf '{"name":"%s","text":"%s","images":%s,"focus":false}' "$WITH" "$1" "$2"; }
