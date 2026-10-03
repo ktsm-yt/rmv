@@ -120,9 +120,10 @@
     #proj { grid-row: 1 / -1; }
     main { grid-row: 2; }
     #cmedia { display: none; }
-    /* 狭い幅の進行状況: 欄の上に、作業中と許可待ちの端末だけ出す (全端末の一覧は高さを食う。2026-10-03 user: ぐるぐるが消えていた) */
+    /* 狭い幅の進行状況: 送信の下に、作業中と許可待ちの端末だけ出す (全端末の一覧は高さを食う。2026-10-03 user: ぐるぐるが消えていた / 欄の上だと送り先の行と見分けにくい)。依頼文は既定で畳み、行を押すと開く */
     #cform, #cmsg { order: 1; }
-    #tstat .trow:not(.perm):not(:has(i.busy)), #tstat .task { display: none; }
+    #tstat { order: 2; }
+    #tstat .trow:not(.perm):not(:has(i.busy)), #tstat .trow:not(.perm):not(:has(i.busy)) + .task { display: none; }
     #chat { grid-column: 2; grid-row: 1; gap: 4px; padding: 6px 12px; border-left: 0; border-bottom: 1px solid var(--line); }
     body.chat-closed #chat { padding: 4px 12px; }
     /* 狭い幅: 左に縦長の欄、右にボタン列、送信は列の一番下 (幅より高さが欲しい / 送信が段の間に浮いていた、2026-10-03 user) */
