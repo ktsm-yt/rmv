@@ -157,7 +157,7 @@ chmod +x "$PSSTUB"
 OSASTUB="$TMP/osa-stub"
 printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$2" >> "%s/osa"\n' "$TMP" > "$OSASTUB"
 chmod +x "$OSASTUB"
-GEMINI_API_KEY= RMX_TTS_KEYCHAIN_SERVICE="rmv-test-nonexistent-$$" RMX_PROJECTS_DIR="$TMP/projects" RMX_STATE_DIR="$STATE" RMX_PORT="$PORT" RMX_ORCA_BIN="$STUB" RMX_OSASCRIPT_BIN="$OSASTUB" RMX_PS_BIN="$PSSTUB" RMX_OPEN_BIN="$TMP/open-stub" RMX_LIVE_TTL_MS=0 RMX_WT_TTL_MS=0 RMX_ORIGINS="https://mac.tailtest.ts.net" bun run "$SERVER" > "$TMP/server.log" 2>&1 &
+GEMINI_API_KEY= RMX_TTS_KEYCHAIN_SERVICE="rmv-test-nonexistent-$$" RMX_PROJECTS_DIR="$TMP/projects" RMX_CC_SETTINGS="$TMP/cc-settings.json" RMX_STATE_DIR="$STATE" RMX_PORT="$PORT" RMX_ORCA_BIN="$STUB" RMX_OSASCRIPT_BIN="$OSASTUB" RMX_PS_BIN="$PSSTUB" RMX_OPEN_BIN="$TMP/open-stub" RMX_LIVE_TTL_MS=0 RMX_WT_TTL_MS=0 RMX_ORIGINS="https://mac.tailtest.ts.net" bun run "$SERVER" > "$TMP/server.log" 2>&1 &
 SRV=$!
 trap 'kill $SRV 2>/dev/null' EXIT
 for _ in $(seq 50); do curl -s -o /dev/null "$BASE/history" && break; sleep 0.1; done
@@ -233,6 +233,18 @@ case "$ARGV" in
   *) ng "send: stub argv が想定外: $ARGV" ;;
 esac
 check "send: localhost Origin も 200" "$(post "http://localhost:$PORT" "$(body "$WITH" x)")" 200
+# プルダウンが送る `/model X` / `/effort Y` は通常の本文として端末に届く ([1m] の括弧も崩れない)
+rm -f "$TMP/argv"
+check "send: /model opus[1m] → 200" "$(post "$GOOD" "$(body "$WITH" '/model opus[1m]')")" 200
+check "send: /model opus[1m] が本文のまま orca に届く" "$(sed -n 6p "$TMP/argv")" "/model opus[1m]"
+check "page: モデル / エフォートのプルダウンがある" "$(curl -s "$BASE/" | grep -c 'data-cmd="model"\|data-cmd="effort"')" 1
+# state/keys.json の "models" はそのまま /keys で返り、ページ側 (renderKeys) が候補の置き換えに読む。keys.json 無しは {}
+check "keys: keys.json 無し → {}" "$(curl -s "$BASE/keys")" "{}"
+printf '{"models": ["sonnet[1m]", "opus[1m]", "fable[1m]"]}' > "$STATE/keys.json"
+check "keys: models が /keys で返る" "$(curl -s "$BASE/keys" | python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)["models"]))')" "sonnet[1m],opus[1m],fable[1m]"
+rm -f "$STATE/keys.json"
+check "page: renderKeys が models を読んで候補を置き換える" "$(curl -s "$BASE/" | grep -c 'Array.isArray(m.models)')" 1
+check "page: プルダウンは送信と同じ最下段 (#copt の後ろに #cbar)" "$(curl -s "$BASE/" | grep -c '<div id="copt"></div><div id="cbar"><select class="cpick" data-cmd="model"')" 1
 check "send: 別 Origin → 403" "$(post "https://evil.example" "$(body "$WITH" x)")" 403
 check "send: 別ポートの 127.0.0.1 → 403" "$(post "http://127.0.0.1:1" "$(body "$WITH" x)")" 403
 check "send: Origin なし → 403" "$(post - "$(body "$WITH" x)")" 403
@@ -461,6 +473,22 @@ check "media: 各要素の t は数値で、新しい順に厳密減少 (貼っ�
 check "media: 不正な name → 400" "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/media?name=../x.md")" 400
 printf 'x' > "$STATE/history/20000101T000000000-nosuch00.md"; printf '{"session_id":"nosuch00"}' > "$STATE/history/20000101T000000000-nosuch00.json"
 check "media: transcript の無い session → 空" "$(mget 20000101T000000000-nosuch00.md)" ""
+
+# --- /now: そのセッションの今の model / effort (settings は $TMP/cc-settings.json で差し替え。最初は無い) ---
+nowq() { curl -s "$BASE/now?name=$1" | python3 -c 'import json,sys; o=json.load(sys.stdin); print(o["model"],o["effort"])'; }
+asst() { printf '{"type":"assistant","effort":"%s","message":{"model":"%s"}}\n' "$1" "$2"; }
+cmd() { printf '{"type":"user","message":{"role":"user","content":"<command-name>/%s</command-name>\\n  <command-message>%s</command-message>\\n  <command-args>%s</command-args>"}}\n' "$1" "$1" "$2"; }
+{ asst medium claude-sonnet-5-5; cmd model 'opus[1m]'; asst high claude-opus-5-5; } > "$TMP/projects/-x-repo/$SID.jsonl"
+check "now: 最後の /model の引数と最後の assistant の effort" "$(nowq "$WITH")" "opus[1m] high"
+{ asst medium claude-opus-5-5; cmd effort max; } > "$TMP/projects/-x-repo/$SID.jsonl"
+check "now: /effort が assistant 行より後ろならそちら。/model 無し・settings 無しは message.model を別名に寄せる" "$(nowq "$WITH")" "opus max"
+printf '{"model":"sonnet[1m]"}' > "$TMP/cc-settings.json"
+check "now: /model 無しなら settings の model" "$(nowq "$WITH")" "sonnet[1m] max"
+{ cmd model 'haiku'; head -c 600000 /dev/zero | tr '\0' x; printf '\n'; asst low claude-opus-5-5; } > "$TMP/projects/-x-repo/$SID.jsonl"
+check "now: 末尾 512KB より前の /model は見ない (settings に落ちる)・effort は読める" "$(nowq "$WITH")" "sonnet[1m] low"
+rm -f "$TMP/cc-settings.json"
+check "now: transcript も settings も無い → null null" "$(nowq 20000101T000000000-nosuch00.md)" "None None"
+check "now: 不正な name → 400" "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/now?name=../x.md")" 400
 
 # --- /speak: Gemini の読み上げ (本物の Gemini は呼ばない。server はキー無し = GEMINI_API_KEY 空 + 存在しないキーチェーン service で起動) ---
 spk() { local o=(); [ "$1" != "-" ] && o=(-H "Origin: $1"); curl -s -o "$TMP/body" -w '%{http_code}' -X POST "${o[@]}" -H 'content-type: application/json' --data '{"text":"こんにちは"}' "$BASE/speak"; }

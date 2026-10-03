@@ -109,9 +109,12 @@
   #cact .q { font: inherit; font-size: 12px; line-height: 1.6; padding: 1px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); cursor: pointer; }
   #cact .q sup { color: var(--muted); font-size: 9px; margin-left: 2px; }
   #cact .q:disabled { opacity: .35; cursor: default; }
+  #cact .cpick { font: inherit; font-size: 12px; line-height: 1.6; padding: 1px 2px; max-width: 100%; min-width: 0; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); cursor: pointer; }
+  #cact .cpick:disabled { opacity: .35; cursor: default; }
   #copt { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; }
   #copt:empty { display: none; }
-  #csend { align-self: flex-end; flex: none; font: inherit; color: #fff; background: var(--red); border: 1px solid var(--red); border-radius: 6px; padding: 2px 12px; cursor: pointer; }
+  #cbar { flex-basis: 100%; display: flex; gap: 4px; justify-content: flex-end; align-items: center; min-width: 0; } /* 最下段 = [モデル▾][エフォート▾][送信] */
+  #csend { flex: none; font: inherit; color: #fff; background: var(--red); border: 1px solid var(--red); border-radius: 6px; padding: 2px 12px; cursor: pointer; }
   #ctext:disabled, #csend:disabled { opacity: .35; cursor: default; }
   #cmedia { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 6px; align-content: start; } /* 右下: 使った画像・PDF。欄の幅で 2〜3 列 */
   #cmedia:empty { display: none; }
@@ -152,7 +155,7 @@
     #cform { flex-direction: row; align-items: stretch; }
     #ctext { flex: 1; min-width: 0; min-height: 8em; max-height: 40vh; }
     #cact { flex: none; max-width: 55%; align-content: flex-start; position: relative; padding-bottom: 32px; } /* ボタンは上に詰め、空けた下端に送信を貼る (折り返しの段の中では margin-top: auto が下まで効かない) */
-    #csend { position: absolute; right: 0; bottom: 0; }
+    #cbar { position: absolute; right: 0; bottom: 0; max-width: 100%; }
   }
 
   /* 上部: どのセッションの返事か + 履歴の送り */
@@ -308,7 +311,7 @@ try { document.body.classList.toggle("chat-closed", localStorage.getItem("rmx.ch
   <nav id="cchips"></nav>
   <div id="sug" hidden></div>
   <div id="cimgs" hidden></div>
-  <div id="cform"><textarea id="ctext" rows="3" maxlength="4000" placeholder="端末へ送る (⌘+Enter)"></textarea><div id="cact"><button class="q" data-k="1" data-t="ok" title="ok を送る (1)">ok<sup>1</sup></button><button class="q" data-k="2" data-t="continue" title="continue を送る (2)">cont<sup>2</sup></button><button class="q" data-k="3" data-t="A" title="A を送る (3)">A<sup>3</sup></button><button class="q" data-k="4" data-t="B" title="B を送る (4)">B<sup>4</sup></button><button class="q" data-k="5" data-t="C" title="C を送る (5)">C<sup>5</sup></button><button id="csend">送信</button><div id="copt"></div></div></div>
+  <div id="cform"><textarea id="ctext" rows="3" maxlength="4000" placeholder="端末へ送る (⌘+Enter)"></textarea><div id="cact"><button class="q" data-k="1" data-t="ok" title="ok を送る (1)">ok<sup>1</sup></button><button class="q" data-k="2" data-t="continue" title="continue を送る (2)">cont<sup>2</sup></button><button class="q" data-k="3" data-t="A" title="A を送る (3)">A<sup>3</sup></button><button class="q" data-k="4" data-t="B" title="B を送る (4)">B<sup>4</sup></button><button class="q" data-k="5" data-t="C" title="C を送る (5)">C<sup>5</sup></button><div id="copt"></div><div id="cbar"><select class="cpick" data-cmd="model" title="モデルを切り替える (/model を送る)"><option value="">model</option></select><select class="cpick" data-cmd="effort" title="エフォートを切り替える (/effort を送る)"><option value="">effort</option></select><button id="csend">送信</button></div></div></div>
   <div id="cmsg"></div>
   <div id="tstat"></div>
   <div id="cmedia"></div>
@@ -979,13 +982,14 @@ const chatTo = () => { const p = chatPin(); return p ? all.find((e) => e.session
 function renderChat() {
   const pin = chatPin(), to = chatTo();
   loadMedia(to);
+  loadNow(to);
   const lbl = to ? chipLabels.get(to.session) ?? `${to.repo || "?"} · ${to.session}` : pin;
   document.getElementById("cto").textContent = lbl ? `${pin ? "📌 " : ""}→ ${lbl}` : "→ (送り先なし)";
   const why = !to ? (pin ? "固定先のセッションの返事が一覧に無い (送れない)" : "表示中の返事が無い (送れない)")
     : !to.terminal ? (pin ? "固定先は Orca 外の端末 (送れない)" : "この返事は Orca 外の端末 (送れない)") : "";
   document.getElementById("cwhy").textContent = why;
   ctext.disabled = csend.disabled = !!why || chatBusy;
-  document.querySelectorAll("#cact .q").forEach((b) => { b.disabled = csend.disabled; });
+  document.querySelectorAll("#cact .q, #cact .cpick").forEach((b) => { b.disabled = csend.disabled; });
   csend.textContent = chatBusy ? "送信中…" : "送信";
   // 各行 = 時刻 + 最新返事の冒頭。同じ repo の chip は時刻だけでは見分けられない (2026-09-29 user)
   const row = (e) => `<time>${esc(hhmm(new Date(e.ts)))}</time><span>${esc(agentTag(e) + (e.head || ""))}</span>`;
@@ -1097,9 +1101,39 @@ ctext.addEventListener("paste", async (ev) => {
   renderImgs();
 });
 document.getElementById("cact").addEventListener("click", (ev) => { const b = ev.target.closest(".q"); if (b) sendText(b.dataset.t, false); });
+// モデル / エフォートのプルダウン。選ぶと 6〜0 と同じ sendText で `/model X` / `/effort Y` を送る。別名は Claude Code 2.1.288 の /model が受ける一覧 (本体の文字列から確認)
+// 表示 = 送り先セッションの今の値 (server の /now: transcript の最後の /model・/effort と assistant 行、model は無ければ settings.json)。送り先が変わった時と新しい返事が来た時に取り直し、取れなければ見出しのまま
+// ponytail: 返事が来るまで反映されない (端末で /model を打っても、次の返事までは古い表示)。選んで送った直後は選んだ値を出す。上限 = 返事ごとの 1 回の取得で足りる間
+// モデルの候補は既定 4 つ。state/keys.json の "models": ["sonnet[1m]", ...] がその並びで置き換える (renderKeys が読む)
+const MODELS_DEFAULT = ["sonnet", "opus", "haiku", "fable"];
+const PICKS = { model: MODELS_DEFAULT, effort: ["low", "medium", "high", "xhigh", "max"] };
+const nowVal = { model: null, effort: null }; // 表示する今の値。候補に無ければ候補の先頭に足す
+function fillPick(sel) {
+  const c = sel.dataset.cmd, v = nowVal[c], l = PICKS[c];
+  sel.replaceChildren(sel.firstElementChild, ...(v && !l.includes(v) ? [v, ...l] : l).map((x) => new Option(x, x)));
+  sel.value = v ?? ""; // 代入は change を出さないので送信は走らない
+}
+let nowFor;
+async function loadNow(to) {
+  const name = to?.name ?? null;
+  if (name === nowFor) return;
+  nowFor = name;
+  let r = {};
+  try { if (name) r = await (await fetch("/now?name=" + encodeURIComponent(name))).json(); } catch {}
+  if (nowFor !== name) return; // 取っている間に送り先が変わった
+  nowVal.model = r.model || null; nowVal.effort = r.effort || null;
+  document.querySelectorAll("#cact .cpick").forEach(fillPick);
+}
+document.querySelectorAll("#cact .cpick").forEach((sel) => {
+  fillPick(sel);
+  // blur: 選んだ後もフォーカスが残ると ↑↓ が送り先の切り替えと取り合う
+  sel.onchange = () => { sel.blur(); if (sel.value) nowVal[sel.dataset.cmd] = sel.value; if (sel.value) sendText(`/${sel.dataset.cmd} ${sel.value}`, false); };
+});
 // 6〜0 は好きなコマンドを置く枠。既定は KEYS_DEFAULT で、state/keys.json の同じ番号が上書きする ("" で消す。1〜5 も上書きできる)
 const KEYS_DEFAULT = { 6: "/compact", 7: "/exit" };
 function renderKeys(m) {
+  const ms = Array.isArray(m.models) ? m.models.filter((v) => typeof v === "string" && v.trim()) : [];
+  PICKS.model = ms.length ? ms : MODELS_DEFAULT; fillPick(document.querySelector('#cact .cpick[data-cmd=model]'));
   const all = { ...KEYS_DEFAULT, ...m }, ok = (k) => typeof all[k] === "string" && all[k];
   const label = (b, k) => { b.dataset.k = k; b.dataset.t = all[k]; b.title = `${all[k]} を送る (${k})`; b.replaceChildren(all[k], Object.assign(document.createElement("sup"), { textContent: k })); };
   document.querySelectorAll("#cact > .q").forEach((b) => ok(b.dataset.k) && label(b, b.dataset.k));

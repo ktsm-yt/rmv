@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.11.0 (2026-10-04)
+
+- チャット欄の最下段、送信ボタンの左に model / effort のプルダウンを足した (並びは 数字キー 1〜5 / 6〜0 / [model][effort][送信]。狭い幅でも送信の左)。選ぶとすぐ、今の送り先端末へ `/model <別名>` / `/effort <段>` を送る (数字キー 6〜0 と同じ経路)。送り先が無い時は送信と同じく無効
+- モデルの候補は既定 sonnet / opus / haiku / fable の 4 つ。`state/keys.json` の `"models"` に配列を書くとその並びで置き換わる。エフォートは low / medium / high / xhigh / max の 5 段
+- プルダウンに送り先セッションの今の値を最初から表示する。新しい口 `GET /now?name=<history の .md>` が `{model, effort}` を返す (model = transcript 最後の `/model` → `~/.claude/settings.json` の `"model"` (環境変数 `RMX_CC_SETTINGS` で差し替え) → 最後の assistant の model を別名に寄せたもの、effort = 最後の assistant 行の `effort` と `/effort` の新しい方、transcript は末尾 512KB だけ読む)。候補に無い値は候補の先頭に足して選ばれた状態にし、取れなければ見出しのまま。取り直しは送り先が変わった時と新しい返事が来た時。端末で直接変えた値は次の返事から反映される
+
 ## v0.10.1 (2026-10-03)
 
 - 選んでいたプロジェクトが履歴から消えた時 (v0.10.0 でプロジェクトの分け方が変わり、`?repo=Dev` のような古い URL が残った時など) に、空の画面で止まらず「すべて」に戻すようにした

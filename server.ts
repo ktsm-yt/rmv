@@ -10,6 +10,7 @@ const HIST = `${STATE}/history`;
 const ORCA = process.env.RMX_ORCA_BIN || "orca"; // env はテストの stub 差し替え用
 const OSASCRIPT = process.env.RMX_OSASCRIPT_BIN || "osascript"; // 同上
 const PROJECTS = process.env.RMX_PROJECTS_DIR || `${process.env.HOME}/.claude/projects`; // transcript の置き場 (同上)
+const CC_SETTINGS = process.env.RMX_CC_SETTINGS || `${process.env.HOME}/.claude/settings.json`; // 新しいセッションの既定 model ("model" キー)。テストの差し替え口
 const PERM = `${STATE}/perm`; // hooks/perm-state.py が許可待ちの間だけ <session>.json を置く
 const PERM_TTL = 30 * 60_000; // 強制終了した端末に取り残された perm を無視する
 // Claude Code の許可ダイアログは 1 = Yes。Enter 無しの 1 打で通り、入力欄に 1 は残らない (2.1.285 の WebFetch ダイアログで実機確認、2026-09-30)
@@ -291,6 +292,44 @@ async function media(name: string | null): Promise<Response> {
   return Response.json(out, { headers: { "cache-control": "no-store" } });
 }
 
+// GET /now?name=<history の .md>: その返事のセッションの今の {model, effort} (取れなければ null)。プルダウンの初期表示用
+// model = transcript 最後の /model の引数 → settings.json の "model" → 最後の assistant の message.model を別名に寄せたもの
+// effort = 最後の assistant 行の "effort" と最後の /effort の引数のうち、行が後ろの方
+// /model・/effort は type:"user" で message.content が文字列の `<command-name>/model</command-name> … <command-args>X</command-args>` (CC 2.1.288 実機)
+// ponytail: transcript は末尾 512KB だけ読む。上限 = その範囲に /model・assistant 行がある間 (無ければ settings か null に落ちる)。/effort の行形は /model と同じと仮定 (実機未確認)
+const NOW_TAIL = 512 * 1024;
+const MODEL_ALIAS = ["opus", "sonnet", "haiku", "fable"];
+async function now(name: string | null): Promise<Response> {
+  if (!name || !NAME.test(name)) return new Response("bad name", { status: 400 });
+  const meta = await Bun.file(`${HIST}/${name.slice(0, -3)}.json`).json().catch(() => null);
+  const sid = String(meta?.session_id ?? "");
+  let cmdModel: string | null = null, effort: string | null = null, lastAsst: string | null = null;
+  if (/^[\w-]+$/.test(sid)) {
+    try {
+      for await (const rel of new Bun.Glob(`*/${sid}.jsonl`).scan({ cwd: PROJECTS })) {
+        const f = Bun.file(`${PROJECTS}/${rel}`);
+        const cut = Math.max(0, f.size - NOW_TAIL);
+        const lines = (await f.slice(cut).text()).split("\n");
+        if (cut > 0) lines.shift(); // 先頭は途中で切れた行
+        for (const line of lines) {
+          const o = (() => { try { return JSON.parse(line); } catch { return null; } })();
+          if (o?.type === "assistant") {
+            if (typeof o.message?.model === "string" && o.message.model !== "<synthetic>") lastAsst = o.message.model;
+            if (typeof o.effort === "string") effort = o.effort;
+          } else if (o?.type === "user" && typeof o.message?.content === "string") {
+            const m = o.message.content.match(/<command-name>\/(model|effort)<\/command-name>[\s\S]*?<command-args>([^<]*)<\/command-args>/);
+            const arg = m?.[2].trim();
+            if (m && arg) { if (m[1] === "model") cmdModel = arg; else effort = arg; }
+          }
+        }
+      }
+    } catch {} // projects 置き場が無い = transcript なし
+  }
+  const cfg = await Bun.file(CC_SETTINGS).json().catch(() => null);
+  const model = cmdModel ?? (typeof cfg?.model === "string" && cfg.model ? cfg.model : null) ?? (lastAsst ? MODEL_ALIAS.find((a) => lastAsst!.includes(a)) ?? lastAsst : null);
+  return Response.json({ model, effort }, { headers: { "cache-control": "no-store" } });
+}
+
 // POST /paste: チャット欄に貼った画像を state/paste/ に保存し、絶対パスを返す。端末へは /send が images で貼る。
 // Origin 必須は /send と同じ理由 (他サイトからディスクに書かせない)。
 // ponytail: 古い画像は消さない。上限 = state/paste/ が貼った分だけ増える。溜まったら日数で消す掃除を足す
@@ -518,6 +557,7 @@ Bun.serve({
     if (pathname === "/worktrees") return worktrees();
     if (pathname === "/speak" && req.method === "POST") return speak(req);
     if (pathname === "/media") return media(searchParams.get("name"));
+    if (pathname === "/now") return now(searchParams.get("name"));
     if (pathname === "/skills") return skills(searchParams.get("cwd"));
     // GET /keys: 数字キー 1〜6 の送る文を手元で上書きする ({"6": "/cf down"})。state/ は公開しないので個人のコマンドを書ける
     if (pathname === "/keys") { const f = Bun.file(`${STATE}/keys.json`); return (await f.exists()) ? new Response(f, { headers: { "content-type": "application/json" } }) : Response.json({}); }
