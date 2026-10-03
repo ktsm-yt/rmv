@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- 新しい Claude Code セッションを Orca の新しい端末タブで起動する口 `POST /new {cwd}` と、候補の `GET /worktrees` を足した。`cwd` は `orca worktree list` に載る path だけ。起動コマンドは環境変数 `RMX_NEW_CMD` (既定 `claude`)。画面のボタンはまだ無い
+
 ## v0.9.0 (2026-10-03)
 
 - スマホなど別の端末から開けるようにした。`tailscale serve` などの中継越しの URL を環境変数 `RMX_ORIGINS` で許可する (rmv は `127.0.0.1` で待ち受けたまま)。launchd の起動スクリプトは `state/env` があれば読む

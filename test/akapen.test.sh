@@ -126,6 +126,8 @@ check "prompt hook: 貼り付けの目印タグ (pasted_content) は外す" "$(f
 #   terminal list は calls に書かず $TMP/lists に 1 行足し、$TMP/list.json を返す (無ければ exit 1 = list 失敗)
 cat > "$STUB" <<EOF
 #!/usr/bin/env bash
+if [ "\$1" = worktree ]; then cat "$TMP/wt.json" 2>/dev/null || exit 1; exit 0; fi
+if [ "\$1 \$2" = "terminal create" ]; then printf '%s\n' "\$@" > "$TMP/newargv"; echo '{"ok":true,"result":{"terminal":{"handle":"term_new"}}}'; exit 0; fi
 if [ "\$2" = list ]; then echo list >> "$TMP/lists"; cat "$TMP/list.json" 2>/dev/null || exit 1; exit 0; fi
 # read: 下書き欄の [Image #N] = これまでに届いた Ctrl+V の数 ($TMP/noimg があれば増やさない = 貼れなかった)
 if [ "\$2" = read ]; then n=\$(cat "$TMP/ctrlv" 2>/dev/null | wc -l | tr -d ' '); d=""; for ((i = 1; i <= n; i++)); do d="\$d[Image #\$i] "; done; printf '{"ok":true,"result":{"terminal":{"draft":"%s"}}}' "\$d"; exit 0; fi
@@ -154,7 +156,7 @@ chmod +x "$PSSTUB"
 OSASTUB="$TMP/osa-stub"
 printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$2" >> "%s/osa"\n' "$TMP" > "$OSASTUB"
 chmod +x "$OSASTUB"
-GEMINI_API_KEY= RMX_TTS_KEYCHAIN_SERVICE="rmv-test-nonexistent-$$" RMX_PROJECTS_DIR="$TMP/projects" RMX_STATE_DIR="$STATE" RMX_PORT="$PORT" RMX_ORCA_BIN="$STUB" RMX_OSASCRIPT_BIN="$OSASTUB" RMX_PS_BIN="$PSSTUB" RMX_OPEN_BIN="$TMP/open-stub" RMX_LIVE_TTL_MS=0 RMX_ORIGINS="https://mac.tailtest.ts.net" bun run "$SERVER" > "$TMP/server.log" 2>&1 &
+GEMINI_API_KEY= RMX_TTS_KEYCHAIN_SERVICE="rmv-test-nonexistent-$$" RMX_PROJECTS_DIR="$TMP/projects" RMX_STATE_DIR="$STATE" RMX_PORT="$PORT" RMX_ORCA_BIN="$STUB" RMX_OSASCRIPT_BIN="$OSASTUB" RMX_PS_BIN="$PSSTUB" RMX_OPEN_BIN="$TMP/open-stub" RMX_LIVE_TTL_MS=0 RMX_WT_TTL_MS=0 RMX_ORIGINS="https://mac.tailtest.ts.net" bun run "$SERVER" > "$TMP/server.log" 2>&1 &
 SRV=$!
 trap 'kill $SRV 2>/dev/null' EXIT
 for _ in $(seq 50); do curl -s -o /dev/null "$BASE/history" && break; sleep 0.1; done
@@ -350,6 +352,22 @@ printf '#!/usr/bin/env bash\necho boom >&2; exit 1\n' > "$OPENSTUB"
 check "open: open が異常終了 → 500" "$(opn "$GOOD" "{\"p\":\"$F/a.code-workspace\"}")" 500
 check "open: 500 に stderr を返す" "$(cat "$TMP/body")" boom
 check "page: open 型リンクの描画 (data-open) がある" "$(grep -c 'data-open=' "$A/index.html")" 1
+
+# --- /worktrees と /new: orca worktree list に載る cwd だけ新規セッションを起動 ---
+WTA="$TMP/wt-a"; WTB="$TMP/wt-b"
+printf '{"ok":true,"result":{"worktrees":[{"path":"%s"},{"path":"%s"}]}}' "$WTA" "$WTB" > "$TMP/wt.json"
+check "worktrees: orca の path 一覧を返す" "$(curl -s "$BASE/worktrees" | python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)))')" "$WTA,$WTB"
+rm -f "$TMP/newargv"
+nw() { curl -s -o "$TMP/body" -w '%{http_code}' -X POST ${1:+-H "Origin: $1"} -H 'content-type: application/json' --data "$2" "$BASE/new"; }
+check "new: 一覧に載る cwd → 200" "$(nw "$GOOD" "{\"cwd\":\"$WTA\"}")" 200
+check "new: orca terminal create の引数" "$(tr '\n' ' ' < "$TMP/newargv")" "terminal create --worktree path:$WTA --command claude --focus --json "
+check "new: 戻りに handle" "$(cat "$TMP/body")" '{"handle":"term_new"}'
+rm -f "$TMP/newargv"
+check "new: 一覧に無い cwd → 403" "$(nw "$GOOD" '{"cwd":"/Users/i/elsewhere"}')" 403
+check "new: Origin 無し → 403" "$(nw "" "{\"cwd\":\"$WTA\"}")" 403
+check "new: 別 Origin → 403" "$(nw "bad-origin" "{\"cwd\":\"$WTA\"}")" 403
+check "new: 403 では terminal create を呼ばない" "$([ -e "$TMP/newargv" ] && echo called || echo none)" none
+check "new: cwd 無し → 400" "$(nw "$GOOD" '{}')" 400
 
 # --- /send + images: クリップボード経由で端末に貼ってから本文 ---
 simg() { printf '{"name":"%s","text":"%s","images":%s,"focus":false}' "$WITH" "$1" "$2"; }

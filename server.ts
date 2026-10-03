@@ -112,6 +112,47 @@ async function open(req: Request): Promise<Response> {
   return code === 0 ? new Response("ok") : new Response(err || `open exited ${code}`, { status: 500 });
 }
 
+// orca の worktree path 一覧 (GET /worktrees の元、POST /new の許可リスト)。取れない時は null。60 秒 memo (terminal list と同じ方式)
+const WT_TTL = Number(process.env.RMX_WT_TTL_MS ?? 60000); // env はテストでキャッシュを切る用
+let wtCache: { at: number; paths: string[] | null } | null = null;
+async function worktreePaths(): Promise<string[] | null> {
+  if (wtCache && Date.now() - wtCache.at < WT_TTL) return wtCache.paths;
+  let paths: string[] | null = null;
+  try {
+    const p = Bun.spawn([ORCA, "worktree", "list", "--json"], { stdout: "pipe", stderr: "ignore" });
+    const [out, code] = await Promise.all([new Response(p.stdout).text(), p.exited]);
+    const list = code === 0 ? JSON.parse(out)?.result?.worktrees : null;
+    if (Array.isArray(list)) paths = list.map((w) => w?.path).filter((x): x is string => typeof x === "string" && x.startsWith("/"));
+  } catch {}
+  wtCache = { at: Date.now(), paths };
+  return paths;
+}
+async function worktrees(): Promise<Response> {
+  const paths = await worktreePaths();
+  return paths ? Response.json(paths, { headers: { "cache-control": "no-store" } }) : new Response("orca worktree list failed", { status: 502 });
+}
+
+// POST /new {cwd}: まっさらな Claude Code セッションを Orca の新しい端末タブで起動する。
+// cwd は orca worktree list に載っている path と完全一致する時だけ (任意の dir で任意の command を走らせない)。command は RMX_NEW_CMD (既定 claude)。shell は通さない
+const NEW_CMD = process.env.RMX_NEW_CMD || "claude";
+async function newSession(req: Request): Promise<Response> {
+  if (!ORIGINS.has(req.headers.get("origin") ?? "")) return new Response("forbidden origin", { status: 403 });
+  const { cwd } = await req.json().catch(() => ({}));
+  if (typeof cwd !== "string" || !cwd) return new Response("missing cwd", { status: 400 });
+  const paths = await worktreePaths();
+  if (!paths?.includes(cwd)) return new Response("forbidden cwd", { status: 403 });
+  try {
+    const proc = Bun.spawn([ORCA, "terminal", "create", "--worktree", `path:${cwd}`, "--command", NEW_CMD, "--focus", "--json"], { stdout: "pipe", stderr: "pipe" });
+    const [out, err, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+    if (code !== 0) return new Response(err.trim() || out.trim() || `orca exited ${code}`, { status: 500 });
+    let handle: string | null = null;
+    try { const r = JSON.parse(out)?.result; handle = r?.terminal?.handle ?? r?.handle ?? null; } catch {}
+    return Response.json({ handle });
+  } catch (e) {
+    return new Response(`orca spawn failed: ${e}`, { status: 500 });
+  }
+}
+
 // 送信後に端末タブへ戻す (キー入力をすぐ端末で続けられるように)。失敗しても送信は成功扱い: log だけ残す。
 async function focusTerminal(handle: string): Promise<void> {
   try {
@@ -442,6 +483,8 @@ Bun.serve({
     if (pathname === "/approve" && req.method === "POST") return approve(req);
     if (pathname === "/paste" && req.method === "POST") return paste(req);
     if (pathname === "/open" && req.method === "POST") return open(req);
+    if (pathname === "/new" && req.method === "POST") return newSession(req);
+    if (pathname === "/worktrees") return worktrees();
     if (pathname === "/speak" && req.method === "POST") return speak(req);
     if (pathname === "/media") return media(searchParams.get("name"));
     if (pathname === "/skills") return skills(searchParams.get("cwd"));

@@ -189,6 +189,14 @@ launchd で常駐させている時は、`RMX_ORIGINS=…` の行を `state/env`
 届くのは同じ Tailscale につながった端末だけです。
 返事の中のファイルを開くボタンは、押した端末でなく Mac の画面で開きます。
 
+### 新しい Claude Code セッションを起動する (server の口)
+
+`POST /new {cwd}` は、Orca の新しい端末タブでまっさらな Claude Code を起動します (`orca terminal create --worktree path:<cwd> --command claude --focus`)。
+`cwd` は `orca worktree list` に載っている path と完全一致する時だけ受け付け、それ以外は 403 です (viewer と同じ Origin だけ許可)。
+候補の一覧は `GET /worktrees` で取れます (60 秒 memo)。画面のボタンは未実装です。
+
+- `RMX_NEW_CMD`: 端末で走らせるコマンド (既定 `claude`)
+
 ### 読み上げの声 (任意)
 
 🔊 は Gemini の読み上げモデルで声を作ります。
