@@ -122,8 +122,7 @@
     #tstat, #cmedia { display: none; }
     #chat { grid-column: 2; grid-row: 1; gap: 4px; padding: 6px 12px; border-left: 0; border-bottom: 1px solid var(--line); }
     body.chat-closed #chat { padding: 4px 12px; }
-    #cform { flex-direction: row; align-items: flex-end; }
-    #ctext { min-height: 2.4em; max-height: 30vh; }
+    #ctext { min-height: 5em; max-height: 30vh; } /* 狭い幅でも欄は全幅、ボタンは下の段で送信が C の隣 (横並びだと欄が半分幅で送信が宙に浮いた、2026-10-03 user) */
   }
 
   /* 上部: どのセッションの返事か + 履歴の送り */
