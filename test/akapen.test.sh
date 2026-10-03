@@ -332,14 +332,24 @@ lines() { wc -l < "$OPENLOG" | tr -d ' '; }
 check "open: .code-workspace → 200" "$(opn "$GOOD" "{\"p\":\"$F/a.code-workspace\"}")" 200
 check "open: -R 無しで path だけ渡す" "$(tail -n1 "$OPENLOG")" "$F/a.code-workspace"
 check "open: .md → 200" "$(opn "$GOOD" "{\"p\":\"$F/n.md\"}")" 200
-check "open: .md はエディタで開く" "$(tail -n1 "$OPENLOG")" "-a Visual Studio Code $F/n.md"
+check "open: .md は既定アプリ (path だけ)" "$(tail -n1 "$OPENLOG")" "$F/n.md"
 check "open: reveal:true → 200" "$(opn "$GOOD" "{\"p\":\"$F/a.code-workspace\",\"reveal\":true}")" 200
 check "open: reveal は -R 付き" "$(tail -n1 "$OPENLOG")" "-R $F/a.code-workspace"
 check "open: .sh (テキスト) を reveal 無し → 200 (エディタで開くだけで実行しない)" "$(opn "$GOOD" "{\"p\":\"$F/run.sh\"}")" 200
 check "open: テキストは open -a <エディタ> path" "$(tail -n1 "$OPENLOG")" "-a Visual Studio Code $F/run.sh"
 echo 'const a = <div/>;' > "$F/c.tsx"
 check "open: .tsx (一覧に無いテキスト) → 200" "$(opn "$GOOD" "{\"p\":\"$F/c.tsx\"}")" 200
-check "open: .tsx は open -a Visual Studio Code path" "$(tail -n1 "$OPENLOG")" "-a Visual Studio Code $F/c.tsx"
+check "open: .tsx は素の open path (-a 無し、Mac の既定アプリ)" "$(tail -n1 "$OPENLOG")" "$F/c.tsx"
+printf '#!/bin/sh\necho hi\n' > "$F/noext"
+check "open: 拡張子なしで #! 始まり → 200" "$(opn "$GOOD" "{\"p\":\"$F/noext\"}")" 200
+check "open: #! 始まりはエディタ" "$(tail -n1 "$OPENLOG")" "-a Visual Studio Code $F/noext"
+echo 'plain' > "$F/x.txt"; chmod +x "$F/x.txt"
+check "open: 実行ビット付きのテキスト .txt → 200" "$(opn "$GOOD" "{\"p\":\"$F/x.txt\"}")" 200
+check "open: 実行ビット付きはエディタ" "$(tail -n1 "$OPENLOG")" "-a Visual Studio Code $F/x.txt"
+printf 'abc\0def' > "$F/bin.sh"
+L1="$(lines)"
+check "open: NUL 入りの .sh (実行されうるバイナリ) → 403" "$(opn "$GOOD" "{\"p\":\"$F/bin.sh\"}")" 403
+check "open: 上の 403 では open を呼ばない" "$(lines)" "$L1"
 printf 'PK\0\0binary' > "$F/x.xlsx"
 check "open: .xlsx → 200" "$(opn "$GOOD" "{\"p\":\"$F/x.xlsx\"}")" 200
 check "open: .xlsx は既定アプリ (path だけ)" "$(tail -n1 "$OPENLOG")" "$F/x.xlsx"

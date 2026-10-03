@@ -218,7 +218,7 @@ security add-generic-password -U -a "$USER" -s rmv-gemini -w
 
 - server は `127.0.0.1` だけで待ち受けます。
   認証は無いので、LAN に公開しないでください。
-- 返事に出てきたファイルを表示するため、ホーム配下と一時ディレクトリの画像・動画・pdf などを読みます。`.md` や `.code-workspace` などは読まずに Mac で開きます (テキストは `RMX_EDITOR_APP`、既定 `Visual Studio Code` のエディタ。`.xlsx` などの書類は既定アプリ)。
+- 返事に出てきたファイルを表示するため、ホーム配下と一時ディレクトリの画像・動画・pdf などを読みます。`.md` や `.code-workspace` などは読まずに Mac の既定アプリで開きます。スクリプト (`.sh` `.py`、実行ビット付き、`#!` 始まり) だけは実行させないよう、`RMX_EDITOR_APP` (既定 `Visual Studio Code`) で開きます。
 - 返事の履歴は `state/` に直近 200 件まで残ります。
 
 テスト:
