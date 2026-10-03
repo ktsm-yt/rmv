@@ -192,11 +192,21 @@ tl() { curl -s "$BASE/history" | python3 -c "import json,sys; e=[e for e in json
 list '{"handle":"term_test","worktreePath":"'"$CWD"'","lastOutputAt":1234,"connected":true,"writable":true,"title":"✳ waiting"}'
 check "/history: title / lastOutputAt が terminal から乗る" "$(tl "$WITH")" "✳ waiting 1234"
 check "/history: terminal なし entry は title / lastOutputAt null" "$(tl "$WITHOUT")" "None None"
-# 同じ端末で後から別 repo の返事が出たら、前の repo の entry は live false (端末は 1 度に 1 repo)
+# 端末が生きていれば repo は Orca の worktreePath 基準 (セッション内で cd しても動かない)。cwd が食い違う返事も同じ repo・同じく live
+# 端末が死んでいれば従来どおり cwd 基準
 NEWER=29991231T000000000-newrepo
 : > "$STATE/history/$NEWER.md"; echo '{"cwd":"/tmp/other-repo","terminal":"term_test"}' > "$STATE/history/$NEWER.json"
 nl() { curl -s "$BASE/history" | python3 -c "import json,sys; d={e['name']:e['live'] for e in json.load(sys.stdin)}; print(d['$WITH'], d['$NEWER.md'])"; }
-check "/history: 同じ端末で新しい別 repo → 古い repo は live false、新しい方は true" "$(nl)" "False True"
+check "/history: 同じ端末で cwd が食い違う返事 → どちらも live (repo は端末の worktreePath 基準)" "$(nl)" "True True"
+rp() { curl -s "$BASE/history${2:-}" | python3 -c "import json,sys; d={e['name']:e['repo'] for e in json.load(sys.stdin)}; print(d.get(sys.argv[1], ''))" "$1"; }
+WTBASE="$(basename "$CWD")"
+check "/history: 端末が生きていれば repo = worktreePath の basename (cwd は other-repo でも)" "$(rp "$NEWER.md")" "$WTBASE"
+check "/history: ?repo= 絞り込みも worktreePath 基準" "$(rp "$NEWER.md" "?repo=$WTBASE")" "$WTBASE"
+check "/history: ?repo=other-repo では出ない (cwd 基準の repo ではない)" "$(rp "$NEWER.md" "?repo=other-repo")" ""
+check "/history: cwd フィールドは元のまま" "$(curl -s "$BASE/history" | python3 -c "import json,sys; print([e['cwd'] for e in json.load(sys.stdin) if e['name']=='$NEWER.md'][0])")" "/tmp/other-repo"
+list "$(term term_gone /elsewhere/x 1)"
+check "/history: 端末が list に無ければ repo = cwd の basename" "$(rp "$NEWER.md")" "other-repo"
+list "$(term term_test "$CWD" 1)"
 rm -f "$STATE/history/$NEWER".*
 check "/history: 新しい別 repo が消えれば元の repo は live に戻る" "$(lives)" "True False ok"
 rm -f "$TMP/list.json"

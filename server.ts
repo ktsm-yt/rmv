@@ -51,22 +51,25 @@ async function history(repo: string | null): Promise<Response> {
       const meta = await Bun.file(`${HIST}/${name.slice(0, -3)}.json`).json().catch(() => ({}));
       const body = await Bun.file(`${HIST}/${name}`).text().catch(() => "");
       const cwd = String(meta.cwd ?? "");
+      // repo (プロジェクト列・?repo= 絞り込み・live のグループ鍵) の基準: 端末が生きていれば Orca の worktreePath (セッション内で cd しても動かない)、無ければ cwd。cwd 自体は送信先解決と /skills 用に残す
+      const wt = byHandle.get(meta.terminal)?.worktreePath;
+      const root = typeof wt === "string" && wt ? wt : cwd;
       const session = String(meta.terminal || meta.session_id || "");
       const perm = perms.get(session);
-      return { name, prompt: typeof meta.prompt === "string" ? meta.prompt : null, ts: meta.ts ?? null, cwd, repo: cwd.split("/").filter(Boolean).pop() ?? "", head: body.replace(/\s+/g, " ").trim().slice(0, 40), terminal: Boolean(meta.terminal), live: terms ? Boolean(meta.terminal) && handles.has(meta.terminal) : true, session, perm: perm ? { id: perm.id, tool: perm.tool, detail: perm.detail, ts: perm.ts } : null, agent: meta.agent ?? null, title: byHandle.get(meta.terminal)?.title ?? null, lastOutputAt: byHandle.get(meta.terminal)?.lastOutputAt ?? null };
+      return { name, prompt: typeof meta.prompt === "string" ? meta.prompt : null, ts: meta.ts ?? null, cwd, root, repo: root.split("/").filter(Boolean).pop() ?? "", head: body.replace(/\s+/g, " ").trim().slice(0, 40), terminal: Boolean(meta.terminal), live: terms ? Boolean(meta.terminal) && handles.has(meta.terminal) : true, session, perm: perm ? { id: perm.id, tool: perm.tool, detail: perm.detail, ts: perm.ts } : null, agent: meta.agent ?? null, title: byHandle.get(meta.terminal)?.title ?? null, lastOutputAt: byHandle.get(meta.terminal)?.lastOutputAt ?? null };
     }),
   );
   // 1 つの端末で順に別の repo を開くと、端末が生きている限り昔の repo まで live になる (2026-09-29 実機: 1 端末で 4 repo)。
   // 端末ごとに最新の本体の返事の cwd だけを live に残す (subagent は親と同じ cwd なので一緒に残る)
   const nowCwd = new Map<string, string>();
-  for (const e of items) if (e.live && !e.agent && !nowCwd.has(e.session)) nowCwd.set(e.session, e.cwd); // items は新しい順
-  for (const e of items) if (e.live && nowCwd.has(e.session) && nowCwd.get(e.session) !== e.cwd) e.live = false;
+  for (const e of items) if (e.live && !e.agent && !nowCwd.has(e.session)) nowCwd.set(e.session, e.root); // items は新しい順
+  for (const e of items) if (e.live && nowCwd.has(e.session) && nowCwd.get(e.session) !== e.root) e.live = false;
   // 状態行用: 端末ごとの最新の本体の返事より後に送られた依頼 (返事待ち) を、その端末の entry 全部に付ける (perm と同じ)
   const lastReply = new Map<string, number>();
   for (const e of items) if (!e.agent && !lastReply.has(e.session)) lastReply.set(e.session, Date.parse(e.ts ?? "") || 0);
   const asking = new Map<string, { prompt: string; ts: string } | null>();
   for (const s of new Set(items.map((e) => e.session))) asking.set(s, await readAsking(s, lastReply.get(s) ?? 0));
-  const out = items.map((e) => ({ ...e, asking: asking.get(e.session) ?? null }));
+  const out = items.map(({ root, ...e }) => ({ ...e, asking: asking.get(e.session) ?? null }));
   const want = repo?.toLowerCase();
   return Response.json(want ? out.filter((e) => e.repo.toLowerCase() === want) : out, { headers: { "cache-control": "no-store", "x-rmx-live": terms ? "ok" : "unknown" } });
 }
