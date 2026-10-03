@@ -34,7 +34,7 @@ async function readAsking(session: string, lastReplyTs: number): Promise<{ promp
 const NAME = /^[\w.-]+\.md$/; // [\w.-] のみ: "/" を含まないので state/history の外は読めない
 const TEXT = { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" };
 
-// 一覧は新しい順。hook が 50 件に切り詰めるので毎回全件読む。
+// 一覧は新しい順。hook が 200 件に切り詰めるので毎回全件読む。
 // repo 指定時は cwd の basename 完全一致 (大文字小文字は無視) だけ返す。
 // session = セッション切替の鍵。Orca 端末の handle を優先し、Orca 外なら session_id。
 // agent = subagent の返事なら {type, id} (hook が SubagentStop で書く)、本体の返事は null。
@@ -623,7 +623,7 @@ Bun.serve({
     if (pathname === "/media") return media(searchParams.get("name"));
     if (pathname === "/now") return now(searchParams.get("name"));
     if (pathname === "/skills") return skills(searchParams.get("cwd"));
-    // GET /keys: 数字キー 1〜6 の送る文を手元で上書きする ({"6": "/cf down"})。state/ は公開しないので個人のコマンドを書ける
+    // GET /keys: 数字キー 1〜0 の送る文 (既定は index.html の KEYS_DEFAULT) を手元で上書きする ({"6": "/cf down"})。state/ は公開しないので個人のコマンドを書ける
     if (pathname === "/keys") { const f = Bun.file(`${STATE}/keys.json`); return (await f.exists()) ? new Response(f, { headers: { "content-type": "application/json" } }) : Response.json({}); }
     if (pathname === "/file") return file(searchParams.get("p"));
     const m = pathname.match(/^\/history\/(.+)$/);
