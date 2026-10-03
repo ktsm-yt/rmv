@@ -114,6 +114,9 @@
   #copt { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; }
   #copt:empty { display: none; }
   #cbar { flex-basis: 100%; display: flex; gap: 4px; justify-content: flex-end; align-items: center; min-width: 0; } /* 最下段 = [モデル▾][エフォート▾][送信] */
+  #cctx { flex: none; font-size: 11px; color: var(--muted); white-space: nowrap; }
+  #cctx.warn { color: var(--yellow); } #cctx.crit { color: var(--red); }
+  #cctx:empty { display: none; }
   #csend { flex: none; font: inherit; color: #fff; background: var(--red); border: 1px solid var(--red); border-radius: 6px; padding: 2px 12px; cursor: pointer; }
   #ctext:disabled, #csend:disabled { opacity: .35; cursor: default; }
   #cmedia { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 6px; align-content: start; } /* 右下: 使った画像・PDF。欄の幅で 2〜3 列 */
@@ -156,6 +159,7 @@
     #ctext { flex: 1; min-width: 0; min-height: 8em; max-height: 40vh; }
     #cact { flex: none; max-width: 55%; align-content: flex-start; position: relative; padding-bottom: 32px; } /* ボタンは上に詰め、空けた下端に送信を貼る (折り返しの段の中では margin-top: auto が下まで効かない) */
     #cbar { position: absolute; right: 0; bottom: 0; max-width: 100%; }
+    #cact { padding-bottom: 52px; }
   }
 
   /* 上部: どのセッションの返事か + 履歴の送り */
@@ -306,7 +310,7 @@ try { document.body.classList.toggle("chat-closed", localStorage.getItem("rmx.ch
   </div>
 </main>
 <aside id="chat">
-  <div id="chead"><button id="ctoggle" title="チャット欄を開く / 畳む">✎</button><span id="cto"></span></div>
+  <div id="chead"><button id="ctoggle" title="チャット欄を開く / 畳む">✎</button><span id="cto"></span><span id="cctx"></span></div>
   <div id="cwhy"></div>
   <nav id="cchips"></nav>
   <div id="sug" hidden></div>
@@ -1113,6 +1117,15 @@ function fillPick(sel) {
   sel.replaceChildren(sel.firstElementChild, ...(v && !l.includes(v) ? [v, ...l] : l).map((x) => new Option(x, x)));
   sel.value = v ?? ""; // 代入は change を出さないので送信は走らない
 }
+// context 使用量: 「268k / 1M」、60% 以上で黄・80% 以上で赤、割合は title。null なら出さない
+const cctx = document.getElementById("cctx");
+const kfmt = (n) => n >= 1e6 ? +(n / 1e6).toFixed(1) + "M" : Math.round(n / 1e3) + "k";
+function showCtx(c) {
+  const ok = c && c.used >= 0 && c.limit > 0, pct = ok ? c.used / c.limit * 100 : 0;
+  cctx.textContent = ok ? `${kfmt(c.used)} / ${kfmt(c.limit)}` : "";
+  cctx.title = ok ? `${pct.toFixed(1)}% 使用` : "";
+  cctx.className = pct >= 80 ? "crit" : pct >= 60 ? "warn" : "";
+}
 let nowFor;
 async function loadNow(to) {
   const name = to?.name ?? null;
@@ -1122,6 +1135,7 @@ async function loadNow(to) {
   try { if (name) r = await (await fetch("/now?name=" + encodeURIComponent(name))).json(); } catch {}
   if (nowFor !== name) return; // 取っている間に送り先が変わった
   nowVal.model = r.model || null; nowVal.effort = r.effort || null;
+  showCtx(r.ctx);
   document.querySelectorAll("#cact .cpick").forEach(fillPick);
 }
 document.querySelectorAll("#cact .cpick").forEach((sel) => {

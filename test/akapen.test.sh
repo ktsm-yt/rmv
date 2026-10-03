@@ -245,6 +245,7 @@ check "keys: models が /keys で返る" "$(curl -s "$BASE/keys" | python3 -c 'i
 rm -f "$STATE/keys.json"
 check "page: renderKeys が models を読んで候補を置き換える" "$(curl -s "$BASE/" | grep -c 'Array.isArray(m.models)')" 1
 check "page: プルダウンは送信と同じ最下段 (#copt の後ろに #cbar)" "$(curl -s "$BASE/" | grep -c '<div id="copt"></div><div id="cbar"><select class="cpick" data-cmd="model"')" 1
+check "page: context 使用量は送信欄の見出しの右" "$(curl -s "$BASE/" | grep -c '<span id="cto"></span><span id="cctx"></span></div>')" 1
 check "send: 別 Origin → 403" "$(post "https://evil.example" "$(body "$WITH" x)")" 403
 check "send: 別ポートの 127.0.0.1 → 403" "$(post "http://127.0.0.1:1" "$(body "$WITH" x)")" 403
 check "send: Origin なし → 403" "$(post - "$(body "$WITH" x)")" 403
@@ -488,6 +489,15 @@ check "now: /model 無しなら settings の model" "$(nowq "$WITH")" "sonnet[1m
 check "now: 末尾 512KB より前の /model は見ない (settings に落ちる)・effort は読める" "$(nowq "$WITH")" "sonnet[1m] low"
 rm -f "$TMP/cc-settings.json"
 check "now: transcript も settings も無い → null null" "$(nowq 20000101T000000000-nosuch00.md)" "None None"
+# ctx: 最後の本体 assistant 行の usage 合計 (sidechain は無視)、limit は model の [1m] で決まる
+usg() { printf '{"type":"assistant","isSidechain":%s,"message":{"model":"claude-opus-5-5","usage":{"input_tokens":%s,"cache_creation_input_tokens":%s,"cache_read_input_tokens":%s,"output_tokens":%s}}}\n' "$1" "$2" "$3" "$4" "$5"; }
+ctxq() { curl -s "$BASE/now?name=$1" | python3 -c 'import json,sys; c=json.load(sys.stdin)["ctx"]; print(c and (c["used"],c["limit"]))'; }
+{ usg false 1 1 1 1; usg false 2 2632 264890 321; usg true 9 9 9 9; } > "$TMP/projects/-x-repo/$SID.jsonl"
+check "now ctx: 最後の本体 assistant の usage 合計 (sidechain 行は無視)・model 無印は 200000" "$(ctxq "$WITH")" "(267845, 200000)"
+{ cmd model 'opus[1m]'; usg false 2 2632 264890 321; } > "$TMP/projects/-x-repo/$SID.jsonl"
+check "now ctx: model が [1m] なら limit 1000000" "$(ctxq "$WITH")" "(267845, 1000000)"
+{ cmd model 'opus'; } > "$TMP/projects/-x-repo/$SID.jsonl"
+check "now ctx: usage 行が無ければ null" "$(ctxq "$WITH")" "None"
 check "now: 不正な name → 400" "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/now?name=../x.md")" 400
 
 # --- /speak: Gemini の読み上げ (本物の Gemini は呼ばない。server はキー無し = GEMINI_API_KEY 空 + 存在しないキーチェーン service で起動) ---

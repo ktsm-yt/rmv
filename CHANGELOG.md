@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.12.0 (2026-10-04)
+
+- チャット欄の見出し (送り先の名前) の右に送り先セッションの context 使用量を「268k / 1M」の形で出す (割合は title に「26.8% 使用」、60% 以上で黄・80% 以上で赤、取れなければ出さない)。`GET /now` の返り値に `ctx: {used, limit}` を足した (used = transcript の最後の本体 assistant 行 (subagent は除く) の usage の input + cache_creation + cache_read + output、limit = model が `[1m]` で終われば 1,000,000、それ以外は 200,000 の推定)。取り直しは model / effort と同じ
+
 ## v0.11.0 (2026-10-04)
 
 - チャット欄の最下段、送信ボタンの左に model / effort のプルダウンを足した (並びは 数字キー 1〜5 / 6〜0 / [model][effort][送信]。狭い幅でも送信の左)。選ぶとすぐ、今の送り先端末へ `/model <別名>` / `/effort <段>` を送る (数字キー 6〜0 と同じ経路)。送り先が無い時は送信と同じく無効

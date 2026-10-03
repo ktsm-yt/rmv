@@ -297,13 +297,16 @@ async function media(name: string | null): Promise<Response> {
 // effort = 最後の assistant 行の "effort" と最後の /effort の引数のうち、行が後ろの方
 // /model・/effort は type:"user" で message.content が文字列の `<command-name>/model</command-name> … <command-args>X</command-args>` (CC 2.1.288 実機)
 // ponytail: transcript は末尾 512KB だけ読む。上限 = その範囲に /model・assistant 行がある間 (無ければ settings か null に落ちる)。/effort の行形は /model と同じと仮定 (実機未確認)
+// ctx = {used, limit}: used = 最後の本体 assistant 行 (isSidechain 除く) の usage の input + cache_creation + cache_read + output、limit = model が "[1m]" で終わるなら 1,000,000、それ以外 200,000
+// ponytail: limit は model 名からの推定。上限が変わったら CTX_LIMIT を直す。model が取れない時は 200,000 扱い (1M セッションで割合が過大に出うる)
+const CTX_LIMIT = { plain: 200_000, long: 1_000_000 };
 const NOW_TAIL = 512 * 1024;
 const MODEL_ALIAS = ["opus", "sonnet", "haiku", "fable"];
 async function now(name: string | null): Promise<Response> {
   if (!name || !NAME.test(name)) return new Response("bad name", { status: 400 });
   const meta = await Bun.file(`${HIST}/${name.slice(0, -3)}.json`).json().catch(() => null);
   const sid = String(meta?.session_id ?? "");
-  let cmdModel: string | null = null, effort: string | null = null, lastAsst: string | null = null;
+  let cmdModel: string | null = null, effort: string | null = null, lastAsst: string | null = null, used: number | null = null;
   if (/^[\w-]+$/.test(sid)) {
     try {
       for await (const rel of new Bun.Glob(`*/${sid}.jsonl`).scan({ cwd: PROJECTS })) {
@@ -316,6 +319,11 @@ async function now(name: string | null): Promise<Response> {
           if (o?.type === "assistant") {
             if (typeof o.message?.model === "string" && o.message.model !== "<synthetic>") lastAsst = o.message.model;
             if (typeof o.effort === "string") effort = o.effort;
+            const u = o.message?.usage;
+            if (u && o.isSidechain !== true) {
+              const n = (u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.output_tokens ?? 0);
+              if (Number.isFinite(n) && n > 0) used = n;
+            }
           } else if (o?.type === "user" && typeof o.message?.content === "string") {
             const m = o.message.content.match(/<command-name>\/(model|effort)<\/command-name>[\s\S]*?<command-args>([^<]*)<\/command-args>/);
             const arg = m?.[2].trim();
@@ -327,7 +335,8 @@ async function now(name: string | null): Promise<Response> {
   }
   const cfg = await Bun.file(CC_SETTINGS).json().catch(() => null);
   const model = cmdModel ?? (typeof cfg?.model === "string" && cfg.model ? cfg.model : null) ?? (lastAsst ? MODEL_ALIAS.find((a) => lastAsst!.includes(a)) ?? lastAsst : null);
-  return Response.json({ model, effort }, { headers: { "cache-control": "no-store" } });
+  const ctx = used === null ? null : { used, limit: model?.endsWith("[1m]") ? CTX_LIMIT.long : CTX_LIMIT.plain };
+  return Response.json({ model, effort, ctx }, { headers: { "cache-control": "no-store" } });
 }
 
 // POST /paste: チャット欄に貼った画像を state/paste/ に保存し、絶対パスを返す。端末へは /send が images で貼る。
