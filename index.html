@@ -1319,6 +1319,8 @@ async function poll() {
     if (page) { if (pageVer && page !== pageVer && !drafts.size && !ctext.value.trim()) return location.reload(); pageVer = page; }
     liveState = hr.headers.get("x-rmx-live");
     all = await hr.json();
+    // 選んでいた repo が履歴から消えたら (repo の決め方が変わった・古い URL 等) すべてに戻す。空の画面で止めない
+    if (REPO && !all.some((e) => e.repo.toLowerCase() === REPO.toLowerCase())) { REPO = ""; SESS = ""; setParam("repo", ""); setParam("s", ""); renderFilter(); }
     renderChips();
     renderProjects();
     const next = scope();
