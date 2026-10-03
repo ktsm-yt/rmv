@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.10.0 (2026-10-03)
 
 - プロジェクト列がセッション内の `cd` でずれないようにした。端末が Orca に生きていれば、`/history` の repo (プロジェクト列・`?repo=` 絞り込み・live 判定) は端末の worktree の dir 名で決める。端末が無ければ従来どおり返事の cwd。送信先の解決は cwd のまま
 - ファイルを開く処理の拡張子一覧をやめた。返事中の拡張子付きの絶対パスは全部リンクになり、`.tsx` なども開ける。server が判断する: ディレクトリと NUL を含むバイナリは 403、スクリプト (`.sh` `.py` など、実行ビット付き、`#!` 始まり) のテキストは実行させないよう `open -a` でエディタ (環境変数 `RMX_EDITOR_APP`、既定 `Visual Studio Code`)、それ以外のテキストと `.xmind` `.xlsx` `.docx` `.pptx` `.code-workspace` は Mac の既定アプリ
