@@ -368,6 +368,7 @@ async function send(req: Request): Promise<Response> {
   const name = typeof body?.name === "string" ? body.name : "";
   const text = typeof body?.text === "string" ? body.text : "";
   const focus = body?.focus !== false; // チャット欄は false: viewer に留まって続けて打つので端末タブへ切り替えない
+  const reset = body?.reset === true; // 数字キーだけ true: 端末の入力欄を空にしてから送る
   const images: unknown[] = Array.isArray(body?.images) ? body.images : [];
   if (!NAME.test(name)) return new Response("bad name", { status: 400 });
   if (images.length > 10 || !images.every((p) => typeof p === "string" && p.startsWith(`${STATE}/paste/`) && PASTED.test(p.slice(STATE.length + 7)))) return new Response("bad images", { status: 400 });
@@ -415,6 +416,12 @@ async function send(req: Request): Promise<Response> {
     }
     // /media 用: クリップボード経由の画像は transcript にパスが残らないので、セッションごとに控える
     if (images.length && /^[\w-]+$/.test(String(meta.session_id ?? ""))) await appendFile(`${STATE}/paste/${meta.session_id}.txt`, images.join("\n") + "\n");
+    // 数字キー (reset) は先に端末の入力欄を空にする: 失敗したコマンドなどが残っていると後ろにつながって効かない (2026-10-04)。
+    // Ctrl+U で文字を消し、Backspace で `!` (シェル入力の状態) を外す。空の欄に送っても何も起きない (実測)。複数行の書きかけは今の行しか消えない
+    if (reset) {
+      const r = await typed("\x15\x7f");
+      if (r.code !== 0) return new Response(`orca exit ${r.code}: ${r.err.trim() || r.out.trim()}`, { status: 502 });
+    }
     let { out, err, code } = text ? await typed(text) : { out: "", err: "", code: 0 };
     // orca は失敗理由を stdout の JSON に出し stderr が空のことがある (terminal_not_writable、2026-09-29 実測)
     if (code === 0) ({ out, err, code } = await typed("\r"));

@@ -1065,7 +1065,7 @@ async function sendText(text, clear) {
   say.textContent = "";
   renderChat();
   try {
-    const r = await fetch("/send", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: to.name, text, images, focus: false }) });
+    const r = await fetch("/send", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: to.name, text, images, focus: false, reset: !clear }) }); // 数字キー (clear=false) は端末の入力欄を空にしてから送る
     if (!r.ok) throw new Error((await r.text()) || String(r.status)); // server の本文 (409 terminal closed: … 等) をそのまま出す
     if (clear) { ctext.value = ""; pending.forEach((p) => URL.revokeObjectURL(p.url)); pending = []; renderImgs(); }
   } catch (e) { say.textContent = e.message ?? String(e); }

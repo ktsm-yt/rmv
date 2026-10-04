@@ -292,6 +292,13 @@ rm -f "$TMP/fail"
 check "send: focus:false → 200、send だけで switch しない" "$(post "$GOOD" "{\"name\":\"$WITH\",\"text\":\"x\",\"focus\":false}") $(calls)" "200 terminal send term_test,terminal send term_test,"
 : > "$TMP/calls"
 check "send: focus 省略 → switch まで呼ぶ" "$(post "$GOOD" "$(body "$WITH" x)") $(calls)" "200 terminal send term_test,terminal send term_test,terminal switch term_test,"
+# 数字キーは reset:true: 先に Ctrl+U + Backspace で端末の入力欄を空にしてから本文 → Enter。省略時は送らない
+: > "$TMP/calls"; : > "$TMP/argv"
+check "send: reset:true → 入力欄を空にする送信が本文の前に 1 回増える" "$(post "$GOOD" "{\"name\":\"$WITH\",\"text\":\"/exit\",\"focus\":false,\"reset\":true}") $(calls)" "200 terminal send term_test,terminal send term_test,terminal send term_test,"
+check "send: reset の 1 回目は Ctrl+U + Backspace、2 回目が本文" "$(grep -c $'^\x15\x7f$' "$TMP/argv") $(grep -n -x -e $'\x15\x7f' -e /exit "$TMP/argv" | cut -d: -f2 | tr '\n' ' ')" "1 "$'\x15\x7f'" /exit "
+: > "$TMP/argv"
+post "$GOOD" "$(body "$WITH" x)" > /dev/null
+check "send: reset 省略 (チャット欄・赤ペン) → 入力欄は消さない" "$(grep -c $'\x15' "$TMP/argv")" 0
 
 # --- 送り先の解決 (記録した端末 pane が閉じられた時) ---
 # sendc <name> → "<status> <calls>" (calls は毎回空から)
