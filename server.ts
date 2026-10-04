@@ -167,13 +167,15 @@ async function newSession(req: Request): Promise<Response> {
   const paths = await worktreePaths();
   if (!paths?.includes(cwd)) return new Response("forbidden cwd", { status: 403 });
   try {
-    // split: near (画面の送り先の端末) が orca terminal list に載っていて (生きていて書ける)、かつ選んだ cwd がその端末の worktreePath と一致する時だけ。
-    // 別フォルダを split すると、Orca 上は near の worktree のタブに入ってしまい「新しいフォルダで開いた」と見えない (2026-10-04 実機)。それ以外は tab と同じ create に落とす
-    // direction は cfork の「下に分割」(down) と同じ horizontal。cwd は単引用符で囲む (中の ' は '\'' に)。cwd は上で許可リストと完全一致済み
-    const nearOk = NEW_MODE === "split" && typeof near === "string" && !!near && !!(await liveTerminals(0))?.some((t) => t.handle === near && t.worktreePath === cwd);
-    const mode = nearOk ? "split" : "tab";
-    const argv = nearOk
-      ? [ORCA, "terminal", "split", "--terminal", near, "--direction", "horizontal", "--command", `cd '${cwd.replace(/'/g, `'\\''`)}' && ${NEW_CMD}`, "--json"]
+    // split: 選んだ cwd と worktreePath が一致する生きた端末を下に分割する (cfork の「下に分割」と同じ形)。near (画面の送り先) が一致すればそれ、無ければ同じフォルダの別の端末。
+    // 別フォルダの端末を split すると、Orca 上はその端末の worktree のタブに入り「新しいフォルダで開いた」と見えない (2026-10-04 実機)。一致する端末が無ければ tab と同じ create に落とす
+    // ponytail: 同じフォルダに端末が複数あれば near 以外は orca terminal list の先頭。上限 = どのペインの下に出るかを選びたくなるまで
+    // direction は cfork の down と同じ horizontal。cwd は単引用符で囲む (中の ' は '\'' に)。cwd は上で許可リストと完全一致済み
+    const same = NEW_MODE === "split" ? ((await liveTerminals(0)) ?? []).filter((t) => t.worktreePath === cwd) : [];
+    const target = (same.find((t) => t.handle === near) ?? same[0])?.handle;
+    const mode = target ? "split" : "tab";
+    const argv = target
+      ? [ORCA, "terminal", "split", "--terminal", target, "--direction", "horizontal", "--command", `cd '${cwd.replace(/'/g, `'\\''`)}' && ${NEW_CMD}`, "--json"]
       : [ORCA, "terminal", "create", "--worktree", `path:${cwd}`, "--command", NEW_CMD, "--focus", "--json"];
     const proc = Bun.spawn(argv, { stdout: "pipe", stderr: "pipe" });
     const [out, err, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);

@@ -3,7 +3,8 @@
 ## v0.13.0 (2026-10-04)
 
 - model / effort のプルダウンを外し、送り先セッションの今の値を「opus · high」の形で出すだけにした (送信ボタンの左)。rmv から `/model` `/effort` を送る機能は無くなった (切り替えは Orca / 端末側。端末の入力欄に書きかけがあると、そこへ連結されて混ざる事故があったため)。値の取り方 (`GET /now`、送り先が変わった時と新しい返事が来た時に取り直す) は同じ。`state/keys.json` の `"models"` は読まなくなった
-- `POST /new` の split (`RMX_NEW_MODE=split`) は、選んだ cwd が送り先の端末の worktreePath と一致する時だけにした。別フォルダを選んだ時は tab と同じ `orca terminal create --worktree path:<cwd>` で開く (別フォルダを split すると、Orca 上は送り先の worktree のタブの中に入り、新しいフォルダで開いたように見えなかった)
+- `POST /new` の split (`RMX_NEW_MODE=split`) は、選んだ cwd と worktreePath が一致する端末を下に分割するようにした。送り先の端末がそのフォルダならそれ、違えば同じフォルダの別の端末を分割し、そのフォルダに端末が無い時だけ tab と同じ `orca terminal create --worktree path:<cwd>` で開く (別フォルダの端末を split すると、Orca 上はその端末のタブの中に入り、新しいフォルダで開いたように見えなかった)
+- 送信欄の context 上限は、statusline が `state/ctx/<session_id>.json` に置く Claude Code の実際の値 (`context_window_size`) を優先する。無ければ従来どおり model 名から推定する (model 名に `[1m]` が無くても 1M のことがある)
 
 ## v0.12.0 (2026-10-04)
 

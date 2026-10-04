@@ -413,7 +413,8 @@ check "new: cwd 無し → 400" "$(nw "$GOOD" '{}')" 400
 check "page: ＋ 新規ボタン (#newbtn) と一覧 (#newpop) がある" "$(curl -s "$BASE/" | grep -c 'id="newbtn"\|id="newpop"')" 2
 # --- RMX_NEW_MODE=split: near が list に載っていれば画面の送り先の端末を分割 (direction = cfork の down = horizontal) ---
 WTQ="$TMP/it's wt"
-printf '{"ok":true,"result":{"worktrees":[{"path":"%s"},{"path":"%s"}]}}' "$WTA" "$WTQ" > "$TMP/wt.json"
+WTC="$TMP/wt-c" # 許可リストには載るが端末が 1 つも無いフォルダ
+printf '{"ok":true,"result":{"worktrees":[{"path":"%s"},{"path":"%s"},{"path":"%s"}]}}' "$WTA" "$WTQ" "$WTC" > "$TMP/wt.json"
 list "$(term term_near "$WTA" 1)" "$(term term_ro "$WTA" 1 true false)" "$(term term_nearq "$WTQ" 1)"
 PORT2="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')"
 RMX_NEW_MODE=split RMX_STATE_DIR="$STATE" RMX_PORT="$PORT2" RMX_ORCA_BIN="$STUB" RMX_WT_TTL_MS=0 RMX_LIVE_TTL_MS=0 bun run "$SERVER" > "$TMP/server2.log" 2>&1 &
@@ -428,17 +429,17 @@ check "new(split): 戻りに mode split" "$(cat "$TMP/body")" '{"handle":"term_s
 rm -f "$TMP/newargv"
 check "new(split): cwd に ' を含む → '\\'' にエスケープ" "$(nw2 "{\"cwd\":\"$WTQ\",\"near\":\"term_nearq\"}") $(sed -n 8p "$TMP/newargv")" "200 cd '$TMP/it'\\''s wt' && claude"
 rm -f "$TMP/newargv"
-check "new(split): near が list に無い → create にフォールバック (mode tab)" "$(nw2 "{\"cwd\":\"$WTA\",\"near\":\"term_dead\"}") $(cat "$TMP/body")" '200 {"handle":"term_new","mode":"tab"}'
-check "new(split): フォールバックは terminal create" "$(tr '\n' ' ' < "$TMP/newargv" | cut -c1-15)" "terminal create"
+check "new(split): near が list に無くても同じフォルダの端末があればそれを分割" "$(nw2 "{\"cwd\":\"$WTA\",\"near\":\"term_dead\"}") $(sed -n 4p "$TMP/newargv")" "200 term_near"
 rm -f "$TMP/newargv"
-check "new(split): near が書けない端末 (writable false) → create" "$(nw2 "{\"cwd\":\"$WTA\",\"near\":\"term_ro\"}")$(tr '\n' ' ' < "$TMP/newargv" | cut -c1-15)" "200terminal create"
+check "new(split): 書けない端末 (writable false) は分割先にしない" "$(nw2 "{\"cwd\":\"$WTA\",\"near\":\"term_ro\"}") $(sed -n 4p "$TMP/newargv")" "200 term_near"
 rm -f "$TMP/newargv"
-check "new(split): near 無し → create" "$(nw2 "{\"cwd\":\"$WTA\"}")$(tr '\n' ' ' < "$TMP/newargv" | cut -c1-15)" "200terminal create"
+check "new(split): near 無しでも同じフォルダの端末を分割" "$(nw2 "{\"cwd\":\"$WTA\"}") $(sed -n 4p "$TMP/newargv")" "200 term_near"
 rm -f "$TMP/newargv"
-# 別フォルダを split すると Orca 上は near の worktree のタブに入る (2026-10-04 実機)。cwd が near の worktreePath と違えば create
+# 別フォルダの端末を split すると Orca 上はその端末の worktree のタブに入る (2026-10-04 実機)。選んだフォルダの端末を分割する
+check "new(split): cwd が near と別フォルダ → そのフォルダの端末を分割 (mode split)" "$(nw2 "{\"cwd\":\"$WTQ\",\"near\":\"term_near\"}") $(sed -n 4p "$TMP/newargv") $(cat "$TMP/body")" '200 term_nearq {"handle":"term_split","mode":"split"}'
 rm -f "$TMP/newargv"
-check "new(split): cwd が near の worktreePath と違う → create (mode tab)" "$(nw2 "{\"cwd\":\"$WTQ\",\"near\":\"term_near\"}") $(cat "$TMP/body")" '200 {"handle":"term_new","mode":"tab"}'
-check "new(split): 別フォルダは terminal create --worktree path:<cwd>" "$(tr '\n' ' ' < "$TMP/newargv")" "terminal create --worktree path:$WTQ --command claude --focus --json "
+check "new(split): そのフォルダに端末が無い → create (mode tab)" "$(nw2 "{\"cwd\":\"$WTC\",\"near\":\"term_near\"}") $(cat "$TMP/body")" '200 {"handle":"term_new","mode":"tab"}'
+check "new(split): create は terminal create --worktree path:<cwd>" "$(tr '\n' ' ' < "$TMP/newargv")" "terminal create --worktree path:$WTC --command claude --focus --json "
 rm -f "$TMP/newargv"
 check "new(split): 許可リスト外の cwd は near があっても 403" "$(nw2 '{"cwd":"/Users/i/elsewhere","near":"term_near"}')" 403
 check "new(split): 403 では split も create も呼ばない" "$([ -e "$TMP/newargv" ] && echo called || echo none)" none
