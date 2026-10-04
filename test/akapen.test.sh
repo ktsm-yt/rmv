@@ -594,6 +594,7 @@ rm -f "$STATE/prompt/term_test.json"
 check "page: 読み上げボタン (#speak) が index.html にある" "$(curl -s "$BASE/" | grep -c '<button id="speak"')" 1
 check "page: 返事の上に依頼文 (details#ask) の描画がある" "$(curl -s "$BASE/" | grep -c '<details id="ask"')" 1
 check "page: 状態行に許可ボタン (data-approve) の描画がある" "$(curl -s "$BASE/" | grep -c 'data-approve="')" 1
+check "page: y キー (KeyY) で許可ボタンを押す処理がある" "$(curl -s "$BASE/" | grep -c 'ev.code === "KeyY"')" 1
 
 echo "checked $N cases ($FAIL failed)"
 [ "$FAIL" -eq 0 ]

@@ -758,6 +758,14 @@ document.addEventListener("keydown", (ev) => {
     return;
   }
   if (ev.target.closest?.("input, textarea, [contenteditable]")) return;
+  // y = 状態行の「許可」を押す。送り先の端末の分を優先し、無ければ許可待ちが 1 つだけの時に限る (どの端末か決まらない時は押さない)。
+  // ev.code で見る: 日本語入力が on だと ev.key が "Process" になる
+  if (ev.code === "KeyY") {
+    const bs = [...tstat.querySelectorAll("[data-approve]:not(:disabled)")];
+    const b = bs.find((x) => x.dataset.approve === chatTo()?.session) ?? (bs.length === 1 ? bs[0] : null);
+    if (b) { ev.preventDefault(); b.click(); }
+    return;
+  }
   if (ev.key === "r" && !speakBtn.hidden) return toggleSpeak(); // r = 読み上げ (他のキーと重ならない)
   // Esc (欄の外) = 1 回ごとに新しいピンから外す。ひとことが書いてあるピンに当たったら止める (打った文字は消さない)
   if (ev.key === "Escape") {
@@ -1018,7 +1026,7 @@ function renderTstat(list) {
     const st = perm ? "perm" : wait ? "wait" : (c && "◑◐◓◒".includes(c)) || (e.lastOutputAt && Date.now() - e.lastOutputAt < 15000) ? "busy" : "idle";
     const stTitle = { perm: "許可待ち", wait: "入力待ち", busy: "作業中", idle: "静か" }[st];
     const ask = e.asking?.prompt ?? e.prompt; // 返事待ちの依頼、無ければ最新の返事を引き出した依頼
-    if (perm) return `<div class="trow perm" data-s="${esc(e.session)}" style="--rc:${repoColor(e.repo)}" title="許可待ち"><i class="perm"></i><span>${esc(e.repo || "?")} · ${esc(perm.tool)} 許可待ち · ${esc(perm.detail)}</span><button data-approve="${esc(e.session)}" data-id="${esc(perm.id)}">許可</button></div>`;
+    if (perm) return `<div class="trow perm" data-s="${esc(e.session)}" style="--rc:${repoColor(e.repo)}" title="許可待ち"><i class="perm"></i><span>${esc(e.repo || "?")} · ${esc(perm.tool)} 許可待ち · ${esc(perm.detail)}</span><button data-approve="${esc(e.session)}" data-id="${esc(perm.id)}" title="許可する (y)">許可<sup>y</sup></button></div>`;
     return `<div class="trow${wait ? " wait" : ""}" data-s="${esc(e.session)}" style="--rc:${repoColor(e.repo)}" title="${stTitle} · 押すと依頼文を開き、この端末を送り先にする"><i class="${st}"></i><span>${esc(hhmm(new Date(e.ts)))} ${esc(e.repo || "?")} · ${e.asking ? esc("依頼: " + e.asking.prompt.replace(/\s+/g, " ").slice(0, 60)) : esc(e.head || "")}</span><time>${e.lastOutputAt ? ago(e.lastOutputAt) : ""}</time></div>` + (openAsk.has(e.session) && ask ? `<div class="task">${esc(ask)}</div>` : "");
   }).join("");
   if (html === tstatHtml) return; // chip と同じ: 同じ内容なら書き直さない
