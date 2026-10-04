@@ -2,7 +2,7 @@
 """Claude Code Stop hook: 最後の assistant text を rmv/state/ に書く。
   latest.html  返事の markdown 生 (変換はブラウザ側 index.html)
   latest.json  {cwd, session_id, ts, name, terminal}: どのセッションの返事か。
-               terminal = Orca 端末の ORCA_TERMINAL_HANDLE (赤ペンの送り先、Orca 外なら null)
+               terminal = Orca 端末の ORCA_TERMINAL_HANDLE (赤ペンの送り先、Orca 外なら null。bg session は terminal_handle が映している端末に直す)
   history/<ts>-<session_id 先頭 8>.md (+ 同名 .json に同じメタ)。直近 KEEP 件だけ残す
 SubagentStop でも同じ script を配線する: meta に agent {type, id} を足し、history にだけ書く
   (latest.* は本体の返事を subagent の報告で上書きしないため触らない)。本文は先頭 AGENT_MAX 字まで。
@@ -95,6 +95,43 @@ def is_interactive():
     return not os.environ.get("CLAUDE_CODE_ENTRYPOINT", "").startswith("sdk")
 
 
+def terminal_handle(session_id):
+    """返事・依頼文・許可待ちの key になる端末 handle (prompt-state.py / perm-state.py もこれを読み込んで使う)。
+    普段は env の ORCA_TERMINAL_HANDLE。bg session (daemon の fork) は daemon を起こした端末 (閉じていることが多い) の値を継ぐので、
+    その job を画面に映している対話プロセスの env から取り直す。手がかりは sessions/<pid>.json (2.1.288 実測):
+      bg 側 {sessionId, kind: "bg", jobId} / 映している対話側 {pid, kind: "interactive", parkedJobId: jobId}
+    Claude Code の非公開形式なので、読めない・形が違う・相手が死んでいる時は env の値のまま (修正前と同じ結果)。"""
+    env = os.environ.get("ORCA_TERMINAL_HANDLE")
+    try:
+        d = os.environ.get("RMX_SESSIONS_DIR") or os.path.join(os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude"), "sessions")
+        recs = []
+        for n in os.listdir(d):
+            if not n.endswith(".json"):
+                continue
+            try:
+                with open(os.path.join(d, n), encoding="utf-8") as f:
+                    rec = json.load(f)
+            except (OSError, ValueError):
+                continue  # 壊れた 1 本で他を巻き込まない
+            if isinstance(rec, dict):  # active.json は {} なので照合に掛からない
+                recs.append(rec)
+        me = next((r for r in recs if session_id and r.get("sessionId") == session_id), None)
+        if not me or me.get("kind") != "bg" or not me.get("jobId"):
+            return env
+        peer = next((r for r in recs if r.get("parkedJobId") == me["jobId"]), None)
+        if not peer:
+            return env
+        # 生死は ps に任せる (終了済みの pid は exit 1)。テストは server と同じ RMX_PS_BIN で stub に差し替える
+        p = subprocess.run([os.environ.get("RMX_PS_BIN") or "ps", "-Eww", "-o", "command=", "-p", str(int(peer["pid"]))],
+                           capture_output=True, text=True, timeout=2)
+        # 相手が claude の時だけ使う: 消え残った sessions/<pid>.json の pid が素のシェルに再利用されていると、赤ペンの文がコマンドとして走る
+        ok = p.returncode == 0 and re.match(r"\S*claude", p.stdout.lstrip())
+        m = re.search(r"(?:^|\s)ORCA_TERMINAL_HANDLE=(\S+)", p.stdout) if ok else None
+        return m.group(1) if m else env
+    except Exception:
+        return env
+
+
 def main():
     if not is_interactive():
         return  # 他の hook / script が起動した claude -p の返事は viewer に載せない
@@ -121,7 +158,7 @@ def main():
         if sub:  # worker は一時 worktree (<repo>/.harness-worktrees/<id>) で動く。返事は親の repo に寄せる (別 project として並ばないように)
             cwd = re.sub(r"/\.(harness-)?worktrees/.*$", "", cwd)
         meta = {"cwd": cwd, "session_id": sid, "ts": now.isoformat(timespec="seconds"), "name": name,
-                "terminal": os.environ.get("ORCA_TERMINAL_HANDLE")}
+                "terminal": terminal_handle(sid)}
         if sub:
             meta["agent"] = {"type": data.get("agent_type"), "id": data.get("agent_id")}
         else:  # 本体の返事には prompt-state.py が置いた依頼文を載せて、ファイルは消す

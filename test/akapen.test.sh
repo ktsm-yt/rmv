@@ -12,6 +12,8 @@ PERMHOOK="${RMX_PERM_HOOK:-$A/hooks/perm-state.py}"
 # hook は claude -p (entrypoint sdk-*) の返事を捨てる。親が -p でも結果が変わらないよう対話側に固定する
 export CLAUDE_CODE_ENTRYPOINT=cli
 TMP="$(mktemp -d)"
+# hook は Claude Code の sessions/ を読んで bg session の端末を取り直す。本物の ~/.claude/sessions を読まないよう空の場所に向ける
+export RMX_SESSIONS_DIR="$TMP/no-sessions"
 STATE="$TMP/state"
 STUB="$TMP/orca-stub"
 PORT="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')"
@@ -119,6 +121,37 @@ upr "$TMP/pr6" 'x' -u ORCA_TERMINAL_HANDLE CLAUDE_CODE_ENTRYPOINT=cli
 check "prompt hook: 端末 handle 無しは session_id が key" "$(pfile "$TMP/pr6/prompt/sess-1.json")" written
 upr "$TMP/pr7" $'<pasted_content id="a1">\n貼った本文\n</pasted_content id="a1">' ORCA_TERMINAL_HANDLE=term_p CLAUDE_CODE_ENTRYPOINT=cli
 check "prompt hook: 貼り付けの目印タグ (pasted_content) は外す" "$(field "$TMP/pr7/prompt/term_p.json" prompt)" "貼った本文"
+
+# --- bg session (daemon の fork): env の ORCA_TERMINAL_HANDLE は daemon を起こした端末。job を映している対話プロセスの env から取り直す ---
+# sessions/<pid>.json の fixture (2.1.288 の形) と ps stub (-Eww -o command= -p <pid> → $TMP/bgps-<pid>、無ければ exit 1 = 終了済み)
+BGPS="$TMP/bg-ps-stub"
+printf '#!/usr/bin/env bash\ncat "%s/bgps-$5" 2>/dev/null || exit 1\n' "$TMP" > "$BGPS"
+chmod +x "$BGPS"
+printf 'claude --resume TERM=xterm ORCA_TERMINAL_HANDLE=term_pane HOME=/x\n' > "$TMP/bgps-4242"
+SID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["session_id"])' "$FIX")"
+BG='{"pid":9001,"sessionId":"'"$SID"'","kind":"bg","jobId":"abcd1234"}'
+PANE='{"pid":4242,"sessionId":"bb948076","kind":"interactive","parkedJobId":"abcd1234"}'
+# sess <ラベル> <json...> → sessions dir に 1 本ずつ置いてそのパスを返す
+sess() { local d="$TMP/sess-$1" i=0; shift; mkdir -p "$d"; for j in "$@"; do i=$((i + 1)); printf '%s' "$j" > "$d/$i.json"; done; echo "$d"; }
+# bgrun <ラベル> <sessions dir> → 依頼 → 許可待ち → 返事 を 1 巡させ、prompt / perm の key と latest / history の terminal、返事に載った依頼文を返す
+bgrun() {
+  local d="$TMP/bg-$1" e=(ORCA_TERMINAL_HANDLE=term_daemon RMX_SESSIONS_DIR="$2" RMX_PS_BIN="$BGPS" RMX_STATE_DIR="$TMP/bg-$1") pk n
+  printf '{"hook_event_name":"UserPromptSubmit","session_id":"%s","prompt":"bg の依頼"}' "$SID" | env "${e[@]}" python3 "$PROMPTHOOK"
+  printf '{"hook_event_name":"PermissionRequest","session_id":"%s","tool_name":"Bash","tool_input":{"command":"ls"}}' "$SID" | env "${e[@]}" python3 "$PERMHOOK"
+  pk="$(ls "$d/prompt" 2>/dev/null)"
+  env "${e[@]}" python3 "$HOOK" < "$FIX"
+  n="$(field "$d/latest.json" name)"
+  echo "prompt=$pk perm=$(ls "$d/perm" 2>/dev/null) latest=$(field "$d/latest.json" terminal) hist=$(field "$d/history/${n%.md}.json" terminal) asked=$(field "$d/history/${n%.md}.json" prompt)"
+}
+DAEMON="prompt=term_daemon.json perm=term_daemon.json latest=term_daemon hist=term_daemon asked=bg の依頼"
+check "bg: 映している対話プロセスの端末で記録 (prompt / perm の key、latest / history の terminal)" "$(bgrun pair "$(sess pair "$BG" "$PANE" '{}')")" "prompt=term_pane.json perm=term_pane.json latest=term_pane hist=term_pane asked=bg の依頼"
+check "bg: 対話 session だけなら env の端末のまま (修正前と同じ)" "$(bgrun tui "$(sess tui '{"pid":4242,"sessionId":"'"$SID"'","kind":"interactive"}')")" "$DAEMON"
+check "bg: parkedJobId の相手がいなければ env の端末" "$(bgrun nopeer "$(sess nopeer "$BG")")" "$DAEMON"
+check "bg: 相手の pid が終了済み (ps が exit 1) なら env の端末" "$(bgrun dead "$(sess dead "$BG" '{"pid":4243,"kind":"interactive","parkedJobId":"abcd1234"}')")" "$DAEMON"
+printf 'zsh -l TERM=xterm ORCA_TERMINAL_HANDLE=term_shell HOME=/x\n' > "$TMP/bgps-4244"
+check "bg: 相手の pid が claude でない (pid の再利用) なら env の端末" "$(bgrun reused "$(sess reused "$BG" '{"pid":4244,"kind":"interactive","parkedJobId":"abcd1234"}')")" "$DAEMON"
+check "bg: sessions dir が無ければ env の端末" "$(bgrun nodir "$TMP/sess-none")" "$DAEMON"
+check "bg: bg 側の JSON が壊れていれば env の端末" "$(bgrun broken "$(sess broken "${BG%\}}" "$PANE")")" "$DAEMON"
 
 # --- server ---
 # stub: argv を 1 行 1 個で書き出す + 呼び出しごとに "<サブコマンド 2 語> <handle>" を $TMP/calls へ追記。$TMP/fail があれば stderr に書いて exit 1

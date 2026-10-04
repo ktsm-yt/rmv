@@ -2,8 +2,8 @@
 """Claude Code hook: 許可ダイアログ (permission prompt) で止まっている間だけ state/perm/<key>.json を置く。
   PermissionRequest       → 対話 session なら {id, tool, detail, ts, session_id, cwd, terminal} を書く
   それ以外 (PostToolUse / PostToolUseFailure / Stop / UserPromptSubmit 等) → そのファイルを消すだけ
-                            (毎ツール呼び出しで走るので is_interactive / ps は呼ばない)
-key = ORCA_TERMINAL_HANDLE、無ければ session_id (stop-to-fragment.py の meta.terminal || session_id = server の item.session と同じ集合)。
+                            (毎ツール呼び出しで走るので is_interactive は呼ばない。ps は bg session の key 解決だけ)
+key = 端末 handle (stop-to-fragment.py の terminal_handle)、無ければ session_id (stop-to-fragment.py の meta.terminal || session_id = server の item.session と同じ集合)。
 server の /history が perm を各 entry に付け、/approve が id を照合して端末へ "1" を送る。
 stdout には何も出さない (hook 出力は user 画面に出る)。exit 0 固定。
 """
@@ -23,12 +23,12 @@ DETAIL_MAX = 120
 DETAIL_KEY = {"Bash": "command", "Edit": "file_path", "Write": "file_path", "Read": "file_path", "NotebookEdit": "file_path", "WebFetch": "url"}
 
 
-def is_interactive():
-    # 対話 session かの判定は stop-to-fragment.py の正本を読み込んで使う (複製しない)
+def fragment():
+    # 対話 session かの判定と端末 handle は stop-to-fragment.py の正本を読み込んで使う (複製しない)
     spec = importlib.util.spec_from_file_location("stop_to_fragment", os.path.join(HERE, "stop-to-fragment.py"))
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    return mod.is_interactive()
+    return mod
 
 
 def summarize(tool, tool_input):
@@ -41,7 +41,8 @@ def summarize(tool, tool_input):
 
 def main():
     data = json.load(sys.stdin)
-    handle = os.environ.get("ORCA_TERMINAL_HANDLE")
+    frag = fragment()
+    handle = frag.terminal_handle(data.get("session_id"))
     key = re.sub(r"[^A-Za-z0-9_-]", "", handle or str(data.get("session_id") or ""))
     if not key:
         return
@@ -52,7 +53,7 @@ def main():
         except FileNotFoundError:
             pass
         return
-    if not is_interactive():
+    if not frag.is_interactive():
         return  # claude -p 等の許可待ちは viewer に出さない
     tool = str(data.get("tool_name") or "")
     rec = {"id": uuid.uuid4().hex[:8], "tool": tool, "detail": summarize(tool, data.get("tool_input")),
