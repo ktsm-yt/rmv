@@ -494,6 +494,10 @@ ctxq() { curl -s "$BASE/now?name=$1" | python3 -c 'import json,sys; c=json.load(
 check "now ctx: 最後の本体 assistant の usage 合計 (sidechain 行は無視)・model 無印は 200000" "$(ctxq "$WITH")" "(267845, 200000)"
 { cmd model 'opus[1m]'; usg false 2 2632 264890 321; } > "$TMP/projects/-x-repo/$SID.jsonl"
 check "now ctx: model が [1m] なら limit 1000000" "$(ctxq "$WITH")" "(267845, 1000000)"
+{ cmd model 'opus'; usg false 2 2632 264890 321; } > "$TMP/projects/-x-repo/$SID.jsonl"
+mkdir -p "$STATE/ctx"; printf '{"size":1000000}' > "$STATE/ctx/$SID.json"
+check "now ctx: state/ctx/<sid>.json の size があれば model 名より優先 (無印 opus でも 1000000)" "$(ctxq "$WITH")" "(267845, 1000000)"
+rm -f "$STATE/ctx/$SID.json"
 { cmd model 'opus'; } > "$TMP/projects/-x-repo/$SID.jsonl"
 check "now ctx: usage 行が無ければ null" "$(ctxq "$WITH")" "None"
 check "now: 不正な name → 400" "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/now?name=../x.md")" 400

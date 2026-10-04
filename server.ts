@@ -336,7 +336,9 @@ async function now(name: string | null): Promise<Response> {
   }
   const cfg = await Bun.file(CC_SETTINGS).json().catch(() => null);
   const model = cmdModel ?? (typeof cfg?.model === "string" && cfg.model ? cfg.model : null) ?? (lastAsst ? MODEL_ALIAS.find((a) => lastAsst!.includes(a)) ?? lastAsst : null);
-  const ctx = used === null ? null : { used, limit: model?.endsWith("[1m]") ? CTX_LIMIT.long : CTX_LIMIT.plain };
+  // 上限は state/ctx/<session_id>.json の {size} (statusline が Claude Code の context_window_size を置く) を優先。無ければ model 名から推定
+  const size = Number((await Bun.file(`${STATE}/ctx/${sid}.json`).json().catch(() => null))?.size);
+  const ctx = used === null ? null : { used, limit: size > 0 ? size : model?.endsWith("[1m]") ? CTX_LIMIT.long : CTX_LIMIT.plain };
   return Response.json({ model, effort, ctx }, { headers: { "cache-control": "no-store" } });
 }
 
