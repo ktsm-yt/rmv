@@ -596,5 +596,39 @@ check "page: 返事の上に依頼文 (details#ask) の描画がある" "$(curl 
 check "page: 状態行に許可ボタン (data-approve) の描画がある" "$(curl -s "$BASE/" | grep -c 'data-approve="')" 1
 check "page: y キー (KeyY) で許可ボタンを押す処理がある" "$(curl -s "$BASE/" | grep -c 'ev.code === "KeyY"')" 1
 
+# --- index.html: 表の下の "A:" 〜 "D:" の段が、直前の番号段落 "3." に吸収されずそれぞれ独立したピン (section.blk) になる ---
+# renderLowLoad だけ index.html から切り出し、marked 等は素通しの stub で評価する (ブラウザ不要)
+cat > "$TMP/pins.md" <<'MD'
+3\. 案の一覧です。
+
+| 案 | 内容 | 手軽さ | 効果 | 恒久 | Tier | 理由 |
+|---|---|---|---|---|---|---|
+| A | Artifact を禁止 | ■■■■■ | ■■■□□ | ○ | S | 下の A |
+| B | cloud 用を撤去 | ■■■■□ | ■■□□□ | ○ | A | 下の B |
+
+A: 共有の経路は Cloudflare Pages です。
+
+B: 起動 script 3 本
+を撤去します。
+
+C: 三つ目。
+
+D：全角コロンの四つ目。
+
+4\. 次の一手は ...
+MD
+cat > "$TMP/pins.ts" <<'TS'
+import { readFileSync } from "node:fs";
+const html = readFileSync(process.argv[2], "utf8");
+const a = html.indexOf("const ROMAN"), b = html.indexOf("async function show(");
+const marked = { parse: (x: string) => x, parseInline: (x: string) => x };
+const linkPaths = (t: string) => ({ md: t, media: [] as string[] });
+const esc = (x: string) => x, cut = (x: string, n: number) => x.slice(0, n), mediaHTML = () => "", RAWPATH = /$^/g;
+const renderLowLoad: (md: string) => string = new Function("marked", "linkPaths", "esc", "cut", "mediaHTML", "RAWPATH", html.slice(a, b) + "\nreturn renderLowLoad;")(marked, linkPaths, esc, cut, mediaHTML, RAWPATH);
+const out = renderLowLoad(readFileSync(process.argv[3], "utf8"));
+console.log([...out.matchAll(/<div class="num">([^<]*)<\/div>/g)].map((m) => m[1]).join(","));
+TS
+check "page: 表の下の A:〜D: 段が番号段落とは別のピンになる (3,A,B,C,D,4)" "$(bun run "$TMP/pins.ts" "$A/index.html" "$TMP/pins.md" 2>&1)" "3,A,B,C,D,4"
+
 echo "checked $N cases ($FAIL failed)"
 [ "$FAIL" -eq 0 ]
