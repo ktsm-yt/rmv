@@ -1109,14 +1109,14 @@ document.getElementById("cact").addEventListener("click", (ev) => { const b = ev
 // 送り先が変わった時と新しい返事が来た時に取り直し、取れなければ出さない
 // ponytail: 返事が来るまで反映されない (端末で /model を打っても、次の返事までは古い表示)。上限 = 返事ごとの 1 回の取得で足りる間
 const cnow = document.getElementById("cnow");
-// context 使用量: 「268k / 1M」、60% 以上で黄・80% 以上で赤、割合は title。null なら出さない
+// context 使用量: 「268k / 1M」、30% 以上で黄・50% 以上で赤、割合は title。null なら出さない
 const cctx = document.getElementById("cctx");
 const kfmt = (n) => n >= 1e6 ? +(n / 1e6).toFixed(1) + "M" : Math.round(n / 1e3) + "k";
 function showCtx(c) {
   const ok = c && c.used >= 0 && c.limit > 0, pct = ok ? c.used / c.limit * 100 : 0;
   cctx.textContent = ok ? `${kfmt(c.used)} / ${kfmt(c.limit)}` : "";
   cctx.title = ok ? `${pct.toFixed(1)}% 使用` : "";
-  cctx.className = pct >= 80 ? "crit" : pct >= 60 ? "warn" : "";
+  cctx.className = pct >= 50 ? "crit" : pct >= 30 ? "warn" : "";
 }
 let nowFor;
 async function loadNow(to) {
