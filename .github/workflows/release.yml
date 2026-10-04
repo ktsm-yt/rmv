@@ -1,0 +1,26 @@
+# v* タグの push で、CHANGELOG.md の同じ版の節を本文にした GitHub Release を作る
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: CHANGELOG の節を取り出してリリースを作る
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          awk -v t="$TAG" '/^## /{p = ($2 == t); next} p' CHANGELOG.md > notes.md
+          if ! grep -q '[^[:space:]]' notes.md; then
+            echo "CHANGELOG.md に ## $TAG の節が無い" >&2
+            exit 1
+          fi
+          gh release create "$TAG" --title "$TAG" --notes-file notes.md
