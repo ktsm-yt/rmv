@@ -592,3 +592,16 @@ Bun.serve({
   },
 });
 console.log(`rmx-a: http://127.0.0.1:${PORT}`);
+
+// RMX_MAX_FOOTPRINT_MB を超えたら自分で終了し、launchd (KeepAlive) に起動し直させる。env が無い時 (手で起動した時) は何もしない。
+// GPU 側の領域 (IOAccelerator) に溜まり、36 時間で 7.6GB まで膨らんだ (2026-10-05 実測)。process.memoryUsage には出ないので footprint で測る。
+// ponytail: 溜まる原因は未特定で、上限で切る対症療法。原因が分かったら外す
+const MAX_FOOTPRINT = Number(process.env.RMX_MAX_FOOTPRINT_MB) * 1024 * 1024;
+if (MAX_FOOTPRINT > 0) setInterval(async () => {
+  const p = Bun.spawn(["footprint", "-f", "bytes", String(process.pid)], { stdout: "pipe", stderr: "ignore" });
+  const bytes = Number((await new Response(p.stdout).text()).match(/Footprint: (\d+) B/)?.[1] ?? 0);
+  if (bytes > MAX_FOOTPRINT) {
+    console.log(`footprint ${Math.round(bytes / 1048576)} MB > ${process.env.RMX_MAX_FOOTPRINT_MB} MB: 終了して launchd に起動し直させる`);
+    process.exit(0);
+  }
+}, 10 * 60_000);

@@ -2,4 +2,6 @@
 # ログイン項目に job 名で並べるための wrapper (BTM の Name = 起動バイナリの basename)。
 # state/env (git に入らない) があれば読む。例: スマホから開く時の RMX_ORIGINS (README「スマホなど別の端末から開く」)
 [ -f /Users/i/Dev/rmv/state/env ] && { set -a; . /Users/i/Dev/rmv/state/env; set +a; }
+# メモリがこれを超えたら server が自分で終了し、KeepAlive で起動し直す (state/env で上書きできる)
+export RMX_MAX_FOOTPRINT_MB="${RMX_MAX_FOOTPRINT_MB:-1024}"
 exec /Users/i/.bun/bin/bun run /Users/i/Dev/rmv/server.ts "$@"
