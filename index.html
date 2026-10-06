@@ -1058,7 +1058,9 @@ let chipLabels = new Map(), chatBusy = false;
 const cchips = document.getElementById("cchips");
 let chatPins = {}, cchipsHtml = null, chipEntries = new Map();
 try { chatPins = JSON.parse(localStorage.getItem("rmx.chat.pin")) || {}; } catch {}
-const chatPin = () => chatPins[REPO.toLowerCase()] ?? "";
+// 固定先の端末が終了していたら (entry が全部 live=false) 固定を無視して追従に戻す。終了した端末へは送れないので、
+// 固定を残すと /clear や端末の開き直しの後も昨日の端末を指したまま送信が失敗する (2026-10-06 実機: Crewforce が前日 18:39 の端末に固定)
+const chatPin = () => { const p = chatPins[REPO.toLowerCase()] ?? ""; return p && !all.some((e) => e.session === p && e.live) && all.some((e) => e.session === p) ? "" : p; };
 // 右下: 送り先セッションで使った mermaid 図 + 画像・PDF (server の /media)。返事が変わった時だけ取り直す。押すと図・画像は全画面、PDF は別タブ
 const cmedia = document.getElementById("cmedia");
 let mediaFor, mmSeq = 0;

@@ -674,5 +674,15 @@ console.log([...out.matchAll(/<div class="num">([^<]*)<\/div>/g)].map((m) => m[1
 TS
 check "page: 表の下の A:〜D: 段が番号段落とは別のピンになる (3,A,B,C,D,4)" "$(bun run "$TMP/pins.ts" "$A/index.html" "$TMP/pins.md" 2>&1)" "3,A,B,C,D,4"
 
+# 送り先の固定: 終了した端末 (entry が全部 live=false) への固定は無視して追従 ("")、生きている端末・履歴に無い鍵はそのまま
+cat > "$TMP/chatpin.ts" <<'TS'
+import { readFileSync } from "node:fs";
+const line = readFileSync(process.argv[2], "utf8").match(/^const chatPin = .*$/m)![0];
+const all = [{ session: "dead", live: false }, { session: "alive", live: true }, { session: "alive", live: false }];
+const pin = (p: string) => new Function("chatPins", "REPO", "all", line + "\nreturn chatPin();")({ r: p }, "R", all);
+console.log(["dead", "alive", "gone"].map(pin).join(","));
+TS
+check "page: 終了した端末への送り先固定は外れ、生きている端末への固定は残る (,alive,gone)" "$(bun run "$TMP/chatpin.ts" "$A/index.html" 2>&1)" ",alive,gone"
+
 echo "checked $N cases ($FAIL failed)"
 [ "$FAIL" -eq 0 ]
