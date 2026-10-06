@@ -1,0 +1,18 @@
+#!/bin/sh
+# main に feat/fix を入れる push は、それを含む v* タグも一緒に (または先に) push されていることを求める。
+# CHANGELOG.md 冒頭の決まり 9 を手で守る前提だったため、f02eac9 (2026-10-06) が版なしで main に入った。
+# 有効化: git config core.hooksPath .githooks (clone ごとに 1 回)
+refs=$(cat)
+echo "$refs" | while read -r _ lsha rref _; do
+  [ "$rref" = refs/heads/main ] || continue
+  tag=$(git describe --tags --abbrev=0 --match 'v*' "$lsha" 2>/dev/null) || continue
+  bad=$(git log --format='%h %s' "$tag..$lsha" | grep -E '^[0-9a-f]+ (feat|fix)[(:!]')
+  if [ -n "$bad" ]; then
+    printf 'pre-push: %s より後の feat/fix に版がありません。CHANGELOG.md に節を書き、v* タグを付けて一緒に push してください:\n%s\n' "$tag" "$bad" >&2
+    exit 1
+  fi
+  echo "$refs" | grep -q " refs/tags/$tag " && continue
+  [ -n "$(git ls-remote --tags "$1" "refs/tags/$tag")" ] && continue
+  printf 'pre-push: タグ %s がまだ remote にありません。git push %s main %s で一緒に送ってください\n' "$tag" "$1" "$tag" >&2
+  exit 1
+done
