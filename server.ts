@@ -296,7 +296,8 @@ async function media(name: string | null): Promise<Response> {
 }
 
 // GET /now?name=<history の .md>: その返事のセッションの今の {model, effort} (取れなければ null)。プルダウンの初期表示用
-// model = transcript 最後の /model の引数 → settings.json の "model" → 最後の assistant の message.model を別名に寄せたもの
+// model = transcript で後ろにある方: /model の引数 か 本体 assistant の message.model を別名に寄せたもの (別名が同じなら /model の引数を残す)。
+// settings.json の "model" は transcript に何も無い時と、同じ別名で [1m] 等の付いた形を補う時だけ (settings は新しいセッションの既定でしかなく、起動時の --model や Orca の選択を反映しない)
 // effort = 最後の assistant 行の "effort" と最後の /effort の引数のうち、行が後ろの方
 // /model・/effort は type:"user" で message.content が文字列の `<command-name>/model</command-name> … <command-args>X</command-args>` (CC 2.1.288 実機)
 // ponytail: transcript は末尾 512KB だけ読む。上限 = その範囲に /model・assistant 行がある間 (無ければ settings か null に落ちる)。/effort の行形は /model と同じと仮定 (実機未確認)
@@ -309,7 +310,7 @@ async function now(name: string | null): Promise<Response> {
   if (!name || !NAME.test(name)) return new Response("bad name", { status: 400 });
   const meta = await Bun.file(`${HIST}/${name.slice(0, -3)}.json`).json().catch(() => null);
   const sid = String(meta?.session_id ?? "");
-  let cmdModel: string | null = null, effort: string | null = null, lastAsst: string | null = null, used: number | null = null;
+  let model: string | null = null, effort: string | null = null, used: number | null = null;
   if (/^[\w-]+$/.test(sid)) {
     try {
       for await (const rel of new Bun.Glob(`*/${sid}.jsonl`).scan({ cwd: PROJECTS })) {
@@ -320,7 +321,10 @@ async function now(name: string | null): Promise<Response> {
         for (const line of lines) {
           const o = (() => { try { return JSON.parse(line); } catch { return null; } })();
           if (o?.type === "assistant") {
-            if (typeof o.message?.model === "string" && o.message.model !== "<synthetic>") lastAsst = o.message.model;
+            if (typeof o.message?.model === "string" && o.message.model !== "<synthetic>" && o.isSidechain !== true) {
+              const a = MODEL_ALIAS.find((x) => o.message.model.includes(x)) ?? o.message.model;
+              if (!model?.startsWith(a)) model = a;
+            }
             if (typeof o.effort === "string") effort = o.effort;
             const u = o.message?.usage;
             if (u && o.isSidechain !== true) {
@@ -330,14 +334,15 @@ async function now(name: string | null): Promise<Response> {
           } else if (o?.type === "user" && typeof o.message?.content === "string") {
             const m = o.message.content.match(/<command-name>\/(model|effort)<\/command-name>[\s\S]*?<command-args>([^<]*)<\/command-args>/);
             const arg = m?.[2].trim();
-            if (m && arg) { if (m[1] === "model") cmdModel = arg; else effort = arg; }
+            if (m && arg) { if (m[1] === "model") model = arg; else effort = arg; }
           }
         }
       }
     } catch {} // projects 置き場が無い = transcript なし
   }
   const cfg = await Bun.file(CC_SETTINGS).json().catch(() => null);
-  const model = cmdModel ?? (typeof cfg?.model === "string" && cfg.model ? cfg.model : null) ?? (lastAsst ? MODEL_ALIAS.find((a) => lastAsst!.includes(a)) ?? lastAsst : null);
+  const s = typeof cfg?.model === "string" && cfg.model ? cfg.model : null;
+  if (s && (!model || (MODEL_ALIAS.includes(model) && s.startsWith(model)))) model = s;
   // 上限は state/ctx/<session_id>.json の {size} (statusline が Claude Code の context_window_size を置く) を優先。無ければ model 名から推定
   const size = Number((await Bun.file(`${STATE}/ctx/${sid}.json`).json().catch(() => null))?.size);
   const ctx = used === null ? null : { used, limit: size > 0 ? size : model?.endsWith("[1m]") ? CTX_LIMIT.long : CTX_LIMIT.plain };
