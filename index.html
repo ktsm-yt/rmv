@@ -220,8 +220,9 @@
   #reply .media img { cursor: zoom-in; }
   #reply .media img, #reply .media video { max-width: 100%; max-height: 60vh; }
   #reply .media video { border-radius: 8px; border: 1px solid var(--line); }
+  @font-face { font-family: "rmv-mono"; src: url(/font/mono) format("truetype"); font-display: swap; }
   #reply pre { line-height: 1.25; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px; overflow-x: auto; }
-  #reply pre, #reply pre code { font-family: "UDEV Gothic", "HackGen Console", ui-monospace, Menlo, monospace; font-size: 14px; } /* 無印 = 半角:全角 1:2。35 版は 3:5 で罫線図がズレる */
+  #reply pre, #reply pre code { font-family: "UDEV Gothic", "HackGen Console", "rmv-mono", ui-monospace, Menlo, monospace; font-size: 14px; } /* 無印 = 半角:全角 1:2。35 版は 3:5 で罫線図がズレる。rmv-mono = Mac のフォントを配る (スマホ用、Mac はローカルが先で取りに行かない) */
   #reply pre.mermaid { position: relative; background: transparent; border: none; text-align: center; overflow-x: auto; }
   /* 図: 角を丸める (配色は mermaid.initialize の themeVariables)。空き地クリック / ⤢ = 全画面、ノードクリック = 赤ペン */
   :is(pre.mermaid, #mmzoom) :is(.node rect, rect.actor, rect.note) { rx: 8px; ry: 8px; }
@@ -690,6 +691,23 @@ speakBtn.onclick = () => { if (held) held = false; else if (speaking) togglePaus
 if ("speechSynthesis" in window) { speechSynthesis.addEventListener("voiceschanged", pickVoice); pickVoice(); }
 document.getElementById("prev").onclick = older;
 document.getElementById("next").onclick = newer;
+// スマホ: 返事の上で左右にスワイプ = ◀ / ▶ (指を左へ = ▶ 次、右へ = ◀ 前。全画面の画像送りと同じ向き)。縦スクロール・横スクロールする要素・入力欄・赤ペン・拡大中は触らない
+let swipe = null;
+const swipeSkip = (t) => {
+  if (t.closest("input, textarea, button, select, #tray, #mmzoom, #chat, #chips")) return true;
+  for (let n = t; n && n !== document.body; n = n.parentElement) if (n.scrollWidth > n.clientWidth && /auto|scroll/.test(getComputedStyle(n).overflowX)) return true;
+  return false;
+};
+document.addEventListener("touchstart", (ev) => {
+  const p = ev.touches[0];
+  swipe = ev.touches.length === 1 && p.clientX > 24 && p.clientX < innerWidth - 24 && !swipeSkip(ev.target) && !getSelection().toString() && !(visualViewport && visualViewport.scale > 1) ? { x: p.clientX, y: p.clientY, t: Date.now() } : null;
+}, { passive: true });
+document.addEventListener("touchend", (ev) => {
+  const s = swipe; swipe = null;
+  if (!s || ev.touches.length || Date.now() - s.t > 600 || getSelection().toString()) return;
+  const p = ev.changedTouches[0], dx = p.clientX - s.x, dy = p.clientY - s.y;
+  if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) (dx > 0 ? older : newer)();
+}, { passive: true });
 // 図の全画面: 図の複製を画面いっぱいに置き、viewBox を動かして拡大・移動する (CSS transform より拡大しても線がぼやけない)。
 // 表示域と viewBox の縦横比を常に揃えるので preserveAspectRatio="none" で歪まない。
 const zoom = document.getElementById("mmzoom");

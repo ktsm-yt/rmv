@@ -12,6 +12,7 @@ const OSASCRIPT = process.env.RMX_OSASCRIPT_BIN || "osascript"; // 同上
 const PBPASTE = process.env.RMX_PBPASTE_BIN || "pbpaste"; // 同上 (クリップボードの文字の退避と復元)
 const PBCOPY = process.env.RMX_PBCOPY_BIN || "pbcopy";
 const PROJECTS = process.env.RMX_PROJECTS_DIR || `${process.env.HOME}/.claude/projects`; // transcript の置き場 (同上)
+const MONO_FONT = process.env.RMX_MONO_FONT || `${process.env.HOME}/Library/Fonts/HackGenConsole-Regular.ttf`; // スマホに配る等幅フォント (罫線図用)。テストの差し替え口
 const CC_SETTINGS = process.env.RMX_CC_SETTINGS || `${process.env.HOME}/.claude/settings.json`; // 新しいセッションの既定 model ("model" キー)。テストの差し替え口
 const PERM = `${STATE}/perm`; // hooks/perm-state.py が許可待ちの間だけ <session>.json を置く
 const PERM_TTL = 30 * 60_000; // 強制終了した端末に取り残された perm を無視する
@@ -598,6 +599,10 @@ Bun.serve({
     // DNS rebinding 対策: 他サイトが自分のドメインを 127.0.0.1 に向けても Host が違うので読ませない
     if (!HOSTS.has(req.headers.get("host") ?? "")) return new Response("forbidden host", { status: 403 });
     if (pathname === "/") return new Response(Bun.file(`${DIR}/index.html`), { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } }); // no-store: ブラウザが古い index.html を使い回さない
+    if (pathname === "/font/mono") { // スマホには HackGen Console が無いので Mac のを配る。10MB あるので長く cache
+      const f = Bun.file(MONO_FONT);
+      return (await f.exists()) ? new Response(f, { headers: { "content-type": "font/ttf", "cache-control": "public, max-age=2592000" } }) : new Response("not found", { status: 404 });
+    }
     if (pathname === "/fragment") {
       const f = Bun.file(FRAGMENT);
       if (!(await f.exists())) return new Response("", { headers: TEXT });

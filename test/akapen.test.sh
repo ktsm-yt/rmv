@@ -194,7 +194,7 @@ chmod +x "$OSASTUB"
 printf '#!/usr/bin/env bash\ncat "%s/clip"\n' "$TMP" > "$TMP/pbpaste-stub"
 printf '#!/usr/bin/env bash\ncat > "%s/clip"; : > "%s/pbcopied"\n' "$TMP" "$TMP" > "$TMP/pbcopy-stub"
 chmod +x "$TMP/pbpaste-stub" "$TMP/pbcopy-stub"
-GEMINI_API_KEY= RMX_TTS_KEYCHAIN_SERVICE="rmv-test-nonexistent-$$" RMX_PROJECTS_DIR="$TMP/projects" RMX_CC_SETTINGS="$TMP/cc-settings.json" RMX_STATE_DIR="$STATE" RMX_PORT="$PORT" RMX_ORCA_BIN="$STUB" RMX_OSASCRIPT_BIN="$OSASTUB" RMX_PBPASTE_BIN="$TMP/pbpaste-stub" RMX_PBCOPY_BIN="$TMP/pbcopy-stub" RMX_PS_BIN="$PSSTUB" RMX_OPEN_BIN="$TMP/open-stub" RMX_LIVE_TTL_MS=0 RMX_WT_TTL_MS=0 RMX_ORIGINS="https://mac.tailtest.ts.net" bun run "$SERVER" > "$TMP/server.log" 2>&1 &
+GEMINI_API_KEY= RMX_TTS_KEYCHAIN_SERVICE="rmv-test-nonexistent-$$" RMX_PROJECTS_DIR="$TMP/projects" RMX_CC_SETTINGS="$TMP/cc-settings.json" RMX_MONO_FONT="$TMP/mono.ttf" RMX_STATE_DIR="$STATE" RMX_PORT="$PORT" RMX_ORCA_BIN="$STUB" RMX_OSASCRIPT_BIN="$OSASTUB" RMX_PBPASTE_BIN="$TMP/pbpaste-stub" RMX_PBCOPY_BIN="$TMP/pbcopy-stub" RMX_PS_BIN="$PSSTUB" RMX_OPEN_BIN="$TMP/open-stub" RMX_LIVE_TTL_MS=0 RMX_WT_TTL_MS=0 RMX_ORIGINS="https://mac.tailtest.ts.net" bun run "$SERVER" > "$TMP/server.log" 2>&1 &
 SRV=$!
 trap 'kill $SRV 2>/dev/null' EXIT
 for _ in $(seq 50); do curl -s -o /dev/null "$BASE/history" && break; sleep 0.1; done
@@ -365,6 +365,9 @@ check "file: root 外 (/etc/hosts) → 403" "$(fget /etc/hosts)" 403
 check "file: .. で root 外へ出る → 403" "$(fget "$F/../../../../../../etc/hosts")" 403
 check "file: 存在しない png → 404" "$(fget "$F/none.png")" 404
 check "file: p 無し → 400" "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/file")" 400
+check "font: /font/mono はファイルが無ければ 404" "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/font/mono")" 404
+printf 'ttf-bytes' > "$TMP/mono.ttf"
+check "font: /font/mono はファイルがあれば 200 + font/ttf + 長い cache + 中身" "$(curl -s -D "$TMP/fh" -o "$TMP/fb" -w '%{http_code}' "$BASE/font/mono") $(grep -ic '^content-type: font/ttf' "$TMP/fh") $(grep -ic '^cache-control:.*max-age=2592000' "$TMP/fh") $(cat "$TMP/fb")" "200 1 1 ttf-bytes"
 check "host: 127.0.0.1 以外の Host (DNS rebinding) → 403" "$(curl -s -o /dev/null -w '%{http_code}' -H "Host: rebind:$PORT" "$BASE/history")" 403
 
 # --- /paste: チャット欄の画像貼り付け ---
