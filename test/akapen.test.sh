@@ -188,9 +188,13 @@ EOF
 chmod +x "$PSSTUB"
 
 OSASTUB="$TMP/osa-stub"
-printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$2" >> "%s/osa"\n' "$TMP" > "$OSASTUB"
+# clipboard info は $TMP/clipinfo を返す (osa には記録しない)。pbpaste / pbcopy は $TMP/clip を読み書きし、pbcopy が呼ばれたら $TMP/pbcopied を作る
+printf '#!/usr/bin/env bash\n[ "$2" = "clipboard info" ] && { cat "%s/clipinfo" 2>/dev/null; exit 0; }\nprintf "%%s\\n" "$2" >> "%s/osa"\n' "$TMP" "$TMP" > "$OSASTUB"
 chmod +x "$OSASTUB"
-GEMINI_API_KEY= RMX_TTS_KEYCHAIN_SERVICE="rmv-test-nonexistent-$$" RMX_PROJECTS_DIR="$TMP/projects" RMX_CC_SETTINGS="$TMP/cc-settings.json" RMX_STATE_DIR="$STATE" RMX_PORT="$PORT" RMX_ORCA_BIN="$STUB" RMX_OSASCRIPT_BIN="$OSASTUB" RMX_PS_BIN="$PSSTUB" RMX_OPEN_BIN="$TMP/open-stub" RMX_LIVE_TTL_MS=0 RMX_WT_TTL_MS=0 RMX_ORIGINS="https://mac.tailtest.ts.net" bun run "$SERVER" > "$TMP/server.log" 2>&1 &
+printf '#!/usr/bin/env bash\ncat "%s/clip"\n' "$TMP" > "$TMP/pbpaste-stub"
+printf '#!/usr/bin/env bash\ncat > "%s/clip"; : > "%s/pbcopied"\n' "$TMP" "$TMP" > "$TMP/pbcopy-stub"
+chmod +x "$TMP/pbpaste-stub" "$TMP/pbcopy-stub"
+GEMINI_API_KEY= RMX_TTS_KEYCHAIN_SERVICE="rmv-test-nonexistent-$$" RMX_PROJECTS_DIR="$TMP/projects" RMX_CC_SETTINGS="$TMP/cc-settings.json" RMX_STATE_DIR="$STATE" RMX_PORT="$PORT" RMX_ORCA_BIN="$STUB" RMX_OSASCRIPT_BIN="$OSASTUB" RMX_PBPASTE_BIN="$TMP/pbpaste-stub" RMX_PBCOPY_BIN="$TMP/pbcopy-stub" RMX_PS_BIN="$PSSTUB" RMX_OPEN_BIN="$TMP/open-stub" RMX_LIVE_TTL_MS=0 RMX_WT_TTL_MS=0 RMX_ORIGINS="https://mac.tailtest.ts.net" bun run "$SERVER" > "$TMP/server.log" 2>&1 &
 SRV=$!
 trap 'kill $SRV 2>/dev/null' EXIT
 for _ in $(seq 50); do curl -s -o /dev/null "$BASE/history" && break; sleep 0.1; done
@@ -292,6 +296,13 @@ rm -f "$TMP/fail"
 check "send: focus:false → 200、send だけで switch しない" "$(post "$GOOD" "{\"name\":\"$WITH\",\"text\":\"x\",\"focus\":false}") $(calls)" "200 terminal send term_test,terminal send term_test,"
 : > "$TMP/calls"
 check "send: focus 省略 → switch まで呼ぶ" "$(post "$GOOD" "$(body "$WITH" x)") $(calls)" "200 terminal send term_test,terminal send term_test,terminal switch term_test,"
+# スマホ (Host が tailnet、または中継の x-forwarded-*) から送った時は focus を省略しても switch しない。上の「focus 省略」は Host 127.0.0.1 の curl
+TSO="https://mac.tailtest.ts.net"
+postfrom() { curl -s -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' "$@" --data "$(body "$WITH" x)" "$BASE/send"; }
+: > "$TMP/calls"
+check "send: Host が tailnet (focus 省略) → send だけで switch しない" "$(postfrom -H "Origin: $TSO" -H 'Host: mac.tailtest.ts.net') $(calls)" "200 terminal send term_test,terminal send term_test,"
+: > "$TMP/calls"
+check "send: Host は 127.0.0.1 でも x-forwarded-for があれば switch しない" "$(postfrom -H "Origin: $GOOD" -H 'X-Forwarded-For: 100.64.0.2') $(calls)" "200 terminal send term_test,terminal send term_test,"
 # 数字キーは reset:true: 先に Ctrl+U + Backspace で端末の入力欄を空にしてから本文 → Enter。省略時は送らない
 : > "$TMP/calls"; : > "$TMP/argv"
 check "send: reset:true → 入力欄を空にする送信が本文の前に 1 回増える" "$(post "$GOOD" "{\"name\":\"$WITH\",\"text\":\"/exit\",\"focus\":false,\"reset\":true}") $(calls)" "200 terminal send term_test,terminal send term_test,terminal send term_test,"
@@ -491,6 +502,14 @@ rm -f "$TMP/calls" "$TMP/argv" "$TMP/osa" "$TMP/ctrlv" "$TMP/fail" "$TMP/failout
 check "send+images: 画像 1 枚 + 本文 → 200" "$(post "$GOOD" "$(simg 'これ見て' "[\"$PP\"]")")" 200
 case "$(cat "$TMP/osa" 2>/dev/null)" in *"POSIX file \"$PP\""*"«class PNGf»"*) ok "send+images: osascript が貼った png をクリップボードへ" ;; *) ng "send+images: osascript の引数が想定外: $(cat "$TMP/osa" 2>/dev/null)" ;; esac
 check "send+images: Ctrl+V → 本文 → Enter の順" "$(sed -n '6p;13p;20p' "$TMP/argv" | tr '\026\r' 'VR' | tr '\n' ',')" "V,これ見て,R,"
+# 貼る前のクリップボードの文字は貼り終えたら戻る。文字以外が入っていた時は戻さない (pbcopy を呼ばない)
+rm -f "$TMP/ctrlv" "$TMP/pbcopied"; printf 'before\n日本語' > "$TMP/clip"; echo '{{«class utf8», 12}, {string, 12}}' > "$TMP/clipinfo"
+post "$GOOD" "$(simg '' "[\"$PP\"]")" > /dev/null
+check "send+images: 文字のクリップボードは送った後に元へ戻る" "$(cat "$TMP/clip")" "$(printf 'before\n日本語')"
+rm -f "$TMP/ctrlv" "$TMP/pbcopied"; printf 'PNGBYTES' > "$TMP/clip"; echo '{{«class PNGf», 99}}' > "$TMP/clipinfo"
+post "$GOOD" "$(simg '' "[\"$PP\"]")" > /dev/null
+check "send+images: 画像のクリップボードは戻さない (pbcopy を呼ばない)" "$([ -e "$TMP/pbcopied" ] && echo called || echo untouched)" untouched
+rm -f "$TMP/clipinfo" "$TMP/ctrlv"
 rm -f "$TMP/ctrlv"
 check "send+images: 本文なしで画像だけ → 200" "$(post "$GOOD" "$(simg '' "[\"$PP\"]")")" 200
 check "send+images: paste/ の外のパス → 400" "$(post "$GOOD" "$(simg x '["/etc/hosts"]')")" 400

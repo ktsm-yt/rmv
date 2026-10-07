@@ -9,6 +9,8 @@ const FRAGMENT = `${STATE}/latest.html`;
 const HIST = `${STATE}/history`;
 const ORCA = process.env.RMX_ORCA_BIN || "orca"; // env はテストの stub 差し替え用
 const OSASCRIPT = process.env.RMX_OSASCRIPT_BIN || "osascript"; // 同上
+const PBPASTE = process.env.RMX_PBPASTE_BIN || "pbpaste"; // 同上 (クリップボードの文字の退避と復元)
+const PBCOPY = process.env.RMX_PBCOPY_BIN || "pbcopy";
 const PROJECTS = process.env.RMX_PROJECTS_DIR || `${process.env.HOME}/.claude/projects`; // transcript の置き場 (同上)
 const CC_SETTINGS = process.env.RMX_CC_SETTINGS || `${process.env.HOME}/.claude/settings.json`; // 新しいセッションの既定 model ("model" キー)。テストの差し替え口
 const PERM = `${STATE}/perm`; // hooks/perm-state.py が許可待ちの間だけ <session>.json を置く
@@ -186,6 +188,12 @@ async function newSession(req: Request): Promise<Response> {
   } catch (e) {
     return new Response(`orca spawn failed: ${e}`, { status: 500 });
   }
+}
+
+// Mac 本体のブラウザからのリクエストか: Host が 127.0.0.1 / localhost で、中継の x-forwarded-* が無い
+function isLocalRequest(req: Request): boolean {
+  const host = (req.headers.get("host") ?? "").replace(/:\d+$/, "");
+  return (host === "127.0.0.1" || host === "localhost") && !req.headers.has("x-forwarded-for") && !req.headers.has("x-forwarded-host");
 }
 
 // 送信後に端末タブへ戻す (キー入力をすぐ端末で続けられるように)。失敗しても送信は成功扱い: log だけ残す。
@@ -372,7 +380,9 @@ async function send(req: Request): Promise<Response> {
   const body = await req.json().catch(() => null);
   const name = typeof body?.name === "string" ? body.name : "";
   const text = typeof body?.text === "string" ? body.text : "";
-  const focus = body?.focus !== false; // チャット欄は false: viewer に留まって続けて打つので端末タブへ切り替えない
+  // チャット欄は false: viewer に留まって続けて打つので端末タブへ切り替えない。Mac の外 (スマホ = tailscale serve 経由) から送った時も切り替えない: Mac の画面を勝手に奪うため。
+  // 判定は Host (クライアントの申告は信じない)。中継が Host を 127.0.0.1 に書き換えても x-forwarded-* が残る
+  const focus = body?.focus !== false && isLocalRequest(req);
   const reset = body?.reset === true; // 数字キーだけ true: 端末の入力欄を空にしてから送る
   const images: unknown[] = Array.isArray(body?.images) ? body.images : [];
   if (!NAME.test(name)) return new Response("bad name", { status: 400 });
@@ -400,7 +410,27 @@ async function send(req: Request): Promise<Response> {
   // クリップボードに画像を載せて Ctrl+V (\x16) を送ると [Image #N] で入る (2026-09-29 実測)。
   // 次の画像でクリップボードを上書きする前に、下書きの [Image #N] が増えるのを待つ (最大 10 秒)。
   // 3 秒だと 663 KB のスクショで、実際は入っているのに「入らなかった」と返していた (2026-09-30)。大きい画像ほど取り込みが遅い
-  // ponytail: user のクリップボードは最後の画像のまま戻さない
+  // 送る前のクリップボードの文字を控えて、貼り終えたら戻す (Mac 側で user が持っていたコピーを潰さない)。
+  // ponytail: 戻せるのは文字 (と空) だけ。画像・ファイルなど文字以外が入っていた時は戻せず、最後の画像のまま残る。文字と画像が両方入っていた時は文字だけ戻る。上限 = pbpaste / pbcopy で往復できる型
+  const saveClip = async (): Promise<string | null> => {
+    try {
+      const i = Bun.spawn([OSASCRIPT, "-e", "clipboard info"], { stdout: "pipe", stderr: "ignore" });
+      const [info, icode] = await Promise.all([new Response(i.stdout).text(), i.exited]);
+      if (icode !== 0) return null;
+      if (!/utf8|«class ut16»|string|\bTEXT\b/.test(info)) return info.trim() === "" || info.trim() === "{}" ? "" : null; // 空 = 空に戻す / 文字以外 = 戻せない
+      const p = Bun.spawn([PBPASTE], { stdout: "pipe", stderr: "ignore", env: { ...process.env, LANG: "en_US.UTF-8" } });
+      const [txt, pcode] = await Promise.all([new Response(p.stdout).text(), p.exited]);
+      return pcode === 0 ? txt : null;
+    } catch { return null; }
+  };
+  const restoreClip = async (txt: string | null) => {
+    if (txt === null) return;
+    try {
+      const p = Bun.spawn([PBCOPY], { stdin: "pipe", stdout: "ignore", stderr: "ignore", env: { ...process.env, LANG: "en_US.UTF-8" } });
+      p.stdin.write(txt); p.stdin.end();
+      await p.exited;
+    } catch {}
+  };
   const attach = async (path: string): Promise<string | null> => {
     if (!(await Bun.file(path).exists())) return `image not found: ${path}`;
     const before = await drafted();
@@ -415,10 +445,13 @@ async function send(req: Request): Promise<Response> {
     return "画像が端末に入らなかった (10 秒待っても [Image #N] が増えない)";
   };
   try {
-    for (const img of images as string[]) {
-      const why = await attach(img);
-      if (why) return new Response(why, { status: 502 });
-    }
+    const clip = images.length ? await saveClip() : null;
+    try {
+      for (const img of images as string[]) {
+        const why = await attach(img);
+        if (why) return new Response(why, { status: 502 });
+      }
+    } finally { await restoreClip(clip); }
     // /media 用: クリップボード経由の画像は transcript にパスが残らないので、セッションごとに控える
     if (images.length && /^[\w-]+$/.test(String(meta.session_id ?? ""))) await appendFile(`${STATE}/paste/${meta.session_id}.txt`, images.join("\n") + "\n");
     // 数字キー (reset) は先に端末の入力欄を空にする: 失敗したコマンドなどが残っていると後ろにつながって効かない (2026-10-04)。

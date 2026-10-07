@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>rmv (Red Marker Viewer): 返事を見て赤ペンで返す</title>
 <style>
   :root {
@@ -17,7 +17,7 @@
   }
   * { box-sizing: border-box; }
   body {
-    margin: 0; height: 100vh; display: grid; grid-template-columns: 200px minmax(0, 1fr);
+    margin: 0; height: 100vh; height: 100dvh; height: var(--vvh, 100dvh); padding-bottom: env(safe-area-inset-bottom); display: grid; grid-template-columns: 200px minmax(0, 1fr);
     font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
     line-height: 1.8; background: var(--bg); color: var(--fg);
   }
@@ -53,11 +53,10 @@
   /* 畳んでいてもホバーで重ねて開く (離すと閉じる)。☰ で開きっぱなしにもできる (2026-09-29 user) */
   body.proj-closed #proj:hover { position: fixed; left: 0; top: 0; bottom: 0; width: 240px; padding: 8px 4px; overflow-y: auto; z-index: 20; box-shadow: 6px 0 18px rgb(0 0 0 / .18); }
   body.proj-closed #proj:hover #plist { display: block; }
-  @media (max-width: 699px) {
-    /* 狭い幅では開いても返事を押し潰さず、上に重ねる */
-    body { grid-template-columns: 32px minmax(0, 1fr); }
-    body:not(.proj-closed) #proj { position: fixed; left: 0; top: 0; bottom: 0; width: min(280px, 88vw); z-index: 20; box-shadow: 6px 0 18px rgb(0 0 0 / .18); }
-  }
+  /* 狭い幅 (< 700px) とスマホ (mobile UA、幅は問わない) は html.narrow (head の script が付ける)。:where で詳細度を @media 版と同じに保つ */
+  /* 狭い幅では開いても返事を押し潰さず、上に重ねる */
+  :where(html.narrow) body { grid-template-columns: 32px minmax(0, 1fr); }
+  :where(html.narrow) body:not(.proj-closed) #proj { position: fixed; left: 0; top: 0; bottom: 0; width: min(280px, 88vw); z-index: 20; box-shadow: 6px 0 18px rgb(0 0 0 / .18); }
   .prow { display: block; width: 100%; text-align: left; font: inherit; color: var(--fg); background: none; border: 0; border-radius: 6px; padding: 6px 8px; margin-bottom: 2px; cursor: pointer; }
   .prow:hover { background: color-mix(in srgb, var(--fg) 6%, transparent); }
   .prow.on { background: var(--fg); color: var(--bg); }
@@ -117,6 +116,9 @@
   #cctx { flex: none; font-size: 11px; color: var(--muted); white-space: nowrap; }
   #cctx.warn { color: var(--yellow); } #cctx.crit { color: var(--red); }
   #cctx:empty { display: none; }
+  #cattach { display: none; flex: none; order: -1; margin-right: auto; font: inherit; line-height: 1.6; padding: 0 10px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); cursor: pointer; }
+  #cattach:disabled { opacity: .35; cursor: default; }
+  html.narrow #cattach { display: block; } /* 左端 (送信と反対側) に固定。スマホは貼り付けが無いので写真から選ぶ */
   #csend { flex: none; font: inherit; color: #fff; background: var(--red); border: 1px solid var(--red); border-radius: 6px; padding: 2px 12px; cursor: pointer; }
   #ctext:disabled, #csend:disabled { opacity: .35; cursor: default; }
   #cmedia { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 6px; align-content: start; } /* 右下: 使った画像・PDF。欄の幅で 2〜3 列 */
@@ -137,6 +139,9 @@
   #cwhy:empty, #cmsg:empty { display: none; }
   body.chat-closed #chat { padding: 12px 4px; }
   body.chat-closed #chat > :not(#chead), body.chat-closed #chead > :not(#ctoggle) { display: none; }
+  /* スマホ: 畳んでも送り先を出し、バー全体 (細い 1 行) を押して開閉する。24px の ✎ だけだと指で外す */
+  html.narrow #chead { cursor: pointer; min-height: 32px; }
+  html.narrow body.chat-closed #chead > #cto { display: block; }
   @media (min-width: 900px) {
     body { grid-template-columns: 200px minmax(0, 1fr) 300px; }
     body.proj-closed { grid-template-columns: 32px minmax(0, 1fr) 300px; }
@@ -157,9 +162,10 @@
     /* 狭い幅: 左に縦長の欄、右にボタン列、送信は列の一番下 (幅より高さが欲しい / 送信が段の間に浮いていた、2026-10-03 user) */
     #cform { flex-direction: row; align-items: stretch; }
     #ctext { flex: 1; min-width: 0; min-height: 8em; max-height: 40vh; }
-    #cact { flex: none; max-width: 55%; align-content: flex-start; position: relative; padding-bottom: 32px; } /* ボタンは上に詰め、空けた下端に送信を貼る (折り返しの段の中では margin-top: auto が下まで効かない) */
-    #cbar { position: absolute; right: 0; bottom: 0; max-width: 100%; }
+    #cact { flex: none; max-width: min(55%, 220px); align-content: flex-start; position: relative; padding-bottom: 32px; } /* ボタンは上に詰め、空けた下端に送信を貼る (折り返しの段の中では margin-top: auto が下まで効かない) */
+    #cbar { position: absolute; left: 0; right: 0; bottom: 0; }
     #cact { padding-bottom: 52px; }
+    #cact, #copt { justify-content: space-between; } /* 列は 2 段 (ok〜C / /cf〜/exit) が収まる 220px までにし、余りは入力欄へ。段は両端まで広げて左の線を 📎 と揃える (右寄せだと列の左に空きが出て 📎 だけ浮いた、2026-10-07 user) */
   }
 
   /* 上部: どのセッションの返事か + 履歴の送り */
@@ -210,7 +216,7 @@
   /* 2 つ以上 → 2 列の格子 (幅 < 700px は 1 列)。拡大はクリック */
   #reply .media:has(> :nth-child(2)) { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
   #reply .media:has(> :nth-child(2)) > :is(img, video) { width: 100%; height: auto; object-fit: contain; }
-  @media (max-width: 699px) { #reply .media:has(> :nth-child(2)) { grid-template-columns: 1fr; } }
+  :where(html.narrow) #reply .media:has(> :nth-child(2)) { grid-template-columns: 1fr; }
   #reply .media img { cursor: zoom-in; }
   #reply .media img, #reply .media video { max-width: 100%; max-height: 60vh; }
   #reply .media video { border-radius: 8px; border: 1px solid var(--line); }
@@ -232,8 +238,18 @@
   #mmzoom[hidden] { display: none; }
   #mmzoom.drag { cursor: grabbing; }
   #mmzoom > svg { position: absolute; inset: 0; width: 100%; height: 100%; max-width: none !important; }
-  #mmzoom > button { position: absolute; top: 10px; right: 10px; z-index: 1; font: inherit; font-size: 18px; line-height: 1; width: 34px; height: 34px; color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; cursor: pointer; }
+  #mmzoom > .zx { position: absolute; top: 10px; right: 10px; z-index: 1; font: inherit; font-size: 18px; line-height: 1; width: 34px; height: 34px; color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; cursor: pointer; }
   #mmzoom > span { position: absolute; left: 12px; bottom: 10px; font-size: 12px; color: var(--muted); pointer-events: none; }
+  #mmzoom > span b { font-weight: inherit; }
+  #mmzoom .ht, #zbar { display: none; }
+  /* スマホ: ◀ ✕ ▶ を画面下に半透明で。上の × とマウス向けのヒントは隠し、タッチ向けのヒントはボタンの上へ */
+  html.narrow #mmzoom > .zx, html.narrow #mmzoom .hd { display: none; }
+  html.narrow #mmzoom .ht { display: inline; }
+  html.narrow #mmzoom > span { left: 12px; right: 12px; bottom: calc(76px + env(safe-area-inset-bottom)); text-align: center; }
+  html.narrow #zbar { position: absolute; left: 0; right: 0; bottom: calc(12px + env(safe-area-inset-bottom)); display: flex; justify-content: center; gap: 24px; pointer-events: none; }
+  #zbar button { pointer-events: auto; font: inherit; font-size: 22px; line-height: 1; width: 56px; height: 56px; color: var(--fg); background: color-mix(in srgb, var(--panel) 45%, transparent); border: 1px solid color-mix(in srgb, var(--line) 60%, transparent); border-radius: 50%; cursor: pointer; }
+  #zbar button:disabled { opacity: .35; }
+  #zbar.solo .zp, #zbar.solo .zn { visibility: hidden; } /* ギャラリーでない時は ◀ ▶ を出さない (✕ は中央のまま) */
   #reply iframe { width: 100%; min-height: 240px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
   /* 赤ペン: 段・項目・表の行をクリックでピン留め → 下のトレイから元の端末へ送る */
   .pinable { cursor: pointer; }
@@ -281,14 +297,24 @@
 </head>
 <body>
 <script>
-// 描画前に列の開閉を決める (ちらつき防止)。狭い幅 (< 700px) は畳む、広い幅は localStorage "rmx.proj" の選択 (既定は開く)。幅が変わった時も module 側がこれを呼ぶ
+// 描画前に列の開閉を決める (ちらつき防止)。狭い幅 (< 700px) とスマホは畳む、広い幅は localStorage "rmx.proj" の選択 (既定は開く)。幅が変わった時も module 側がこれを呼ぶ
+// スマホ (mobile UA) は幅に関係なく狭い幅と同じ並びにする。ブラウザの「PC 版サイト」で UA が desktop になれば戻る。CSS 側は html.narrow
+const isMobileUA = navigator.userAgentData?.mobile || /Android|iPhone|iPad|Mobile/.test(navigator.userAgent);
+const isNarrow = () => document.documentElement.classList.contains("narrow");
 function applyProjDefault() {
-  let c = matchMedia("(max-width: 699px)").matches;
+  let c = isMobileUA || matchMedia("(max-width: 699px)").matches;
+  document.documentElement.classList.toggle("narrow", c);
   if (!c) try { c = localStorage.getItem("rmx.proj") === "closed"; } catch {}
   document.body.classList.toggle("proj-closed", c);
 }
 applyProjDefault();
 try { document.body.classList.toggle("chat-closed", localStorage.getItem("rmx.chat.open") === "0"); } catch {} // チャット欄の開閉 (既定は開)
+// スマホ: 高さを実際に見えている範囲 (キーボードと下に置いたアドレスバーを除く) に合わせる。100dvh だけでは下のアドレスバーと赤ペンの送信が重なった
+if (isMobileUA && window.visualViewport) {
+  const fit = () => document.documentElement.style.setProperty("--vvh", `${visualViewport.height}px`);
+  visualViewport.addEventListener("resize", fit);
+  fit();
+}
 </script>
 <aside id="proj">
   <div id="phead"><button id="ptoggle" title="プロジェクト列を開く / 畳む">☰</button><button id="newbtn" title="まっさらな Claude Code を Orca の新しい端末タブで起動する"><span>＋</span><span class="nl">新規セッション</span></button></div>
@@ -298,7 +324,7 @@ try { document.body.classList.toggle("chat-closed", localStorage.getItem("rmx.ch
 <main>
   <div id="bar">
     <span id="filter"></span><span id="stamp"></span><span id="sent"></span>
-    <button id="prev">◀<span class="lbl"> 前</span></button><span id="pos"></span><button id="next"><span class="lbl">次 </span>▶</button><button id="speak" title="返事を読み上げる / 止める (r)、一時停止 / 再開 (Shift+R)">🔊</button><select id="rate" title="読み上げの速さ"><option value="1">1x</option><option value="1.5">1.5x</option><option value="2" selected>2x</option><option value="2.5">2.5x</option><option value="3">3x</option></select>
+    <button id="prev">◀<span class="lbl"> 前</span></button><span id="pos"></span><button id="next"><span class="lbl">次 </span>▶</button><button id="speak" title="返事を読み上げる (r)。読み上げ中は押すと一時停止 / 再開 (Shift+R)、長押しか r で止める">🔊</button><select id="rate" title="読み上げの速さ"><option value="1">1x</option><option value="1.5">1.5x</option><option value="2" selected>2x</option><option value="2.5">2.5x</option><option value="3">3x</option></select>
   </div>
   <nav id="chips"></nav>
   <details id="ask" hidden><summary></summary><div></div></details>
@@ -315,12 +341,12 @@ try { document.body.classList.toggle("chat-closed", localStorage.getItem("rmx.ch
   <nav id="cchips"></nav>
   <div id="sug" hidden></div>
   <div id="cimgs" hidden></div>
-  <div id="cform"><textarea id="ctext" rows="3" maxlength="4000" placeholder="端末へ送る (⌘+Enter)"></textarea><div id="cact"><button class="q" data-k="1" data-t="ok" title="ok を送る (1)">ok<sup>1</sup></button><button class="q" data-k="2" data-t="continue" title="continue を送る (2)">cont<sup>2</sup></button><button class="q" data-k="3" data-t="A" title="A を送る (3)">A<sup>3</sup></button><button class="q" data-k="4" data-t="B" title="B を送る (4)">B<sup>4</sup></button><button class="q" data-k="5" data-t="C" title="C を送る (5)">C<sup>5</sup></button><div id="copt"></div><div id="cbar"><span id="cnow" title="送り先セッションの今のモデル / エフォート (表示のみ)"></span><button id="csend">送信</button></div></div></div>
+  <div id="cform"><textarea id="ctext" rows="3" maxlength="4000" placeholder="端末へ送る (⌘+Enter)"></textarea><div id="cact"><button class="q" data-k="1" data-t="ok" title="ok を送る (1)">ok<sup>1</sup></button><button class="q" data-k="2" data-t="continue" title="continue を送る (2)">cont<sup>2</sup></button><button class="q" data-k="3" data-t="A" title="A を送る (3)">A<sup>3</sup></button><button class="q" data-k="4" data-t="B" title="B を送る (4)">B<sup>4</sup></button><button class="q" data-k="5" data-t="C" title="C を送る (5)">C<sup>5</sup></button><div id="copt"></div><div id="cbar"><span id="cnow" title="送り先セッションの今のモデル / エフォート (表示のみ)"></span><button id="csend">送信</button><button id="cattach" title="写真を選んで添付">📎</button><input id="cfile" type="file" accept="image/*" multiple hidden></div></div></div>
   <div id="cmsg"></div>
   <div id="tstat"></div>
   <div id="cmedia"></div>
 </aside>
-<div id="mmzoom" hidden><button title="閉じる (Esc)">×</button><span>ホイール / ピンチ = 拡大縮小 · ドラッグ = 移動 · ダブルクリック = 全体</span></div>
+<div id="mmzoom" hidden><button class="zx" title="閉じる (Esc)">×</button><span><b class="hd">ホイール / ピンチ = 拡大縮小 · ドラッグ = 移動 · ダブルクリック = 全体</b><b class="ht">2 本指 = 拡大縮小 · ドラッグ = 移動 · ダブルタップ = 全体 · 左右スワイプ = 前後</b></span><div id="zbar" class="solo"><button class="zp" title="前の画像 (←)">◀</button><button class="zc" title="閉じる (Esc)">✕</button><button class="zn" title="次の画像 (→)">▶</button></div></div>
 <script src="https://cdn.jsdelivr.net/npm/marked@14.1.2/lib/marked.umd.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/dompurify@3.4.16/dist/purify.min.js"></script>
 <script type="module">
@@ -560,7 +586,7 @@ function togglePause() {
   else if (paused) a?.pause();
   else a?.play().catch(() => {});
   if (!paused) { onResume?.(); onResume = null; }
-  speakBtn.textContent = paused ? "▶" : speaking.ctl && !a ? "⏳" : "⏹";
+  speakBtn.textContent = paused ? "▶" : speaking.ctl && !a ? "⏳" : "⏸";
 }
 // 声の選び方: Kyoko (拡張版があればそれ) → Otoya → lang が ja の最初。先頭を取るとおもしろ声 (Eddy / Grandma 等) になる。voices は非同期に揃うので voiceschanged で選び直す
 let jaVoice = null;
@@ -621,7 +647,7 @@ async function speakGemini(text) {
       const blob = await pending[i];
       await resumed(); // 一時停止中は次のチャンクを鳴らさない
       if (speaking !== s) return;
-      speakBtn.textContent = "⏹";
+      speakBtn.textContent = "⏸";
       await playWav(blob, s);
     } catch (e) {
       if (speaking !== s) return;
@@ -646,7 +672,7 @@ function speakLocal(text) {
   const done = () => { if (speaking === u) stopSpeak(); };
   u.onend = done; u.onerror = done;
   speaking = u;
-  speakBtn.textContent = "⏹";
+  speakBtn.textContent = "⏸";
   speechSynthesis.speak(u);
 }
 function toggleSpeak() {
@@ -655,19 +681,25 @@ function toggleSpeak() {
   if (!text) return;
   speakGemini(text);
 }
-speakBtn.onclick = toggleSpeak;
+// ボタン: 読み上げ中は押すと一時停止 ⏸ / 再開 ▶ (Shift+R と同じ)、長押し (0.6 秒) で止める。止める r キーはそのまま
+let holdT = null, held = false;
+speakBtn.onpointerdown = () => { held = false; holdT = speaking ? setTimeout(() => { held = true; stopSpeak(); }, 600) : null; };
+speakBtn.onpointerup = speakBtn.onpointerleave = speakBtn.onpointercancel = () => clearTimeout(holdT);
+speakBtn.oncontextmenu = (ev) => ev.preventDefault(); // 長押しで出るメニューを抑える
+speakBtn.onclick = () => { if (held) held = false; else if (speaking) togglePause(); else toggleSpeak(); };
 if ("speechSynthesis" in window) { speechSynthesis.addEventListener("voiceschanged", pickVoice); pickVoice(); }
 document.getElementById("prev").onclick = older;
 document.getElementById("next").onclick = newer;
 // 図の全画面: 図の複製を画面いっぱいに置き、viewBox を動かして拡大・移動する (CSS transform より拡大しても線がぼやけない)。
 // 表示域と viewBox の縦横比を常に揃えるので preserveAspectRatio="none" で歪まない。
 const zoom = document.getElementById("mmzoom");
-let vb = null, box = null, drag = null;
+let vb = null, box = null, drag = null, fitW = 0; // fitW = 全体表示の時の vb.w (これより小さければ拡大中)
 const setVB = () => zoom.querySelector("svg")?.setAttribute("viewBox", `${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
 function fitZoom() {
   const W = zoom.clientWidth, H = zoom.clientHeight, pad = 1.08;
   const s = Math.max((box.width * pad) / W, (box.height * pad) / H); // 図の単位 / 画面 px
   vb = { w: W * s, h: H * s };
+  fitW = vb.w;
   vb.x = box.x + box.width / 2 - vb.w / 2;
   vb.y = box.y + box.height / 2 - vb.h / 2;
   setVB();
@@ -684,6 +716,7 @@ function openZoom(svg) {
   box = svg.viewBox.baseVal;
   zoom.hidden = false;
   fitZoom();
+  zbarUpdate();
 }
 // 画像 (png 等) は <svg><image> に包んで同じ全画面に載せる (viewBox の拡大・移動をそのまま使う)
 function zoomImage(im) {
@@ -703,39 +736,88 @@ let zoomSet = null, zoomAt = 0;
 function zoomGallery(i) {
   if (i < 0 || i >= zoomSet.length) return; // 端では何もしない
   zoomAt = i;
+  zbarUpdate();
   if (zoomSet[zoomAt].tagName !== "IMG") return openZoom(zoomSet[zoomAt]); // mermaid 図
   const im = new Image();
   im.onload = () => zoomImage(im);
   im.src = zoomSet[zoomAt].src;
 }
 const closeZoom = () => { zoom.hidden = true; zoom.querySelector("svg")?.remove(); zoomSet = null; };
-zoom.querySelector("button").onclick = closeZoom;
-zoom.addEventListener("wheel", (ev) => {
-  ev.preventDefault(); // trackpad のピンチは ctrl+wheel として届く
-  const k = Math.exp(-ev.deltaY * (ev.ctrlKey ? 0.01 : 0.0015)); // > 1 で拡大
+// スマホ用の ◀ ✕ ▶: ◀ ▶ はギャラリー (zoomSet) の時だけ、端では薄くして押せなくする
+const zbar = document.getElementById("zbar");
+const zbarUpdate = () => {
+  zbar.classList.toggle("solo", !zoomSet);
+  zbar.querySelector(".zp").disabled = !zoomSet || zoomAt <= 0;
+  zbar.querySelector(".zn").disabled = !zoomSet || zoomAt >= zoomSet.length - 1;
+};
+zoom.querySelector(".zx").onclick = zbar.querySelector(".zc").onclick = closeZoom;
+zbar.querySelector(".zp").onclick = () => zoomGallery(zoomAt - 1);
+zbar.querySelector(".zn").onclick = () => zoomGallery(zoomAt + 1);
+// 点 (px) を動かさずに k 倍する (k > 1 で拡大)。ホイールとピンチで共用
+function zoomBy(k, clientX, clientY) {
   const r = zoom.getBoundingClientRect();
-  const px = (ev.clientX - r.left) / r.width, py = (ev.clientY - r.top) / r.height; // カーソル位置 (0..1) を動かさずに拡大縮小
+  const px = (clientX - r.left) / r.width, py = (clientY - r.top) / r.height; // 点の位置 (0..1)
   const cx = vb.x + px * vb.w, cy = vb.y + py * vb.h;
   vb.w /= k; vb.h /= k;
   vb.x = cx - px * vb.w; vb.y = cy - py * vb.h;
   setVB();
+}
+zoom.addEventListener("wheel", (ev) => {
+  ev.preventDefault(); // trackpad のピンチは ctrl+wheel として届く
+  zoomBy(Math.exp(-ev.deltaY * (ev.ctrlKey ? 0.01 : 0.0015)), ev.clientX, ev.clientY);
 }, { passive: false });
+// 指・マウスは pointer で扱う: 1 本 = ドラッグ移動、2 本 = ピンチ (間隔の比で拡大縮小、中点の移動で移動)。
+// タッチで全体表示のまま 1 本ドラッグ = 左右スワイプで前後の画像 (拡大中は移動のまま)。ダブルタップ = 全体表示
+const ptrs = new Map(); // pointerId → {x, y}
+let pinch = null, tap = null, lastTap = null; // pinch = 直前の {d, x, y} / tap = スワイプ・タップ判定の始点 / lastTap = 直前のタップ
+const zoomed = () => vb.w < fitW * 0.98;
+const mid = () => { const [a, b] = [...ptrs.values()]; return { d: Math.hypot(a.x - b.x, a.y - b.y) || 1, x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }; };
 zoom.addEventListener("pointerdown", (ev) => {
   if (ev.target.closest("button")) return;
-  drag = { x: ev.clientX, y: ev.clientY };
+  ptrs.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
   zoom.setPointerCapture(ev.pointerId);
   zoom.classList.add("drag");
+  if (ptrs.size === 1) { drag = { x: ev.clientX, y: ev.clientY }; tap = { x: ev.clientX, y: ev.clientY, t: Date.now(), multi: false }; }
+  else if (ptrs.size === 2) { drag = null; pinch = mid(); if (tap) tap.multi = true; }
 });
 zoom.addEventListener("pointermove", (ev) => {
+  if (!ptrs.has(ev.pointerId)) return;
+  ptrs.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+  if (pinch && ptrs.size === 2) {
+    const m = mid(), s = vb.w / zoom.clientWidth;
+    vb.x -= (m.x - pinch.x) * s; vb.y -= (m.y - pinch.y) * s; // 中点の移動ぶん動かしてから、中点を支点に拡大
+    zoomBy(m.d / pinch.d, m.x, m.y);
+    pinch = m;
+    return;
+  }
   if (!drag) return;
-  const s = vb.w / zoom.clientWidth;
-  vb.x -= (ev.clientX - drag.x) * s; vb.y -= (ev.clientY - drag.y) * s;
+  const dx = ev.clientX - drag.x, dy = ev.clientY - drag.y;
   drag = { x: ev.clientX, y: ev.clientY };
+  if (ev.pointerType === "touch" && !zoomed()) return; // 全体表示のタッチは動かさない (スワイプ判定だけ)
+  const s = vb.w / zoom.clientWidth;
+  vb.x -= dx * s; vb.y -= dy * s;
   setVB();
 });
-const endDrag = () => { drag = null; zoom.classList.remove("drag"); };
-zoom.addEventListener("pointerup", endDrag);
-zoom.addEventListener("pointercancel", endDrag);
+function endPtr(ev) {
+  if (!ptrs.delete(ev.pointerId)) return;
+  if (ptrs.size === 1) { // 2 本 → 1 本: 残った指でそのままドラッグを続ける (跳ばない)
+    const [p] = ptrs.values();
+    drag = { x: p.x, y: p.y }; pinch = null;
+  }
+  if (ptrs.size) return;
+  drag = null; pinch = null;
+  zoom.classList.remove("drag");
+  if (ev.type !== "pointerup" || ev.pointerType !== "touch" || !tap || tap.multi) { tap = null; return; }
+  const dx = ev.clientX - tap.x, dy = ev.clientY - tap.y, quick = Date.now() - tap.t < 300;
+  tap = null;
+  if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5 && !zoomed() && zoomSet) return zoomGallery(zoomAt + (dx < 0 ? 1 : -1)); // 左へ払う = 次
+  if (Math.hypot(dx, dy) < 12 && quick) { // ダブルタップ = 全体表示 (touch-action: none だと dblclick が来ないことがある)
+    if (lastTap && Date.now() - lastTap.t < 350 && Math.hypot(ev.clientX - lastTap.x, ev.clientY - lastTap.y) < 40) { lastTap = null; fitZoom(); }
+    else lastTap = { x: ev.clientX, y: ev.clientY, t: Date.now() };
+  }
+}
+zoom.addEventListener("pointerup", endPtr);
+zoom.addEventListener("pointercancel", endPtr);
 zoom.addEventListener("dblclick", (ev) => { if (!ev.target.closest("button")) fitZoom(); });
 addEventListener("resize", () => { if (!zoom.hidden) fitZoom(); }); // 縦横比が変わるので合わせ直す
 
@@ -1002,6 +1084,7 @@ function renderChat() {
     : !to.terminal ? (pin ? "固定先は Orca 外の端末 (送れない)" : "この返事は Orca 外の端末 (送れない)") : "";
   document.getElementById("cwhy").textContent = why;
   ctext.disabled = csend.disabled = !!why || chatBusy;
+  document.getElementById("cattach").disabled = csend.disabled;
   document.querySelectorAll("#cact .q").forEach((b) => { b.disabled = csend.disabled; });
   csend.textContent = chatBusy ? "送信中…" : "送信";
   // 各行 = 時刻 + 最新返事の冒頭。同じ repo の chip は時刻だけでは見分けられない (2026-09-29 user)
@@ -1098,10 +1181,8 @@ cimgs.addEventListener("click", (ev) => {
   pending.splice(+b.dataset.i, 1);
   renderImgs();
 });
-ctext.addEventListener("paste", async (ev) => {
-  const fs = [...(ev.clipboardData?.files ?? [])].filter((x) => x.type.startsWith("image/"));
-  if (!fs.length) return; // 文字の貼り付けは既定動作のまま
-  ev.preventDefault();
+// 貼り付け (⌘V) も 📎 で選んだ写真も同じ経路: server に預けて pending に積む
+async function addImages(fs) {
   const say = document.getElementById("cmsg");
   for (const f of fs) {
     try {
@@ -1112,7 +1193,16 @@ ctext.addEventListener("paste", async (ev) => {
     } catch (e) { say.textContent = `画像を貼れませんでした: ${e.message ?? e}`; }
   }
   renderImgs();
+}
+ctext.addEventListener("paste", (ev) => {
+  const fs = [...(ev.clipboardData?.files ?? [])].filter((x) => x.type.startsWith("image/"));
+  if (!fs.length) return; // 文字の貼り付けは既定動作のまま
+  ev.preventDefault();
+  addImages(fs);
 });
+const cfile = document.getElementById("cfile"), cattach = document.getElementById("cattach");
+cattach.onclick = () => cfile.click();
+cfile.onchange = () => { addImages([...cfile.files].filter((x) => x.type.startsWith("image/"))); cfile.value = ""; }; // 同じ写真をもう一度選べるように空に戻す
 document.getElementById("cact").addEventListener("click", (ev) => { const b = ev.target.closest(".q"); if (b) sendText(b.dataset.t, false); });
 // model / effort は表示だけ (切り替えは Orca / 端末側)。表示 = 送り先セッションの今の値 (server の /now: transcript の最後の /model・/effort と assistant 行、model は無ければ settings.json)。
 // 送り先が変わった時と新しい返事が来た時に取り直し、取れなければ出さない
@@ -1178,7 +1268,9 @@ ctext.addEventListener("keydown", (ev) => {
   else if (ev.key === "Escape") { ev.preventDefault(); sugItems = []; sug.hidden = true; }
 });
 sug.addEventListener("mousedown", (ev) => { const d = ev.target.closest("[data-i]"); if (d) { ev.preventDefault(); pickSug(+d.dataset.i); } });
-document.getElementById("ctoggle").onclick = () => {
+// 開閉は幅を問わず localStorage "rmx.chat.open" に覚える。スマホはバー全体 (#chead) が押せる
+document.getElementById("chead").onclick = (ev) => {
+  if (!isNarrow() && !ev.target.closest("#ctoggle")) return;
   const closed = document.body.classList.toggle("chat-closed");
   try { localStorage.setItem("rmx.chat.open", closed ? "0" : "1"); } catch {}
 };
@@ -1287,16 +1379,15 @@ document.getElementById("plist").addEventListener("click", async (ev) => {
   setParam("repo", REPO);
   setParam("s", "");
   renderFilter();
-  if (narrow.matches) document.body.classList.add("proj-closed"); // 重ねた列を閉じて返事を見せる
+  if (isNarrow()) document.body.classList.add("proj-closed"); // 重ねた列を閉じて返事を見せる
   await reselect();
 });
 
 // 列の開閉。狭い幅では毎回畳んだ状態から始め、覚えるのは広い幅での選択だけ。
-const narrow = matchMedia("(max-width: 699px)");
-narrow.addEventListener("change", window.applyProjDefault);
+matchMedia("(max-width: 699px)").addEventListener("change", window.applyProjDefault);
 document.getElementById("ptoggle").onclick = () => {
   const closed = document.body.classList.toggle("proj-closed");
-  if (!narrow.matches) try { localStorage.setItem("rmx.proj", closed ? "closed" : "open"); } catch {}
+  if (!isNarrow()) try { localStorage.setItem("rmx.proj", closed ? "closed" : "open"); } catch {}
 };
 renderFilter();
 
