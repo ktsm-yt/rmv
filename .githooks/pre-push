@@ -3,6 +3,12 @@
 # CHANGELOG.md 冒頭の決まり 9 を手で守る前提だったため、f02eac9 (2026-10-06) が版なしで main に入った。
 # 有効化: git config core.hooksPath .githooks (clone ごとに 1 回)
 refs=$(cat)
+# 真ん中を上げる版 (v0.x.0) は決まり 11 を読んだ上でだけ通す。操作 1 つの追加を v0.15.0 と付けかけた (2026-10-07、正しくは v0.14.1)
+if echo "$refs" | grep -Eq ' refs/tags/v[0-9]+\.[0-9]+\.0 ' && [ -z "$RMV_MINOR_OK" ]; then
+  printf 'pre-push: 真ん中を上げる版 (v0.x.0) です。CHANGELOG.md の決まり 11 を確かめ、合っていれば RMV_MINOR_OK=1 を付けて push し直してください:\n' >&2
+  grep -E '^11\. ' CHANGELOG.md >&2
+  exit 1
+fi
 echo "$refs" | while read -r _ lsha rref _; do
   [ "$rref" = refs/heads/main ] || continue
   tag=$(git describe --tags --abbrev=0 --match 'v*' "$lsha" 2>/dev/null) || continue
