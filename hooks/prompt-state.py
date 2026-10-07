@@ -3,7 +3,7 @@
 key = 端末 handle (stop-to-fragment.py の terminal_handle)、無ければ session_id (perm-state.py / stop-to-fragment.py と同じ集合)。
   stop-to-fragment.py が返事を保存する時にこれを読んで meta.prompt に移し、ファイルを消す (返事が来た = 未返答でなくなる)
   server の /history は残っている間を「未返答の依頼」として状態行に出す
-記録しないもの: 自動通知 (<task-notification> / <system-reminder> / [SYSTEM NOTIFICATION を含む prompt。UserPromptSubmit は
+記録しないもの: 自動通知 (<task-notification> / <system-reminder> / [SYSTEM NOTIFICATION / <agent-message (subagent の hand-back) を含む prompt。UserPromptSubmit は
   自動イベントでも発火する) と、対話でない session (claude -p 等。判定は stop-to-fragment.py の is_interactive が正本)。
 stdout には何も出さない (hook 出力は user 画面に出る)。exit 0 固定。
 """
@@ -19,7 +19,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 STATE = os.environ.get("RMX_STATE_DIR") or os.path.join(os.path.dirname(HERE), "state")
 PROMPT = os.path.join(STATE, "prompt")
 PROMPT_MAX = 4000  # ボイス入力の長文でも足りる長さで切る
-AUTO_MARKERS = ("<task-notification>", "<system-reminder>", "[SYSTEM NOTIFICATION")
+AUTO_MARKERS = ("<task-notification>", "<system-reminder>", "[SYSTEM NOTIFICATION", "<agent-message")
 
 
 def fragment():

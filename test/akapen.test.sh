@@ -124,6 +124,8 @@ upr "$TMP/pr2" 'ok <task-notification><x/></task-notification>' ORCA_TERMINAL_HA
 upr "$TMP/pr3" '<system-reminder>x</system-reminder>' ORCA_TERMINAL_HANDLE=term_p CLAUDE_CODE_ENTRYPOINT=cli
 upr "$TMP/pr4" '[SYSTEM NOTIFICATION - x]' ORCA_TERMINAL_HANDLE=term_p CLAUDE_CODE_ENTRYPOINT=cli
 check "prompt hook: task-notification / system-reminder / SYSTEM NOTIFICATION の prompt は記録しない" "$(pfile "$TMP/pr2/prompt/term_p.json") $(pfile "$TMP/pr3/prompt/term_p.json") $(pfile "$TMP/pr4/prompt/term_p.json")" "none none none"
+upr "$TMP/pr8" '<agent-message from="x">[Subagent hand-back] y</agent-message>' ORCA_TERMINAL_HANDLE=term_p CLAUDE_CODE_ENTRYPOINT=cli
+check "prompt hook: agent-message (subagent の hand-back) の prompt は記録しない" "$(pfile "$TMP/pr8/prompt/term_p.json")" none
 upr "$TMP/pr5" 'x' ORCA_TERMINAL_HANDLE=term_p CLAUDE_CODE_ENTRYPOINT=sdk-cli
 check "prompt hook: entrypoint=sdk-cli (claude -p) の prompt は記録しない" "$(pfile "$TMP/pr5/prompt/term_p.json")" none
 upr "$TMP/pr6" 'x' -u ORCA_TERMINAL_HANDLE CLAUDE_CODE_ENTRYPOINT=cli
