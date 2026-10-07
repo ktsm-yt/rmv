@@ -157,8 +157,11 @@ def main():
         cwd = data.get("cwd") or ""
         if sub:  # worker は一時 worktree (<repo>/.harness-worktrees/<id>) で動く。返事は親の repo に寄せる (別 project として並ばないように)
             cwd = re.sub(r"/\.(harness-)?worktrees/.*$", "", cwd)
+        terminal = terminal_handle(sid)
+        if terminal is None:
+            return  # Orca 外 (返信先の端末が無い) セッションは記録しない
         meta = {"cwd": cwd, "session_id": sid, "ts": now.isoformat(timespec="seconds"), "name": name,
-                "terminal": terminal_handle(sid)}
+                "terminal": terminal}
         if sub:
             meta["agent"] = {"type": data.get("agent_type"), "id": data.get("agent_id")}
         else:  # 本体の返事には prompt-state.py が置いた依頼文を載せて、ファイルは消す

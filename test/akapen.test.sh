@@ -11,6 +11,8 @@ SERVER="${RMX_SERVER:-$A/server.ts}"
 PERMHOOK="${RMX_PERM_HOOK:-$A/hooks/perm-state.py}"
 # hook は claude -p (entrypoint sdk-*) の返事を捨てる。親が -p でも結果が変わらないよう対話側に固定する
 export CLAUDE_CODE_ENTRYPOINT=cli
+# hook は Orca 外 (handle なし) の返事を記録しない。Orca の外から実行しても通るよう既定は handle あり (なしを試す箇所は env -u)
+export ORCA_TERMINAL_HANDLE=term_env
 TMP="$(mktemp -d)"
 # hook は Claude Code の sessions/ を読んで bg session の端末を取り直す。本物の ~/.claude/sessions を読まないよう空の場所に向ける
 export RMX_SESSIONS_DIR="$TMP/no-sessions"
@@ -32,10 +34,17 @@ ORCA_TERMINAL_HANDLE=term_test RMX_STATE_DIR="$STATE" python3 "$HOOK" < "$FIX"
 WITH="$(field "$STATE/latest.json" name)"
 check "hook: ORCA_TERMINAL_HANDLE あり → latest.json.terminal" "$(field "$STATE/latest.json" terminal)" term_test
 check "hook: history/<name>.json にも terminal" "$(field "$STATE/history/${WITH%.md}.json" terminal)" term_test
+# Orca 外 (ORCA_TERMINAL_HANDLE なし) の返事は記録しない: history / latest.* が増えも変わりもしない
+BEFORE_LS="$(ls "$STATE/history" | sort | tr '\n' ' ')"; BEFORE_LATEST="$(cat "$STATE/latest.json")"
 env -u ORCA_TERMINAL_HANDLE RMX_STATE_DIR="$STATE" python3 "$HOOK" < "$FIX"
-WITHOUT="$(field "$STATE/latest.json" name)"
-check "hook: ORCA_TERMINAL_HANDLE なし → terminal null" "$(field "$STATE/latest.json" terminal)" null
-[ "$WITH" != "$WITHOUT" ] && ok "hook: 2 回で別 entry ($WITH / $WITHOUT)" || ng "hook: entry 名が衝突した"
+check "hook: ORCA_TERMINAL_HANDLE なし → history に新しいファイルを足さない" "$(ls "$STATE/history" | sort | tr '\n' ' ')" "$BEFORE_LS"
+check "hook: ORCA_TERMINAL_HANDLE なし → latest.json も変えない" "$(cat "$STATE/latest.json")" "$BEFORE_LATEST"
+# 以降の server 試験は「terminal なし entry」(過去に記録済みの履歴) を前提にするので、hook を通さず手で置く
+WITHOUT="${WITH%.md}-noterm.md"
+cp "$STATE/history/$WITH" "$STATE/history/$WITHOUT"
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); d["terminal"]=None; d["name"]=sys.argv[3]; json.dump(d,open(sys.argv[2],"w"),ensure_ascii=False)' "$STATE/history/${WITH%.md}.json" "$STATE/history/${WITHOUT%.md}.json" "$WITHOUT"
+cp "$STATE/history/$WITHOUT" "$STATE/latest.html"; cp "$STATE/history/${WITHOUT%.md}.json" "$STATE/latest.json"
+check "hook: 手置きの terminal なし entry (server 試験の前提)" "$(field "$STATE/latest.json" terminal)" null
 # SubagentStop: 同じ script を subagent の返事にも使う。history にだけ agent 付きで書き、latest.* (本体の返事) は触らない
 SUBFIX="$A/test/fixture-subagent.jsonl"
 BEFORE="$(cat "$STATE/latest.html")"
