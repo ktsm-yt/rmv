@@ -292,7 +292,9 @@ check "send: 別ポートの 127.0.0.1 → 403" "$(post "http://127.0.0.1:1" "$(
 check "send: Origin なし → 403" "$(post - "$(body "$WITH" x)")" 403
 check "send: name に / → 400" "$(post "$GOOD" "$(body "../x.md" x)")" 400
 check "send: 空 text → 400" "$(post "$GOOD" "$(body "$WITH" '  ')")" 400
-check "send: 4001 字 → 400" "$(post "$GOOD" "$(body "$WITH" "$(printf 'a%.0s' $(seq 4001))")")" 400
+check "send: 4001 字 → 200 (上限は 10 万字。4000 字で切れていた、2026-10-08)" "$(post "$GOOD" "$(body "$WITH" "$(python3 -c 'print("a" * 4001)')")")" 200
+check "send: 100001 字 → 400" "$(post "$GOOD" "$(body "$WITH" "$(python3 -c 'print("a" * 100001)')")")" 400
+check "page: チャット欄に maxlength が無い (貼った長文を黙って切らない)" "$(curl -s "$BASE/" | grep -c 'id="ctext"[^>]*maxlength')" 0
 check "send: 未知の name → 404" "$(post "$GOOD" "$(body "20000101T000000000-nosess.md" x)")" 404
 : > "$TMP/calls"
 check "send: terminal なし entry → 409" "$(post "$GOOD" "$(body "$WITHOUT" x)")" 409

@@ -388,7 +388,7 @@ async function send(req: Request): Promise<Response> {
   const images: unknown[] = Array.isArray(body?.images) ? body.images : [];
   if (!NAME.test(name)) return new Response("bad name", { status: 400 });
   if (images.length > 10 || !images.every((p) => typeof p === "string" && p.startsWith(`${STATE}/paste/`) && PASTED.test(p.slice(STATE.length + 7)))) return new Response("bad images", { status: 400 });
-  if ((!text.trim() && !images.length) || text.length > 4000) return new Response("text must be 1..4000 chars", { status: 400 });
+  if ((!text.trim() && !images.length) || text.length > 100000) return new Response("text must be 1..100000 chars", { status: 400 }); // 10 万字 = markdown の長文を貼っても足りる長さ。orca terminal send で 10 万字 (23 万バイト) が欠けずに届くのを確かめた (2026-10-08)
   const meta = await Bun.file(`${HIST}/${name.slice(0, -3)}.json`).json().catch(() => null);
   if (!meta) return new Response("not found", { status: 404 });
   if (typeof meta.terminal !== "string" || !meta.terminal) return new Response("entry has no terminal", { status: 409 });
