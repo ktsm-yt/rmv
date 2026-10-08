@@ -185,7 +185,7 @@
   /* 依頼文: 返事の真上に 1 行だけ (長文は省略記号)。押すと全文。返事の開始位置は 1 行ぶんしか動かさない */
   #ask { max-width: var(--measure); font-size: 13px; color: var(--muted); margin-bottom: 6px; }
   #ask summary { cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  #ask div { white-space: pre-wrap; overflow-wrap: anywhere; margin-top: 4px; }
+  #ask div { white-space: pre-wrap; overflow-wrap: anywhere; margin-top: 4px; max-height: 40vh; overflow: auto; } /* 依頼文は 10 万字まで載るので、開いても返事を画面の外へ押し出さない */
   #reply { max-width: var(--measure); font-size: 16px; overflow-wrap: anywhere; }
   #reply:empty::before { content: "まだ返事がありません (Stop hook が state/ に書くと表示されます)"; color: var(--muted); }
   .blk { display: grid; grid-template-columns: 2.6em 1fr; gap: 0 14px; padding: 10px 0 10px 12px; margin-bottom: 14px; border-left: 4px solid transparent; }

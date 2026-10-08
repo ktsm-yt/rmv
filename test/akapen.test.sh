@@ -132,6 +132,8 @@ upr "$TMP/pr6" 'x' -u ORCA_TERMINAL_HANDLE CLAUDE_CODE_ENTRYPOINT=cli
 check "prompt hook: 端末 handle 無しは session_id が key" "$(pfile "$TMP/pr6/prompt/sess-1.json")" written
 upr "$TMP/pr7" $'<pasted_content id="a1">\n貼った本文\n</pasted_content id="a1">' ORCA_TERMINAL_HANDLE=term_p CLAUDE_CODE_ENTRYPOINT=cli
 check "prompt hook: 貼り付けの目印タグ (pasted_content) は外す" "$(field "$TMP/pr7/prompt/term_p.json" prompt)" "貼った本文"
+upr "$TMP/pr9" "$(python3 -c 'print("a" * 100001)')" ORCA_TERMINAL_HANDLE=term_p CLAUDE_CODE_ENTRYPOINT=cli
+check "prompt hook: 依頼文は 10 万字まで残す (4000 字で切れていた、2026-10-08)" "$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["prompt"]))' "$TMP/pr9/prompt/term_p.json")" 100000
 
 # --- bg session (daemon の fork): env の ORCA_TERMINAL_HANDLE は daemon を起こした端末。job を映している対話プロセスの env から取り直す ---
 # sessions/<pid>.json の fixture (2.1.288 の形) と ps stub (-Eww -o command= -p <pid> → $TMP/bgps-<pid>、無ければ exit 1 = 終了済み)
