@@ -269,7 +269,7 @@
   .pin b { color: var(--red); white-space: nowrap; }
   .pin .q { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #tray input, #tray textarea { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; width: 100%; }
-  #tray textarea { resize: vertical; }
+  #tray textarea { resize: vertical; max-height: 40vh; } /* 高さは改行の数だけ (Shift+Enter で 1 行ずつ伸びる)。折り返しでは伸ばさない (2026-10-08 user) */
   #tray .row { display: flex; gap: 8px; align-items: center; }
   #akmsg { flex: 1; color: var(--muted); }
   #tray button { font: inherit; color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 2px 10px; cursor: pointer; }
@@ -291,7 +291,7 @@
     #tray { padding: 8px 10px; border-radius: 10px 10px 0 0; margin-top: 10px; }
     /* ピン行: 錨 + 引用 + × を 1 行、ひとこと欄は下に全幅 */
     .pin { grid-template-columns: auto minmax(0, 1fr) auto; row-gap: 4px; }
-    .pin input { grid-column: 1 / -1; grid-row: 2; }
+    .pin textarea { grid-column: 1 / -1; grid-row: 2; }
   }
   .foot { margin-top: 20px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 12px; line-height: 1.6; color: var(--muted); }
 </style>
@@ -959,14 +959,16 @@ function renderTray() {
   if (tray.hidden) return;
   document.getElementById("pins").innerHTML =
     (d.choice ? `<div class="pin"><b>採用</b><span class="q">${esc(d.choice)}</span><span></span><button data-x="" title="外す">×</button></div>` : "") +
-    [...d.pins].map(([k, p]) => `<div class="pin" data-k="${esc(k)}"><b>${esc(p.anchor)}</b><span class="q">「${esc(p.quote)}」</span><input value="${esc(p.comment)}" placeholder="ひとこと"><button data-x="${esc(k)}" title="外す">×</button></div>`).join("");
+    [...d.pins].map(([k, p]) => `<div class="pin" data-k="${esc(k)}"><b>${esc(p.anchor)}</b><span class="q">「${esc(p.quote)}」</span><textarea rows="${lines(p.comment)}" placeholder="ひとこと">${esc(p.comment)}</textarea><button data-x="${esc(k)}" title="外す">×</button></div>`).join("");
   document.getElementById("free").value = d.free;
+  document.getElementById("free").rows = Math.max(2, lines(d.free));
   const send = document.getElementById("send");
   send.disabled = !cur?.terminal;
   send.title = cur?.terminal ? "返事を出した端末へ打ち込む" : "この返事は Orca 端末の外で出たので送れません。コピーして貼ってください";
 }
 const refresh = () => { applyMarks(); renderTray(); };
 
+function lines(s) { return s.split("\n").length; } // 欄の行数 = 改行の数 + 1
 function message(d) {
   const head = cur?.ts ? `【赤ペン】(${hhmm(new Date(cur.ts))} の返事へ)` : "【赤ペン】";
   const pins = [...d.pins.values()].map((p) => `${p.anchor}「${p.quote}」${p.comment.trim() ? `→ ${p.comment.trim()}` : ""}`);
@@ -1000,16 +1002,17 @@ document.getElementById("reply").addEventListener("click", (ev) => {
   if (d.pins.has(k)) d.pins.delete(k);
   else d.pins.set(k, { anchor: t.dataset.anchor, quote: cut(textOf(t), 30), comment: "" });
   refresh();
-  document.querySelector(`#pins [data-k="${CSS.escape(k)}"] input`)?.focus();
+  document.querySelector(`#pins [data-k="${CSS.escape(k)}"] textarea`)?.focus();
 });
 document.getElementById("pins").addEventListener("input", (ev) => {
   const k = ev.target.closest("[data-k]")?.dataset.k;
   const p = k != null && drafts.get(curName())?.pins.get(k);
-  if (p) p.comment = ev.target.value;
+  if (p) { p.comment = ev.target.value; ev.target.rows = lines(p.comment); }
 });
-// Esc (ひとこと欄): 空ならそのピンを外す / 書きかけなら欄を抜けるだけ (打った文字は消さない)
+// Esc (ひとこと欄): 空ならそのピンを外す / 書きかけなら欄を抜けるだけ (打った文字は消さない)。Enter だけでは改行しない (1 行欄だった頃と同じ)、Shift+Enter で改行
 document.getElementById("pins").addEventListener("keydown", (ev) => {
-  if (ev.key !== "Escape" || ev.target.tagName !== "INPUT") return;
+  if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing && ev.target.tagName === "TEXTAREA") return ev.preventDefault();
+  if (ev.key !== "Escape" || ev.target.tagName !== "TEXTAREA") return;
   ev.preventDefault();
   if (ev.target.value.trim()) return ev.target.blur();
   draftOf(curName()).pins.delete(ev.target.closest("[data-k]").dataset.k);
@@ -1022,7 +1025,7 @@ document.getElementById("pins").addEventListener("click", (ev) => {
   if (x.dataset.x === "") d.choice = null; else d.pins.delete(x.dataset.x);
   refresh();
 });
-document.getElementById("free").addEventListener("input", (ev) => { draftOf(curName()).free = ev.target.value; });
+document.getElementById("free").addEventListener("input", (ev) => { draftOf(curName()).free = ev.target.value; ev.target.rows = Math.max(2, lines(ev.target.value)); });
 document.getElementById("copy").onclick = async () => {
   const say = document.getElementById("akmsg");
   try { await navigator.clipboard.writeText(message(draftOf(curName()))); say.textContent = "コピーしました"; }
