@@ -80,7 +80,7 @@ rmv は、同梱の出力スタイル [Low-Load](output-styles/low-load.md) の�
 | `検証:` `DECIDE:` の行 | 下端の小さな注記 |
 | 画像・動画の絶対パス | その場に表示 |
 
-![Low-Load の返事を描いたところ](docs/reply.png)
+![Low-Load の返事を描いたところ。段の丸番号と、案の表の [これにする]](docs/reply.png)
 
 シーケンス図も、ターミナルでは出ない図としてそのまま描けます。
 
@@ -89,7 +89,7 @@ rmv は、同梱の出力スタイル [Low-Load](output-styles/low-load.md) の�
 1 行に画像のパスを複数書くと、横に並べて表示します。
 スクショの前後比較や、画面ごとに 1 枚ずつ並べる時に便利です。
 
-![返事の中で画像 2 枚を横に並べたところ](docs/images.png)
+![返事に出てきたスライド 7 枚を 2 列に並べたところ](docs/images.png)
 
 出力スタイルの入れ方:
 
@@ -190,6 +190,14 @@ RMX_ORIGINS=https://<Mac の名前>.<tailnet>.ts.net bun run server.ts
 launchd で常駐させている時は、`RMX_ORIGINS=…` の行を `state/env` に書けば起動スクリプトが読みます。
 届くのは同じ Tailscale につながった端末だけです。
 返事の中のファイルを開くボタンは、押した端末でなく Mac の画面で開きます。
+
+スマホ幅では、チャット欄とクイックキーが上、返事が下に並びます。赤ペンは PC と同じで、段をタップしてひとことを添えます。
+
+<img src="docs/mobile-redpen.png" alt="スマホで段をタップして赤ペンを付けたところ" width="360">
+
+画像や図をタップすると全画面になり、左右スワイプか ◀ ▶ で前後の画像に移れます。
+
+<img src="docs/mobile-image-full.png" alt="スマホで画像を全画面にし、◀ ▶ で前後に送れるところ" width="360">
 
 ### 新しい Claude Code セッションを起動する
 
