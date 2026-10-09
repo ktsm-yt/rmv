@@ -162,10 +162,14 @@
     /* 狭い幅: 左に縦長の欄、右にボタン列、送信は列の一番下 (幅より高さが欲しい / 送信が段の間に浮いていた、2026-10-03 user) */
     #cform { flex-direction: row; align-items: stretch; }
     #ctext { flex: 1; min-width: 0; min-height: 8em; max-height: 40vh; }
-    #cact { flex: none; max-width: min(55%, 220px); align-content: flex-start; position: relative; padding-bottom: 32px; } /* ボタンは上に詰め、空けた下端に送信を貼る (折り返しの段の中では margin-top: auto が下まで効かない) */
+    #cact { flex: none; width: min(55%, 220px); display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); align-content: start; position: relative; padding-bottom: 32px; } /* ボタンは上に詰め、空けた下端に送信を貼る (折り返しの段の中では margin-top: auto が下まで効かない) */
     #cbar { position: absolute; left: 0; right: 0; bottom: 0; }
     #cact { padding-bottom: 52px; }
-    #cact, #copt { justify-content: space-between; } /* 列は 2 段 (ok〜C / /cf〜/exit) が収まる 220px までにし、余りは入力欄へ。段は両端まで広げて左の線を 📎 と揃える (右寄せだと列の左に空きが出て 📎 だけ浮いた、2026-10-07 user) */
+    /* 列は 220px までにし、余りは入力欄へ。キーは 6 分割の格子に置き、段を両端まで埋めて左の線を 📎 と揃える (右寄せだと列の左に空きが出て 📎 だけ浮いた、2026-10-07 user)。
+       幅 390 のスマホでは列が 184px に縮み、ok〜C の 1 段 (207px) が入らず 4 + 1 個に折れ、6〜9 は space-between で両端に離れていた。段は ok cont / A B C / 6 7 / 8 9 */
+    #cact .q { grid-column: span 2; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #cact > .q:nth-child(-n+2), #copt .q { grid-column: span 3; }
+    #copt { display: contents; }
   }
 
   /* 上部: どのセッションの返事か + 履歴の送り */
