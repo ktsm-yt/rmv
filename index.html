@@ -130,7 +130,7 @@
   #cmedia .pdf { cursor: pointer; align-items: center; gap: 4px; padding: 6px; }
   #cmedia .pdf b { color: var(--red); font-size: 14px; }
   #cmedia .pdf span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
-  #cimgs:not([hidden]) { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 6px; }
+  #cimgs:not([hidden]), #fimgs:not([hidden]) { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 6px; }
   .cimg { position: relative; }
   .cimg img { display: block; height: 56px; max-width: 120px; object-fit: cover; border-radius: 6px; border: 1px solid var(--line); }
   .cimg button { position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; padding: 0; border-radius: 50%; border: 1px solid var(--line); background: var(--panel); color: var(--fg); font-size: 11px; line-height: 1; cursor: pointer; }
@@ -338,6 +338,7 @@ if (isMobileUA && window.visualViewport) {
   <div id="tray" hidden>
     <div id="pins"></div>
     <textarea id="free" rows="2" placeholder="全体へのひとこと (任意)"></textarea>
+    <div id="fimgs" hidden></div>
     <div class="row"><span id="akmsg"></span><button id="copy">コピー</button><button id="send">送信</button></div>
   </div>
 </main>
@@ -890,8 +891,8 @@ const drafts = new Map();
 let pageVer = null; // 読み込んだ index.html の版 (/history の x-rmx-page)
 let cur = null; // 表示中の履歴 entry。latest.html だけ映している間は null (送信不可・コピーのみ)
 const curName = () => cur?.name ?? "";
-const draftOf = (n) => { if (!drafts.has(n)) drafts.set(n, { pins: new Map(), choice: null, free: "" }); return drafts.get(n); };
-const hasDraft = (n) => { const d = drafts.get(n ?? ""); return !!d && (d.pins.size > 0 || !!d.choice || !!d.free.trim()); };
+const draftOf = (n) => { if (!drafts.has(n)) drafts.set(n, { pins: new Map(), choice: null, free: "", imgs: [] }); return drafts.get(n); };
+const hasDraft = (n) => { const d = drafts.get(n ?? ""); return !!d && (d.pins.size > 0 || !!d.choice || !!d.free.trim() || d.imgs.length > 0); };
 const cut = (s, n) => { const t = s.replace(/\s+/g, " ").trim(); return t.length > n ? t.slice(0, n) + "…" : t; };
 const textOf = (el) => {
   const c = el.cloneNode(true);
@@ -966,6 +967,9 @@ function renderTray() {
     (d.choice ? `<div class="pin"><b>採用</b><span class="q">${esc(d.choice)}</span><span></span><button data-x="" title="外す">×</button></div>` : "") +
     [...d.pins].map(([k, p]) => `<div class="pin" data-k="${esc(k)}"><b>${esc(p.anchor)}</b><span class="q">「${esc(p.quote)}」</span><textarea rows="1" placeholder="ひとこと">${esc(p.comment)}</textarea><button data-x="${esc(k)}" title="外す">×</button></div>`).join("");
   document.getElementById("free").value = d.free;
+  const fimgs = document.getElementById("fimgs");
+  fimgs.hidden = !d.imgs.length;
+  fimgs.innerHTML = d.imgs.map((p, i) => `<span class="cimg"><img src="${p.url}" alt=""><button data-i="${i}" title="外す">×</button></span>`).join("");
   const send = document.getElementById("send");
   send.disabled = !cur?.terminal;
   send.title = cur?.terminal ? "返事を出した端末へ打ち込む" : "この返事は Orca 端末の外で出たので送れません。コピーして貼ってください";
@@ -1029,6 +1033,20 @@ document.getElementById("pins").addEventListener("click", (ev) => {
   refresh();
 });
 document.getElementById("free").addEventListener("input", (ev) => { draftOf(curName()).free = ev.target.value; });
+document.getElementById("fimgs").addEventListener("click", (ev) => {
+  const b = ev.target.closest("button[data-i]");
+  if (!b) return;
+  const imgs = draftOf(curName()).imgs;
+  URL.revokeObjectURL(imgs[+b.dataset.i].url);
+  imgs.splice(+b.dataset.i, 1);
+  refresh();
+});
+document.getElementById("free").addEventListener("paste", (ev) => {
+  const fs = [...(ev.clipboardData?.files ?? [])].filter((x) => x.type.startsWith("image/"));
+  if (!fs.length) return; // 文字の貼り付けは既定動作のまま
+  ev.preventDefault();
+  addImages(fs, draftOf(curName()).imgs, refresh, document.getElementById("akmsg")); // 積む先は貼った時点の下書き (返事を切り替えても混ざらない)
+});
 document.getElementById("copy").onclick = async () => {
   const say = document.getElementById("akmsg");
   try { await navigator.clipboard.writeText(message(draftOf(curName()))); say.textContent = "コピーしました"; }
@@ -1040,8 +1058,9 @@ document.getElementById("send").onclick = async () => {
   if (!cur?.terminal || !drafts.has(n)) return;
   say.textContent = "送信中…";
   try {
-    const r = await fetch("/send", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: n, text: message(drafts.get(n)) }) });
+    const r = await fetch("/send", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: n, text: message(drafts.get(n)), images: drafts.get(n).imgs.map((p) => p.path) }) });
     if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+    drafts.get(n).imgs.forEach((p) => URL.revokeObjectURL(p.url));
     drafts.delete(n);
     say.textContent = "";
     document.getElementById("sent").textContent = `送信済 ${hhmm(new Date())}`;
@@ -1208,27 +1227,27 @@ cimgs.addEventListener("click", (ev) => {
   renderImgs();
 });
 // 貼り付け (⌘V) も 📎 で選んだ写真も同じ経路: server に預けて pending に積む
-async function addImages(fs) {
-  const say = document.getElementById("cmsg");
+// list = 積む先の配列、render = 描き直し、say = 失敗を出す要素 (チャット欄と赤ペンで共用)
+async function addImages(fs, list, render, say) {
   for (const f of fs) {
     try {
       const r = await fetch("/paste", { method: "POST", headers: { "content-type": f.type }, body: f });
       if (!r.ok) throw new Error((await r.text()) || String(r.status));
-      pending.push({ path: (await r.json()).path, url: URL.createObjectURL(f) });
+      list.push({ path: (await r.json()).path, url: URL.createObjectURL(f) });
       say.textContent = "";
     } catch (e) { say.textContent = `画像を貼れませんでした: ${e.message ?? e}`; }
   }
-  renderImgs();
+  render();
 }
 ctext.addEventListener("paste", (ev) => {
   const fs = [...(ev.clipboardData?.files ?? [])].filter((x) => x.type.startsWith("image/"));
   if (!fs.length) return; // 文字の貼り付けは既定動作のまま
   ev.preventDefault();
-  addImages(fs);
+  addImages(fs, pending, renderImgs, document.getElementById("cmsg"));
 });
 const cfile = document.getElementById("cfile"), cattach = document.getElementById("cattach");
 cattach.onclick = () => cfile.click();
-cfile.onchange = () => { addImages([...cfile.files].filter((x) => x.type.startsWith("image/"))); cfile.value = ""; }; // 同じ写真をもう一度選べるように空に戻す
+cfile.onchange = () => { addImages([...cfile.files].filter((x) => x.type.startsWith("image/")), pending, renderImgs, document.getElementById("cmsg")); cfile.value = ""; }; // 同じ写真をもう一度選べるように空に戻す
 document.getElementById("cact").addEventListener("click", (ev) => { const b = ev.target.closest(".q"); if (b) sendText(b.dataset.t, false); });
 // model / effort は表示だけ (切り替えは Orca / 端末側)。表示 = 送り先セッションの今の値 (server の /now: transcript の最後の /model・/effort と assistant 行、model は無ければ settings.json)。
 // 送り先が変わった時と新しい返事が来た時に取り直し、取れなければ出さない
