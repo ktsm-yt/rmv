@@ -1,6 +1,6 @@
 # 開発メモ (rmv の仕様と運用の詳細)
 
-利用者向けの説明は README.md。ここは開発時に読む仕様の詳細。
+利用者向けの説明は README.md と docs/config.md。ここは開発時に読む仕様の詳細。
 
 型は固定のページ (`index.html`)、AI が返すのは markdown 断片だけ。Stop hook が最後の返事を `state/` に書き、ブラウザが 2 秒ごとに取り込む。Low-Load の型 (`N.` 段 / `ⅰ` 項目 / 🔴🟡🟢 / 表 / mermaid / `検証:` `DECIDE:`) を CSS で毎回同じ位置に写す。
 
@@ -34,5 +34,7 @@
    - 再起動: `launchctl kickstart -k gui/$(id -u)/com.ktsm.harness-rmx`
 6. 確認 (hook): `python3 hooks/stop-to-fragment.py < test/fixture-lowload.jsonl && ls state state/history`
 7. 確認 (server): `curl -s localhost:4310/history | head -c 200` / `curl -s localhost:4310/fragment | head -3`
+8. 送り先の状態: `GET /now` がモデル・エフォート・`ctx` を返す。モデルとエフォートは transcript の最後の `/model` `/effort` と assistant 行から、モデルが無ければ `~/.claude/settings.json` の `"model"` (`RMX_CC_SETTINGS` で場所を変更)。画面は送り先が変わった時と新しい返事が来た時に取り直す。`ctx` の上限は model が `[1m]` で終われば 100 万、それ以外は 20 万の推定
+9. 新規セッション: `POST /new {cwd}` が `orca terminal create --worktree path:<cwd> --command claude --focus` を叩く。`cwd` は `orca worktree list` の path と完全一致する時だけ受け付け、他は 403 (viewer と同じ Origin だけ許可)。候補は `GET /worktrees` (60 秒 memo)
 
 依存なし (CDN は marked@14.1.2 / mermaid@11.4.1 に pin)。`state/` は生成物。正本はこの repo (/Users/i/Dev/rmv) だけ。macro-harness は Stop hook の配線 (settings.json) でここの `hooks/stop-to-fragment.py` を指すだけ (2026-09-29 に macro-harness の rmv/ から切り出し)。

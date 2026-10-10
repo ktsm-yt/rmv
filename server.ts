@@ -1,5 +1,5 @@
 // 実験 A: 固定シェル (index.html) + AI 断片 (state/latest.html, state/history/) を配る最小サーバ。Bun 専用、依存なし。
-// ponytail: 127.0.0.1 固定・認証なし。上限 = 単一ユーザのローカル実験。他の端末からは tailscale serve 等の中継 + RMX_ORIGINS で開く (README)。他人に見せる段階で認証を足す。
+// ponytail: 127.0.0.1 固定・認証なし。上限 = 単一ユーザのローカル実験。他の端末からは tailscale serve 等の中継 + RMX_ORIGINS で開く (docs/config.md)。他人に見せる段階で認証を足す。
 import { appendFile, readdir, stat } from "node:fs/promises";
 import { extname, normalize } from "node:path";
 
