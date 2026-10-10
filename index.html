@@ -1248,6 +1248,14 @@ ctext.addEventListener("paste", (ev) => {
 const cfile = document.getElementById("cfile"), cattach = document.getElementById("cattach");
 cattach.onclick = () => cfile.click();
 cfile.onchange = () => { addImages([...cfile.files].filter((x) => x.type.startsWith("image/")), pending, renderImgs, document.getElementById("cmsg")); cfile.value = ""; }; // 同じ写真をもう一度選べるように空に戻す
+// Finder からのドラッグも同じ経路 (2026-10-10: 落とした写真が拾われず添付できなかった)。
+// ファイルを運んでいる時だけページ全体で既定動作を止める: 止めないと欄で drop が起きず、欄の外に落とすと画面がそのファイルに置き換わる
+const draggedFiles = (ev) => ev.dataTransfer?.types.includes("Files");
+addEventListener("dragover", (ev) => { if (draggedFiles(ev)) ev.preventDefault(); });
+addEventListener("drop", (ev) => { if (draggedFiles(ev)) ev.preventDefault(); });
+const droppedImages = (ev) => [...(ev.dataTransfer?.files ?? [])].filter((x) => x.type.startsWith("image/"));
+ctext.addEventListener("drop", (ev) => addImages(droppedImages(ev), pending, renderImgs, document.getElementById("cmsg")));
+document.getElementById("free").addEventListener("drop", (ev) => addImages(droppedImages(ev), draftOf(curName()).imgs, refresh, document.getElementById("akmsg")));
 document.getElementById("cact").addEventListener("click", (ev) => { const b = ev.target.closest(".q"); if (b) sendText(b.dataset.t, false); });
 // model / effort は表示だけ (切り替えは Orca / 端末側)。表示 = 送り先セッションの今の値 (server の /now: transcript の最後の /model・/effort と assistant 行、model は無ければ settings.json)。
 // 送り先が変わった時と新しい返事が来た時に取り直し、取れなければ出さない

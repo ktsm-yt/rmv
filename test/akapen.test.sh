@@ -659,6 +659,7 @@ check "page: 読み上げボタン (#speak) が index.html にある" "$(curl -s
 check "page: 返事の上に依頼文 (details#ask) の描画がある" "$(curl -s "$BASE/" | grep -c '<details id="ask"')" 1
 check "page: 状態行に許可ボタン (data-approve) の描画がある" "$(curl -s "$BASE/" | grep -c 'data-approve="')" 1
 check "page: y キー (KeyY) で許可ボタンを押す処理がある" "$(curl -s "$BASE/" | grep -c 'ev.code === "KeyY"')" 1
+check "page: チャット欄とひとこと欄にドラッグした画像を添付する処理がある" "$(curl -s "$BASE/" | grep -c 'addEventListener("drop", (ev) => addImages(droppedImages(ev)')" 2
 
 # --- index.html: 表の下の "A:" 〜 "D:" の段が、直前の番号段落 "3." に吸収されずそれぞれ独立したピン (section.blk) になる ---
 # renderLowLoad だけ index.html から切り出し、marked 等は素通しの stub で評価する (ブラウザ不要)
