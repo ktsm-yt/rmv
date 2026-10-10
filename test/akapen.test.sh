@@ -87,14 +87,25 @@ check "hook: 親が --print --sdk-url (remote-control の子) なら捨てる" "
 check "hook: 親が -p 無しの対話 claude なら記録" "$(under tui cli x --permission-mode auto)" 1
 
 # --- perm-state hook: 許可待ちの間だけ state/perm/<key>.json ---
-# pev <state dir> <event> <tool> <tool_input json> <env 引数...> → hook を 1 回実行
-pev() { local d="$1" ev="$2" tool="$3" ti="$4"; shift 4; printf '{"hook_event_name":"%s","session_id":"sess-1","cwd":"/x","tool_name":"%s","tool_input":%s}' "$ev" "$tool" "$ti" | env "$@" RMX_STATE_DIR="$d" python3 "$PERMHOOK"; }
+# pev <state dir> <event> <tool> <tool_input json> <env 引数...> → hook を 1 回実行 (PEV_AGENT=<id> で agent_id を足す)
+pev() { local d="$1" ev="$2" tool="$3" ti="$4"; shift 4; printf '{"hook_event_name":"%s","session_id":"sess-1","cwd":"/x","tool_name":"%s","tool_input":%s%s}' "$ev" "$tool" "$ti" "${PEV_AGENT:+,\"agent_id\":\"$PEV_AGENT\"}" | env "$@" RMX_STATE_DIR="$d" python3 "$PERMHOOK"; }
 PS1="$TMP/perm1"
 pev "$PS1" PermissionRequest Bash '{"command":"rm -rf\n  /tmp/x"}' ORCA_TERMINAL_HANDLE=term_x CLAUDE_CODE_ENTRYPOINT=cli
 check "perm hook: PermissionRequest → perm/term_x.json に tool / detail (改行は空白に畳む)" "$(field "$PS1/perm/term_x.json" tool) $(field "$PS1/perm/term_x.json" detail)" "Bash rm -rf /tmp/x"
 check "perm hook: terminal と id (8 桁 hex)" "$(field "$PS1/perm/term_x.json" terminal) $(field "$PS1/perm/term_x.json" id | grep -Ec '^[0-9a-f]{8}$')" "term_x 1"
 pev "$PS1" PostToolUse Bash '{}' ORCA_TERMINAL_HANDLE=term_x CLAUDE_CODE_ENTRYPOINT=cli
 check "perm hook: PostToolUse → ファイルが消える" "$([ -e "$PS1/perm/term_x.json" ] && echo kept || echo gone)" gone
+PSA="$TMP/perm-agent"; ex() { [ -e "$PSA/perm/term_x.json" ] && echo kept || echo gone; }
+PEV_AGENT=a1 pev "$PSA" PermissionRequest Bash '{"command":"ls"}' ORCA_TERMINAL_HANDLE=term_x CLAUDE_CODE_ENTRYPOINT=cli
+PEV_AGENT=a2 pev "$PSA" PostToolUse Bash '{}' ORCA_TERMINAL_HANDLE=term_x CLAUDE_CODE_ENTRYPOINT=cli
+check "perm hook: 並走する別サブエージェントの PostToolUse では消えない" "$(ex)" kept
+pev "$PSA" Stop Bash '{}' ORCA_TERMINAL_HANDLE=term_x CLAUDE_CODE_ENTRYPOINT=cli
+check "perm hook: サブエージェントの待ち中に本体の Stop が来ても消えない" "$(ex)" kept
+PEV_AGENT=a1 pev "$PSA" PostToolUse Bash '{}' ORCA_TERMINAL_HANDLE=term_x CLAUDE_CODE_ENTRYPOINT=cli
+check "perm hook: 待っていた本人の PostToolUse で消える" "$(ex)" gone
+PEV_AGENT=a1 pev "$PSA" PermissionRequest Bash '{"command":"ls"}' ORCA_TERMINAL_HANDLE=term_x CLAUDE_CODE_ENTRYPOINT=cli
+pev "$PSA" UserPromptSubmit Bash '{}' ORCA_TERMINAL_HANDLE=term_x CLAUDE_CODE_ENTRYPOINT=cli
+check "perm hook: UserPromptSubmit は誰の待ちでも消す" "$(ex)" gone
 pev "$TMP/perm2" PermissionRequest Bash '{"command":"ls"}' ORCA_TERMINAL_HANDLE=term_x CLAUDE_CODE_ENTRYPOINT=sdk-cli
 check "perm hook: entrypoint=sdk-cli の PermissionRequest → 書かない" "$([ -e "$TMP/perm2/perm/term_x.json" ] && echo written || echo none)" none
 pev "$TMP/perm3" PermissionRequest Edit '{"file_path":"/x/a.ts"}' -u ORCA_TERMINAL_HANDLE CLAUDE_CODE_ENTRYPOINT=cli

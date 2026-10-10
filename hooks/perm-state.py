@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Claude Code hook: 許可ダイアログ (permission prompt) で止まっている間だけ state/perm/<key>.json を置く。
-  PermissionRequest       → 対話 session なら {id, tool, detail, ts, session_id, cwd, terminal} を書く
+  PermissionRequest       → 対話 session なら {id, tool, detail, ts, session_id, cwd, terminal, agent_id} を書く
   それ以外 (PostToolUse / PostToolUseFailure / Stop / UserPromptSubmit 等) → そのファイルを消すだけ
+                            (UserPromptSubmit 以外は agent_id が記録と同じ時だけ。サブエージェント並走中に
+                             別 agent の tool 完了で 3 秒後に消えてボタンが出なかった実害、2026-10-10)
                             (毎ツール呼び出しで走るので is_interactive は呼ばない。ps は bg session の key 解決だけ)
 key = 端末 handle (stop-to-fragment.py の terminal_handle)、無ければ session_id (stop-to-fragment.py の meta.terminal || session_id = server の item.session と同じ集合)。
 server の /history が perm を各 entry に付け、/approve が id を照合して端末へ "1" を送る。
@@ -49,6 +51,14 @@ def main():
     path = os.path.join(PERM, key + ".json")
     if data.get("hook_event_name") != "PermissionRequest":
         try:
+            # 並走する別 agent (agent_id 違い) の PostToolUse / Stop では消さない。UserPromptSubmit は誰の待ちでも消す
+            if data.get("hook_event_name") != "UserPromptSubmit":
+                try:
+                    with open(path, encoding="utf-8") as f:
+                        if json.load(f).get("agent_id") != data.get("agent_id"):
+                            return
+                except ValueError:
+                    pass  # 壊れたファイルは消す
             os.remove(path)
         except FileNotFoundError:
             pass
@@ -58,7 +68,8 @@ def main():
     tool = str(data.get("tool_name") or "")
     rec = {"id": uuid.uuid4().hex[:8], "tool": tool, "detail": summarize(tool, data.get("tool_input")),
            "ts": datetime.now().astimezone().isoformat(timespec="seconds"),
-           "session_id": data.get("session_id"), "cwd": data.get("cwd"), "terminal": handle or None}
+           "session_id": data.get("session_id"), "cwd": data.get("cwd"), "terminal": handle or None,
+           "agent_id": data.get("agent_id")}
     os.makedirs(PERM, exist_ok=True)
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
