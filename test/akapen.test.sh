@@ -412,6 +412,15 @@ check "paste: 画像以外 (text/plain) → 415" "$(pst "$GOOD" text/plain "$TMP
 : > "$TMP/empty.png"
 check "paste: 空 → 413" "$(pst "$GOOD" image/png "$TMP/empty.png")" 413
 check "paste: webp (クリップボードに載せられない型) → 415" "$(pst "$GOOD" image/webp "$TMP/p.png")" 415
+# 本物の png (灰色一色) を作る。長い辺 2000px 超は 2000px に縮み、それ以下は手を付けない (sips -Z は小さい画像を拡大するので)
+mkpng() { python3 -c 'import sys,zlib,struct
+w,h=int(sys.argv[1]),int(sys.argv[2]); c=lambda t,d: struct.pack(">I",len(d))+t+d+struct.pack(">I",zlib.crc32(t+d))
+sys.stdout.buffer.write(b"\x89PNG\r\n\x1a\n"+c(b"IHDR",struct.pack(">IIBBBBB",w,h,8,0,0,0,0))+c(b"IDAT",zlib.compress((b"\0"+b"\x80"*w)*h))+c(b"IEND",b""))' "$1" "$2" > "$3"; }
+edge() { sips -g pixelWidth -g pixelHeight "$1" | awk '/pixel/{printf "%s ", $2}'; }
+mkpng 3000 20 "$TMP/big.png"; pst "$GOOD" image/png "$TMP/big.png" > /dev/null
+check "paste: 長い辺 3000px → 2000px に縮める" "$(edge "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["path"])' "$TMP/body")")" "2000 13 "
+mkpng 300 20 "$TMP/small.png"; pst "$GOOD" image/png "$TMP/small.png" > /dev/null
+check "paste: 長い辺 2000px 以下は中身を変えない" "$(cmp -s "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["path"])' "$TMP/body")" "$TMP/small.png" && echo same || echo diff)" same
 
 # --- /open: 返事中のパスを既定アプリ (open) で開く / ⌥ で Finder に表示 (open -R) ---
 # 実物の open を呼ぶとテストでアプリが立ち上がるので、引数を 1 行ずつ追記する stub に向ける (RMX_OPEN_BIN、server 起動行で指定)

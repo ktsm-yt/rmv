@@ -11,6 +11,7 @@ const ORCA = process.env.RMX_ORCA_BIN || "orca"; // env はテストの stub 差
 const OSASCRIPT = process.env.RMX_OSASCRIPT_BIN || "osascript"; // 同上
 const PBPASTE = process.env.RMX_PBPASTE_BIN || "pbpaste"; // 同上 (クリップボードの文字の退避と復元)
 const PBCOPY = process.env.RMX_PBCOPY_BIN || "pbcopy";
+const SIPS = "/usr/bin/sips"; // 貼った画像の縮小 (macOS 標準)
 const PROJECTS = process.env.RMX_PROJECTS_DIR || `${process.env.HOME}/.claude/projects`; // transcript の置き場 (同上)
 const MONO_FONT = process.env.RMX_MONO_FONT || `${process.env.HOME}/Library/Fonts/HackGenConsole-Regular.ttf`; // スマホに配る等幅フォント (罫線図用)。テストの差し替え口
 const CC_SETTINGS = process.env.RMX_CC_SETTINGS || `${process.env.HOME}/.claude/settings.json`; // 新しいセッションの既定 model ("model" キー)。テストの差し替え口
@@ -372,7 +373,18 @@ async function paste(req: Request): Promise<Response> {
   if (!buf.byteLength || buf.byteLength > 20_000_000) return new Response("image must be 1 B..20 MB", { status: 413 });
   const path = `${STATE}/paste/${Date.now()}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
   await Bun.write(path, buf); // 親 dir は Bun.write が作る
+  if (ext !== "gif") await shrink(path);
   return Response.json({ path });
+}
+// 長い辺が MAX_EDGE を超える画像を縮める。長い辺 2000px 超の貼り付けは 8 枚中 6 枚が端末に届かなかった (2026-10-10 集計、2000px 以下は試験用を除き 27 枚中 4 枚)。
+// 送信は [Image #N] が出るまで 10 秒待つので、大きい画像の取り込みが遅いとそこで止まると見ている (未確認)。
+// sips -Z は小さい画像を拡大もするので、先に縦横を測って超える時だけ呼ぶ。縮めても PNG のバイト数は減らない (sips の圧縮が弱い。2560x2130 の 1.07 MB → 1.21 MB)
+// ponytail: gif は動きが消えるので縮めない。sips が読めない中身はそのまま置く
+const MAX_EDGE = 2000;
+async function shrink(path: string) {
+  const g = Bun.spawn([SIPS, "-g", "pixelWidth", "-g", "pixelHeight", path], { stdout: "pipe", stderr: "ignore" });
+  const edge = Math.max(...[...(await new Response(g.stdout).text()).matchAll(/pixel(?:Width|Height): (\d+)/g)].map((m) => +m[1]));
+  if (edge > MAX_EDGE) await Bun.spawn([SIPS, "-Z", String(MAX_EDGE), path], { stdout: "ignore", stderr: "ignore" }).exited;
 }
 
 // Origin 必須 + 一致: 無いと任意の web ページが fetch POST で端末にキー入力を流し込める (CSRF)。
