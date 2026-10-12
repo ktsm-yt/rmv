@@ -40,7 +40,7 @@ def main():
         return
     prompt = re.sub(r"</?pasted_content[^>]*>", "", prompt)  # 貼り付けの目印タグ (id 付き) は表示に要らない
     rec = {"prompt": prompt.strip()[:PROMPT_MAX], "ts": datetime.now().astimezone().isoformat(timespec="seconds"),
-           "session_id": data.get("session_id")}
+           "session_id": data.get("session_id"), "cwd": data.get("cwd")}  # cwd: 返事ゼロの新セッションを server が repo 列に置く用
     os.makedirs(PROMPT, exist_ok=True)
     path = os.path.join(PROMPT, key + ".json")
     with open(path + ".tmp", "w", encoding="utf-8") as f:

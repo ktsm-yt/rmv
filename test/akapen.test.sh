@@ -120,7 +120,7 @@ check "perm hook: 親が -p 無しの対話 claude なら書く (判定は stop-
 # --- prompt-state hook: 送った依頼文 → state/prompt/<key>.json → 返事の meta.prompt ---
 PROMPTHOOK="${RMX_PROMPT_HOOK:-$A/hooks/prompt-state.py}"
 # upr <state dir> <prompt> <env 引数...> → UserPromptSubmit を 1 回実行 (prompt は python で JSON 化)
-upr() { local d="$1" p="$2"; shift 2; python3 -c 'import json,sys; print(json.dumps({"hook_event_name":"UserPromptSubmit","session_id":"sess-1","prompt":sys.argv[1]}))' "$p" | env "$@" RMX_STATE_DIR="$d" python3 "$PROMPTHOOK"; }
+upr() { local d="$1" p="$2"; shift 2; python3 -c 'import json,sys,os; print(json.dumps({"hook_event_name":"UserPromptSubmit","session_id":"sess-1","prompt":sys.argv[1],"cwd":os.getcwd()}))' "$p" | env "$@" RMX_STATE_DIR="$d" python3 "$PROMPTHOOK"; }
 pfile() { [ -e "$1" ] && echo written || echo none; }
 upr "$TMP/pr1" $'長い依頼\n二行目' ORCA_TERMINAL_HANDLE=term_p CLAUDE_CODE_ENTRYPOINT=cli
 check "prompt hook: 通常の prompt → prompt/term_p.json に本文 (改行は保つ)" "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["prompt"].replace("\n","|"))' "$TMP/pr1/prompt/term_p.json")" "長い依頼|二行目"
@@ -653,6 +653,14 @@ upr "$STATE" '古い取り残し' ORCA_TERMINAL_HANDLE=term_test CLAUDE_CODE_ENT
 python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["ts"]="2020-01-01T00:00:00+09:00"; json.dump(d,open(p,"w"))' "$STATE/prompt/term_test.json"
 check "/history: 返事より古い (取り残された) 依頼は asking にしない" "$(askof "$WITH")" None
 rm -f "$STATE/prompt/term_test.json"
+# 返事が 1 件も無い新セッション (起動直後の初回依頼) も、prompt の cwd を根拠に仮 entry (asking-<session>.md) で一覧に出す
+upr "$STATE" '初回の依頼' ORCA_TERMINAL_HANDLE=term_fresh CLAUDE_CODE_ENTRYPOINT=cli
+check "/history: 返事ゼロの新セッションは asking-<session>.md で一覧に出る" "$(askof asking-term_fresh.md)" "初回の依頼"
+check "/history: 仮 entry の repo は prompt の cwd から" "$(curl -s "$BASE/history" | python3 -c "import json,sys; print([e['repo'] for e in json.load(sys.stdin) if e['name']=='asking-term_fresh.md'][0])")" "$(basename "$PWD")"
+check "/history/asking-…: 本文は依頼文" "$(curl -s "$BASE/history/asking-term_fresh.md" | tail -1)" "初回の依頼"
+python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d.pop("cwd",None); json.dump(d,open(p,"w"))' "$STATE/prompt/term_fresh.json"
+check "/history: cwd の無い古い形式の prompt は仮 entry にしない (対照)" "$(curl -s "$BASE/history" | python3 -c "import json,sys; print(sum(1 for e in json.load(sys.stdin) if e['name']=='asking-term_fresh.md'))")" 0
+rm -f "$STATE/prompt/term_fresh.json"
 
 # --- index.html: 読み上げボタンが本文ペインの操作列に描画される ---
 check "page: 読み上げボタン (#speak) が index.html にある" "$(curl -s "$BASE/" | grep -c '<button id="speak"')" 1

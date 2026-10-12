@@ -74,6 +74,21 @@ async function history(repo: string | null): Promise<Response> {
   for (const e of items) if (!e.agent && !lastReply.has(e.session)) lastReply.set(e.session, Date.parse(e.ts ?? "") || 0);
   const asking = new Map<string, { prompt: string; ts: string } | null>();
   for (const s of new Set(items.map((e) => e.session))) asking.set(s, await readAsking(s, lastReply.get(s) ?? 0));
+  // 返事がまだ 1 件も無い新しいセッション (起動直後の初回依頼) は history に entry が無く一覧から消える (2026-10-12 user 指摘)。
+  // state/prompt/<session>.json (cwd 付き) だけを根拠に仮の entry を先頭に足す。name は asking-<session>.md で /history/<name> が依頼文を返す
+  for (const n of (await readdir(PROMPT).catch(() => [] as string[])).filter((n) => n.endsWith(".json"))) {
+    const session = n.slice(0, -5);
+    if (asking.has(session)) continue;
+    const a = await readAsking(session, 0);
+    const p = a && (await Bun.file(`${PROMPT}/${n}`).json().catch(() => null));
+    const cwd = String(p?.cwd ?? "");
+    if (!a || !cwd || !/^[\w-]+$/.test(session)) continue; // 古い hook が書いた cwd 無しの分は出せない (repo 列に置けない)
+    const isTerm = session.startsWith("term_");
+    const wt = isTerm ? byHandle.get(session)?.worktreePath : undefined;
+    const root = typeof wt === "string" && wt ? wt : cwd;
+    asking.set(session, a);
+    items.unshift({ name: `asking-${session}.md`, prompt: null, ts: a.ts, cwd, root, repo: root.split("/").filter(Boolean).pop() ?? "", head: "", terminal: isTerm, live: terms ? isTerm && handles.has(session) : true, session, perm: null, agent: null, title: byHandle.get(session)?.title ?? null, lastOutputAt: byHandle.get(session)?.lastOutputAt ?? null });
+  }
   const out = items.map(({ root, ...e }) => ({ ...e, asking: asking.get(e.session) ?? null }));
   const want = repo?.toLowerCase();
   return Response.json(want ? out.filter((e) => e.repo.toLowerCase() === want) : out, { headers: { "cache-control": "no-store", "x-rmx-live": terms ? "ok" : "unknown" } });
@@ -640,6 +655,10 @@ Bun.serve({
     if (pathname === "/file") return file(searchParams.get("p"));
     const m = pathname.match(/^\/history\/(.+)$/);
     if (m && NAME.test(m[1])) {
+      if (m[1].startsWith("asking-")) { // 返事ゼロの仮 entry: 本文は依頼文そのもの
+        const p = await Bun.file(`${PROMPT}/${m[1].slice(7, -3)}.json`).json().catch(() => null);
+        return typeof p?.prompt === "string" ? new Response(`(返事待ち)\n\n${p.prompt}`, { headers: TEXT }) : new Response("not found", { status: 404 });
+      }
       const f = Bun.file(`${HIST}/${m[1]}`);
       return (await f.exists()) ? new Response(await f.text(), { headers: TEXT }) : new Response("not found", { status: 404 });
     }
