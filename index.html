@@ -981,7 +981,7 @@ function renderTray() {
   fimgs.innerHTML = d.imgs.map((p, i) => `<span class="cimg"><img src="${p.url}" alt=""><button data-i="${i}" title="外す">×</button></span>`).join("");
   const send = document.getElementById("send");
   send.disabled = !cur?.terminal;
-  send.title = cur?.terminal ? "返事を出した端末へ打ち込む" : "この返事は Orca 端末の外で出たので送れません。コピーして貼ってください";
+  send.title = cur?.terminal ? "返事を出した端末へ打ち込む" : "この返事は Orca / herdr の外で出たので送れません。コピーして貼ってください";
 }
 const refresh = () => { applyMarks(); renderTray(); };
 
@@ -1140,7 +1140,7 @@ function renderChat() {
   const lbl = to ? chipLabels.get(to.session) ?? `${to.repo || "?"} · ${to.session}` : pin;
   document.getElementById("cto").textContent = lbl ? `${pin ? "📌 " : ""}→ ${lbl}` : "→ (送り先なし)";
   const why = !to ? (pin ? "固定先のセッションの返事が一覧に無い (送れない)" : "表示中の返事が無い (送れない)")
-    : !to.terminal ? (pin ? "固定先は Orca 外の端末 (送れない)" : "この返事は Orca 外の端末 (送れない)") : "";
+    : !to.terminal ? (pin ? "固定先は Orca / herdr 外の端末 (送れない)" : "この返事は Orca / herdr 外の端末 (送れない)") : "";
   document.getElementById("cwhy").textContent = why;
   ctext.disabled = csend.disabled = !!why || chatBusy;
   document.getElementById("cattach").disabled = csend.disabled;
