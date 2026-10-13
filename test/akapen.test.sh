@@ -14,7 +14,7 @@ export CLAUDE_CODE_ENTRYPOINT=cli
 # hook は Orca 外 (handle なし) の返事を記録しない。Orca の外から実行しても通るよう既定は handle あり (なしを試す箇所は env -u)
 export ORCA_TERMINAL_HANDLE=term_env
 # herdr 配下から実行しても結果が変わらないよう herdr の env は外す (herdr を試す箇所だけ明示で付ける)
-unset HERDR_ENV HERDR_PANE_ID
+unset HERDR_ENV HERDR_PANE_ID HERDR_SOCKET_PATH HERDR_SESSION
 TMP="$(mktemp -d)"
 # hook は Claude Code の sessions/ を読んで bg session の端末を取り直す。本物の ~/.claude/sessions を読まないよう空の場所に向ける
 export RMX_SESSIONS_DIR="$TMP/no-sessions"
@@ -257,7 +257,9 @@ HERDRSTUB="$TMP/herdr-stub"
 cat > "$HERDRSTUB" <<EOF
 #!/usr/bin/env bash
 # agent list は一覧用の読み取り: $TMP/hagents の中身を返す (無ければ失敗 = herdr の list が取れない)。hcalls には記録しない
-if [ "\$1 \$2" = "agent list" ]; then cat "$TMP/hagents" 2>/dev/null || exit 1; exit 0; fi
+# 名前付き session (HERDR_SOCKET_PATH が .../sessions/solo/herdr.sock) の list は $TMP/hagents.solo (session ごとに別の一覧)
+sfx=; case "\${HERDR_SOCKET_PATH:-}" in */sessions/solo/*) sfx=.solo;; esac
+if [ "\$1 \$2" = "agent list" ]; then cat "$TMP/hagents\$sfx" 2>/dev/null || exit 1; exit 0; fi
 # pane list も同じ読み取り: $TMP/hpanes の中身 (cwd 付きの pane 一覧、/new の分割元選びに使う)
 if [ "\$1 \$2" = "pane list" ]; then cat "$TMP/hpanes" 2>/dev/null || exit 1; exit 0; fi
 # pane process-info --pane <id>: id が $TMP/hidle に書かれていれば前面は shell 自身だけ (空き pane)、無ければ vim が前面 (既定 = 使えない pane)。hcalls には記録しない
@@ -267,6 +269,8 @@ fi
 # status server: $TMP/hrunning があれば動作中 (無ければ停止中)。pane split は新 pane w9:p9 を返す (どちらも hcalls に記録する)
 if [ "\$1" = status ]; then echo "status" >> "$TMP/hcalls"; [ -e "$TMP/hrunning" ] && echo '{"status":"running","running":true}' || echo '{"status":"stopped","running":false}'; exit 0; fi
 echo "\$2 \$3 \${*:4}" >> "$TMP/hcalls"
+# どの session (socket) に向けた呼びかを 1 行ずつ hsocks に記録する (hcalls と同じ行順。socket 無しは default)
+echo "\${HERDR_SOCKET_PATH:-default}" >> "$TMP/hsocks"
 if [ "\$2" = split ]; then echo '{"result":{"pane":{"pane_id":"w9:p9"},"type":"pane_info"}}'; exit 0; fi
 if [ "\$1 \$2" = "workspace create" ]; then echo '{"result":{"workspace":{"workspace_id":"w8"},"root_pane":{"pane_id":"w8:p1"}}}'; exit 0; fi
 [ -e "$TMP/hgone" ] && { echo '{"error":{"code":"pane_not_found","message":"pane not found"}}'; exit 1; }
@@ -835,6 +839,44 @@ rm -f "$TMP/hagents"
 check "herdr title: herdr の list が取れない時は従来どおり Orca の値・live" "$(fld "$PPA" live) $(fld "$PPA" lastOutputAt)" "True 5"
 rm -f "$STATE/history/$PPA" "$STATE/history/${PPA%.md}.json" "$STATE/history/$PPB" "$STATE/history/${PPB%.md}.json"
 list "$(term term_test "$CWD" 1)"
+
+# --- herdr: 名前付き session (herdr --session solo) は socket が別で pane id が既定 session と重なる ---
+SOLO=/Users/i/.config/herdr/sessions/solo/herdr.sock; DFLT=/Users/i/.config/herdr/herdr.sock
+list "$(term term_test "$CWD" 1)" "$(term term_pp "$CWD" 5)"
+PPD="29990101T000000011-ppd.md"; PPS="29990101T000000012-pps.md"
+ppentry2() { # <socket> <dst name>: 同じ pane id w5:p1 の返事を、socket だけ変えて server の history に置く
+  local d="$TMP/pp-${2%.md}" n
+  pp w5:p1 HERDR_SOCKET_PATH="$1" RMX_STATE_DIR="$d" python3 "$HOOK" < "$FIX"
+  n="$(field "$d/latest.json" name)"
+  cp "$d/history/$n" "$STATE/history/$2"
+  python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); d["name"]=sys.argv[3]; json.dump(d,open(sys.argv[2],"w"),ensure_ascii=False)' "$d/history/${n%.md}.json" "$STATE/history/${2%.md}.json" "$2"
+}
+ppentry2 "$DFLT" "$PPD"; ppentry2 "$SOLO" "$PPS"
+check "named session hook: meta に herdr_socket を記録する (既定 / 名前付き)" "$(field "$TMP/pp-${PPD%.md}/latest.json" herdr_socket) $(field "$TMP/pp-${PPS%.md}/latest.json" herdr_socket)" "$DFLT $SOLO"
+check "named session: 同じ pane id (w5:p1) でも既定と名前付きは別 session、既定の key は従来のまま" "$(sessof "$PPD" "$PPS")" "term_pp__w5-p1,term_pp__w5-p1__solo"
+upr "$STATE" '依頼S' HERDR_ENV=1 HERDR_PANE_ID=w5:p1 HERDR_SOCKET_PATH="$SOLO" ORCA_TERMINAL_HANDLE=term_pp CLAUDE_CODE_ENTRYPOINT=cli
+check "named session: 依頼文の state key も session 名つき (既定の w5:p1 の依頼と混ざらない)" "$(ls "$STATE/prompt" | grep '^term_pp__w5-p1' | tr '\n' ' ')" "term_pp__w5-p1__solo.json "
+check "named session: 依頼は名前付きの entry にだけ付く" "$(askof "$PPD") $(askof "$PPS")" "None 依頼S"
+rm -f "$STATE/prompt/term_pp__w5-p1__solo.json"
+# 送信: 名前付き session の pane への送信は名前付きの socket にだけ向く (既定 session の w5:p1 には届かない)
+rm -f "$TMP/hcalls" "$TMP/hsocks" "$TMP/calls" "$TMP/argv"
+check "named session send: 200" "$(post "$GOOD" "$(body "$PPS" 赤S)")" 200
+check "named session send: 全ての herdr 呼び出しが名前付き socket 宛て (既定 socket には 0 回)" "$(sort -u "$TMP/hsocks" | tr '\n' ' ') default=$(grep -c '^default$' "$TMP/hsocks")" "$SOLO  default=0"
+rm -f "$TMP/hcalls" "$TMP/hsocks"
+check "default session send: 既定 session の entry は socket を切り替えずに届く" "$(post "$GOOD" "$(body "$PPD" 赤D)") $(sort -u "$TMP/hsocks" | tr '\n' ' ')" "200 $DFLT "
+# 許可: 名前付き session の perm は名前付きの key で、approve も名前付き socket にだけ
+printf '{"hook_event_name":"PermissionRequest","session_id":"sess-1","tool_name":"Bash","tool_input":{"command":"ls"}}' | HERDR_ENV=1 HERDR_PANE_ID=w5:p1 HERDR_SOCKET_PATH="$SOLO" ORCA_TERMINAL_HANDLE=term_pp CLAUDE_CODE_ENTRYPOINT=cli RMX_STATE_DIR="$STATE" python3 "$PERMHOOK"
+SPID="$(field "$STATE/perm/term_pp__w5-p1__solo.json" id)"
+rm -f "$TMP/hcalls" "$TMP/hsocks" "$TMP/calls"
+check "named session approve: 200 で名前付き socket にだけ 1 を送る" "$(apost "$GOOD" "{\"session\":\"term_pp__w5-p1__solo\",\"id\":\"$SPID\"}") $(sort -u "$TMP/hsocks" | tr '\n' ' ') $(tr '\n' ',' < "$TMP/hcalls")" "200 $SOLO  get w5:p1 ,send-text w5:p1 1,"
+rm -f "$STATE/perm/term_pp__w5-p1__solo.json"
+# 生死: socket ごとの agent list で決める (pane id が同じでも別 session の生死を取り違えない)
+agentlist "$(ag w5:p1 '◑ 既定側')"; printf '{"result":{"agents":[],"type":"agent_list"}}' > "$TMP/hagents.solo"
+check "named session live: 既定にだけ居る w5:p1 → 既定 entry は live、名前付き entry は live=false" "$(fld "$PPD" live) $(fld "$PPS" live)" "True False"
+printf '{"result":{"agents":[%s],"type":"agent_list"}}' "$(ag w5:p1 '✳ 名前付き側')" > "$TMP/hagents.solo"
+agentlist
+check "named session live: 名前付きにだけ居る w5:p1 → 名前付き entry は live で題名は名前付き側、既定 entry は live=false" "$(fld "$PPD" live) $(fld "$PPS" live) $(fld "$PPS" title)" "False True ✳ 名前付き側"
+rm -f "$TMP/hagents" "$TMP/hagents.solo" "$STATE/history/$PPD" "$STATE/history/${PPD%.md}.json" "$STATE/history/$PPS" "$STATE/history/${PPS%.md}.json"
 
 # --- 依頼文: /history の prompt (返事の上) と asking (返事待ちの状態行) ---
 check "/history: 依頼が無ければ asking null" "$(askof "$WITH")" None
