@@ -348,6 +348,13 @@ printf 'claude --resume ORCA_TERMINAL_HANDLE=term_other\n' > "$TMP/ps-env-101"
 printf 'claude daemon ORCA_TERMINAL_HANDLE=term_test\n' > "$TMP/ps-env-102"
 printf 'claude -p hi ORCA_TERMINAL_HANDLE=term_test\n' > "$TMP/ps-env-103"
 check "/history: (b) にあるが (a) に無い (Claude 終了済み、daemon / -p は数えない) → live false" "$(lives)" "False False ok"
+# (b) の list が取れない (Orca 停止中) 時は (a) の ps だけで判定する (Orca を閉じても Orca 端末の古い会話を稼働中にしない)
+rm -f "$TMP/list.json"
+check "/history: list 失敗でも (a) に無い → live false (Orca 停止中の古い会話)" "$(lives)" "False False unknown"
+printf 'claude --resume ORCA_TERMINAL_HANDLE=term_test\n' > "$TMP/ps-env-101"
+check "/history: list 失敗でも (a) にある → live true" "$(lives)" "True False unknown"
+list "$(term term_test "$CWD" 1)"
+printf 'claude --resume ORCA_TERMINAL_HANDLE=term_other\n' > "$TMP/ps-env-101"
 rm -f "$TMP/ps-list"
 check "/history: ps 失敗 → (b) だけで判定 (fail open)、header ok" "$(lives)" "True False ok"
 
