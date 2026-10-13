@@ -20,7 +20,7 @@ const PERM = `${STATE}/perm`; // hooks/perm-state.py が許可待ちの間だけ
 const PERM_TTL = 30 * 60_000; // 強制終了した端末に取り残された perm を無視する
 // Claude Code の許可ダイアログは 1 = Yes。Enter 無しの 1 打で通り、入力欄に 1 は残らない (2.1.285 の WebFetch ダイアログで実機確認、2026-09-30)
 const APPROVE_KEY = "1";
-type Perm = { id: string; tool: string; detail: string; ts: string; terminal?: string | null; herdr_pane?: string | null; session_id?: string | null };
+type Perm = { id: string; tool: string; detail: string; ts: string; terminal?: string | null; herdr_pane?: string | null; herdr_socket?: string | null; session_id?: string | null };
 // 許可待ちの記録を返す。無い・壊れている・TTL 切れは null
 async function readPerm(session: string): Promise<Perm | null> {
   const p = await Bun.file(`${PERM}/${session}.json`).json().catch(() => null);
@@ -37,19 +37,28 @@ async function readAsking(session: string, lastReplyTs: number): Promise<{ promp
   return typeof p?.prompt === "string" && Date.now() - t < (waiting ? WAIT_TTL : PERM_TTL) && !(t < lastReplyTs) ? { prompt: p.prompt, ts: p.ts, ...(waiting && { waiting: true as const }) } : null;
 }
 // 一覧のまとめ目印 (item.session) = state/perm・state/prompt のファイル名。hooks/stop-to-fragment.py の session_key と同じ式 (片方だけ直さない)。
-// herdr 配下の pane は Orca 端末 handle を共有するので、pane があれば `<handle>__<pane>` (":" は "-"、他の記号は捨てる) にして pane ごとに分ける。pane 無しは従来の handle || session_id
+// herdr 配下の pane は Orca 端末 handle を共有するので、pane があれば `<handle>__<pane>` (":" は "-"、他の記号は捨てる) にして pane ごとに分ける。Orca 無し (terminal なし) の herdr だけの環境は handle の代わりに "herdr"。pane 無しは従来の handle || session_id
 const paneKey = (pane: string) => pane.replace(/:/g, "-").replace(/[^A-Za-z0-9_-]/g, "");
-function sessionKey(meta: { terminal?: unknown; session_id?: unknown; herdr_pane?: unknown }): string {
-  const handle = String(meta.terminal || meta.session_id || "");
-  const pane = meta.terminal && typeof meta.herdr_pane === "string" ? paneKey(meta.herdr_pane) : "";
-  return pane ? `${handle}__${pane}` : handle;
+// 名前付き herdr session (`herdr --session <name>`) は pane id が既定 session と重なる (どちらも w1:p1 から)。socket が <config>/sessions/<name>/herdr.sock なら末尾に `__<name>` を足す。既定 session の key は変えない
+function sessionKey(meta: { terminal?: unknown; session_id?: unknown; herdr_pane?: unknown; herdr_socket?: unknown }): string {
+  const pane = typeof meta.herdr_pane === "string" && meta.herdr_pane ? paneKey(meta.herdr_pane) : "";
+  const handle = String(meta.terminal || (pane ? "herdr" : meta.session_id || ""));
+  const named = pane ? herdrSessionName(meta.herdr_socket) : "";
+  return pane ? `${handle}__${pane}${named ? `__${named}` : ""}` : handle;
+}
+function herdrSessionName(sock: unknown): string {
+  return typeof sock === "string" ? (/\/sessions\/([^/]+)\/herdr\.sock$/.exec(sock)?.[1] ?? "").replace(/[^A-Za-z0-9_-]/g, "") : "";
 }
 const NAME = /^[\w.-]+\.md$/; // [\w.-] のみ: "/" を含まないので state/history の外は読めない
 const TEXT = { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" };
 
-// herdr 配下の pane (hook が記録した herdr_pane)。Orca 外 (terminal 無し) では pane を持たない
-function herdrPaneOf(meta: { terminal?: unknown; herdr_pane?: unknown }): string | null {
-  return meta.terminal && typeof meta.herdr_pane === "string" && meta.herdr_pane ? meta.herdr_pane : null;
+// herdr 配下の pane (hook が記録した herdr_pane)。Orca 無し (terminal 無し) の herdr だけの環境でも pane は持つ
+function herdrPaneOf(meta: { herdr_pane?: unknown }): string | null {
+  return typeof meta.herdr_pane === "string" && meta.herdr_pane ? meta.herdr_pane : null;
+}
+// その entry の herdr socket (hook が記録した HERDR_SOCKET_PATH)。無い (古い entry) ・絶対パスでない時は null = 既定 socket として扱う
+function herdrSockOf(meta: { herdr_socket?: unknown } | null | undefined): string | null {
+  return typeof meta?.herdr_socket === "string" && meta.herdr_socket.startsWith("/") ? meta.herdr_socket : null;
 }
 // pane 付き entry の見え方。title / lastOutputAt は Orca の端末 (herdr 全体で共有) でなく herdr の pane から取る。herdr に居ない pane は alive=false。
 // herdr の list が取れない時 (agents null) は従来どおり Orca の値・alive=true。herdr agent list に出力時刻は無いので lastOutputAt は null (共有端末の別 pane の時刻を出さない)
@@ -66,7 +75,14 @@ function paneView(pane: string | null, agents: Map<string, { title: string }> | 
 // live = その entry の terminal handle が (a) 今走っている対話 Claude の端末 かつ (b) 今の orca の書ける端末 にある (terminal 無しは false)。
 // (b) の list が取れない時は全部 true (fail open)。(a) の ps が失敗した時は (b) だけで判定する
 async function history(repo: string | null): Promise<Response> {
-  const [terms, claude, agents] = await Promise.all([liveTerminals(LIVE_TTL), claudeTerminals(LIVE_TTL), herdrAgents(LIVE_TTL)]);
+  const [terms, claude, agents] = await Promise.all([liveTerminals(LIVE_TTL), claudeTerminals(LIVE_TTL), herdrAgents(null, LIVE_TTL)]);
+  let named = false; // 名前付き session の list が 1 つでも取れたか (x-rmx-live 用)
+  const agentsOf = async (sock: string | null) => {
+    if (!sock) return agents;
+    const a = await herdrAgents(sock, LIVE_TTL);
+    if (a) named = true;
+    return a;
+  };
   const byHandle = new Map((terms ?? []).map((t) => [t.handle, t])); // 待ち状態表示用: title (◑ 作業中 / ✳ 入力待ち) と lastOutputAt
   const handles = new Set(terms?.map((t) => t.handle).filter((h) => !claude || claude.has(h ?? "")));
   const perms = new Map<string, Perm>(); // state/perm/*.json を 1 回だけ読む。key = item.session
@@ -86,8 +102,8 @@ async function history(repo: string | null): Promise<Response> {
       const session = sessionKey(meta);
       const perm = perms.get(session);
       const pane = herdrPaneOf(meta);
-      const shown = paneView(pane, agents, byHandle.get(meta.terminal));
-      return { name, prompt: typeof meta.prompt === "string" ? meta.prompt : null, ts: meta.ts ?? null, cwd, root, repo: root.split("/").filter(Boolean).pop() ?? "", head: body.replace(/\s+/g, " ").trim().slice(0, 40), terminal: Boolean(meta.terminal), live: shown.herdr ? shown.alive : (terms ? Boolean(meta.terminal) && handles.has(meta.terminal) : true) && shown.alive, session, perm: perm ? { id: perm.id, tool: perm.tool, detail: perm.detail, ts: perm.ts } : null, agent: meta.agent ?? null, title: shown.title, lastOutputAt: shown.lastOutputAt };
+      const shown = paneView(pane, await agentsOf(herdrSockOf(meta)), byHandle.get(meta.terminal));
+      return { name, prompt: typeof meta.prompt === "string" ? meta.prompt : null, ts: meta.ts ?? null, cwd, root, repo: root.split("/").filter(Boolean).pop() ?? "", head: body.replace(/\s+/g, " ").trim().slice(0, 40), terminal: Boolean(meta.terminal) || pane !== null, live: shown.herdr ? shown.alive : (pane !== null && !meta.terminal ? true : terms ? Boolean(meta.terminal) && handles.has(meta.terminal) : true) && shown.alive, session, perm: perm ? { id: perm.id, tool: perm.tool, detail: perm.detail, ts: perm.ts } : null, agent: meta.agent ?? null, title: shown.title, lastOutputAt: shown.lastOutputAt };
     }),
   );
   // 1 つの端末で順に別の repo を開くと、端末が生きている限り昔の repo まで live になる (2026-09-29 実機: 1 端末で 4 repo)。
@@ -113,16 +129,16 @@ async function history(repo: string | null): Promise<Response> {
     const handle = isTerm ? session.split("__")[0] : "";
     // 端末・pane は記録から読み、ファイル名 (session) と合わなければ出さない (pane を取り違えた entry を作らない)
     const pane = herdrPaneOf({ terminal: p?.terminal, herdr_pane: p?.herdr_pane });
-    if (p?.terminal ? sessionKey(p) !== session : session.includes("__")) continue;
-    const shown = paneView(pane, agents, byHandle.get(handle));
+    if (p?.terminal || pane ? sessionKey(p) !== session : session.includes("__")) continue;
+    const shown = paneView(pane, await agentsOf(herdrSockOf(p)), byHandle.get(handle));
     const wt = isTerm ? byHandle.get(handle)?.worktreePath : undefined;
     const root = typeof wt === "string" && wt ? wt : cwd;
     asking.set(session, a);
-    items.unshift({ name: `asking-${session}.md`, prompt: null, ts: a.ts, cwd, root, repo: root.split("/").filter(Boolean).pop() ?? "", head: "", terminal: isTerm, live: shown.herdr ? shown.alive : (terms ? isTerm && handles.has(handle) : true) && shown.alive, session, perm: null, agent: null, title: shown.title, lastOutputAt: shown.lastOutputAt });
+    items.unshift({ name: `asking-${session}.md`, prompt: null, ts: a.ts, cwd, root, repo: root.split("/").filter(Boolean).pop() ?? "", head: "", terminal: isTerm || pane !== null, live: shown.herdr ? shown.alive : (pane !== null && !isTerm ? true : terms ? isTerm && handles.has(handle) : true) && shown.alive, session, perm: null, agent: null, title: shown.title, lastOutputAt: shown.lastOutputAt });
   }
   const out = items.map(({ root, ...e }) => ({ ...e, asking: asking.get(e.session) ?? null }));
   const want = repo?.toLowerCase();
-  return Response.json(want ? out.filter((e) => e.repo.toLowerCase() === want) : out, { headers: { "cache-control": "no-store", "x-rmx-live": terms ? "ok" : "unknown" } });
+  return Response.json(want ? out.filter((e) => e.repo.toLowerCase() === want) : out, { headers: { "cache-control": "no-store", "x-rmx-live": terms || agents || named ? "ok" : "unknown" } });
 }
 
 // GET /file?p=<絶対パス>: 返事に出た絶対パス (スクショ・動画・生成 html 等) を viewer にそのまま出す口。
@@ -187,6 +203,7 @@ async function open(req: Request): Promise<Response> {
 }
 
 // orca の worktree path 一覧 (GET /worktrees の元、POST /new の許可リスト)。取れない時は null。60 秒 memo (terminal list と同じ方式)
+// Orca が取れない (無い) 時だけ herdr の pane の cwd 一覧で代える: 今 herdr に開いてあるフォルダだけを許可リストに入れる (Orca がある環境の一覧は変えない)
 const WT_TTL = Number(process.env.RMX_WT_TTL_MS ?? 60000); // env はテストでキャッシュを切る用
 let wtCache: { at: number; paths: string[] | null } | null = null;
 async function worktreePaths(): Promise<string[] | null> {
@@ -198,8 +215,46 @@ async function worktreePaths(): Promise<string[] | null> {
     const list = code === 0 ? JSON.parse(out)?.result?.worktrees : null;
     if (Array.isArray(list)) paths = list.map((w) => w?.path).filter((x): x is string => typeof x === "string" && x.startsWith("/"));
   } catch {}
+  if (!paths) paths = await herdrCwds();
   wtCache = { at: Date.now(), paths };
   return paths;
+}
+// 既定 socket と、記録 (history / prompt) にある名前付き session の socket ごとに pane list を取って合わせる。取れない socket は飛ばし、全部取れなければ null
+async function herdrCwds(): Promise<string[] | null> {
+  const cwds = new Set<string>();
+  let got = false;
+  for (const sock of [null, ...(await recordedSockets())]) {
+    try {
+      const r = await herdrRun(["pane", "list"], sock);
+      const panes = r.code === 0 ? JSON.parse(r.out)?.result?.panes : null;
+      if (!Array.isArray(panes)) continue;
+      got = true;
+      for (const c of panes.map((p) => p?.cwd)) if (typeof c === "string" && c.startsWith("/")) cwds.add(c);
+    } catch {}
+  }
+  return got ? [...cwds] : null;
+}
+async function recordedSockets(): Promise<string[]> {
+  const socks = new Set<string>();
+  for (const dir of [HIST, PROMPT]) {
+    for (const n of (await readdir(dir).catch(() => [] as string[])).filter((n) => n.endsWith(".json"))) {
+      const sock = herdrSockOf(await Bun.file(`${dir}/${n}`).json().catch(() => null));
+      if (sock) socks.add(sock);
+    }
+  }
+  return [...socks];
+}
+// near (`<handle>__<paneKey>[__<session 名>]`) の herdr socket。名前付き session の key だけ記録から探す。既定 session や見つからない時は null
+async function socketOfSession(near: string): Promise<string | null> {
+  if (near.split("__").length < 3 || !/^[\w-]+$/.test(near.replaceAll("__", "-"))) return null;
+  for (const [dir, ok] of [[HIST, null], [PROMPT, `${near}.json`]] as const) {
+    for (const n of (await readdir(dir).catch(() => [] as string[])).filter((n) => n.endsWith(".json")).sort().reverse()) {
+      if (ok && n !== ok) continue;
+      const m = await Bun.file(`${dir}/${n}`).json().catch(() => null);
+      if (herdrSockOf(m) && sessionKey(m) === near) return herdrSockOf(m);
+    }
+  }
+  return null;
 }
 async function worktrees(): Promise<Response> {
   const paths = await worktreePaths();
@@ -217,9 +272,9 @@ const NEW_MODE = process.env.RMX_NEW_MODE === "split" ? "split" : "tab"; // tab 
 // 再利用した pane は user の物なので起動に失敗しても閉じない。動いていない・途中で失敗は null (呼び元が Orca に落とす)。near は `<handle>__<paneKey>` なので paneKey が一致する pane を探す
 // 前面が shell 自身だけの pane か: `herdr pane process-info` の foreground_processes が shell_pid の 1 プロセスだけ (dev server / vim / 実行中のコマンドは別 pid)。取れない・読めない時は false (誤って打ち込むより pane が増える方がまし)
 // ponytail: プロンプトに打ちかけの文字があるかは見えない。上限 = shell が前面なら空きとみなす
-async function paneIsIdleShell(pane: string): Promise<boolean> {
+async function paneIsIdleShell(pane: string, sock: string | null): Promise<boolean> {
   try {
-    const r = await herdrRun(["pane", "process-info", "--pane", pane]);
+    const r = await herdrRun(["pane", "process-info", "--pane", pane], sock);
     if (r.code !== 0) return false;
     const info = JSON.parse(r.out)?.result?.process_info;
     const fg = info?.foreground_processes;
@@ -229,39 +284,42 @@ async function paneIsIdleShell(pane: string): Promise<boolean> {
 async function newInHerdr(cwd: string, near: unknown): Promise<string | null> {
   let workspace: string | null = null; // この呼びで作った workspace (起動に失敗したら閉じる)
   try {
-    const st = await herdrRun(["status", "server", "--json"]);
+    // near が名前付き session なら、その session の socket で分割する (見つからなければ near の pane は使わず既定 session)
+    const nearSock = typeof near === "string" ? await socketOfSession(near) : null;
+    if (typeof near === "string" && near.split("__").length >= 3 && !nearSock) near = null;
+    const st = await herdrRun(["status", "server", "--json"], nearSock);
     if (st.code !== 0 || JSON.parse(st.out)?.running !== true) return null;
-    const ls = await herdrRun(["pane", "list"]);
+    const ls = await herdrRun(["pane", "list"], nearSock);
     if (ls.code !== 0) return null;
     const panes = (JSON.parse(ls.out)?.result?.panes ?? []).filter((p: any) => p?.cwd === cwd && typeof p?.pane_id === "string");
     const nearKey = String(near).split("__")[1];
     const order = (a: any[]) => [...a.filter((p) => nearKey && paneKey(p.pane_id) === nearKey), ...a.filter((p) => p.focused === true), ...a]; // near → focused → 先頭
     let reuse: any = null; // 空き shell の pane (agent キーが無いものだけ前面を確かめる)
-    for (const p of order(panes.filter((p: any) => !p.agent))) if (await paneIsIdleShell(p.pane_id)) { reuse = p; break; }
+    for (const p of order(panes.filter((p: any) => !p.agent))) if (await paneIsIdleShell(p.pane_id, nearSock)) { reuse = p; break; }
     const from = order(panes)[0];
     let pane: unknown;
     if (reuse) {
       pane = reuse.pane_id;
     } else if (from) {
-      const sp = await herdrRun(["pane", "split", from.pane_id, "--direction", "down", "--cwd", cwd, "--focus"]);
+      const sp = await herdrRun(["pane", "split", from.pane_id, "--direction", "down", "--cwd", cwd, "--focus"], nearSock);
       pane = sp.code === 0 ? JSON.parse(sp.out)?.result?.pane?.pane_id : null; // pane split は新 pane を .result.pane に返す (herdr --skill)
     } else {
-      const ws = await herdrRun(["workspace", "create", "--cwd", cwd, "--label", cwd.split("/").filter(Boolean).pop() ?? cwd, "--focus"]);
+      const ws = await herdrRun(["workspace", "create", "--cwd", cwd, "--label", cwd.split("/").filter(Boolean).pop() ?? cwd, "--focus"], nearSock);
       const res = ws.code === 0 ? JSON.parse(ws.out)?.result : null;
       pane = res?.root_pane?.pane_id;
       workspace = typeof res?.workspace?.workspace_id === "string" ? res.workspace.workspace_id : null;
     }
-    if (typeof pane !== "string" || !HERDR_PANE.test(pane)) { if (workspace) await herdrRun(["workspace", "close", workspace]); return null; }
+    if (typeof pane !== "string" || !HERDR_PANE.test(pane)) { if (workspace) await herdrRun(["workspace", "close", workspace], nearSock); return null; }
     // 既定の claude は agent start (起動完了まで待ち、agent list に名前付きで載る)。他の command は shell にそのまま打つ
-    const r = await herdrRun(NEW_CMD === "claude" ? ["agent", "start", `rmv-${Date.now().toString(36)}`, "--kind", "claude", "--pane", pane] : ["pane", "run", pane, NEW_CMD]);
+    const r = await herdrRun(NEW_CMD === "claude" ? ["agent", "start", `rmv-${Date.now().toString(36)}`, "--kind", "claude", "--pane", pane] : ["pane", "run", pane, NEW_CMD], nearSock);
     if (r.code === 0) {
       if (reuse) { // 再利用した pane を前に出す (best-effort、失敗しても起動は済んでいる)
-        for (const a of [["workspace", "focus", reuse.workspace_id], ["tab", "focus", reuse.tab_id]]) if (typeof a[2] === "string") await herdrRun(a);
+        for (const a of [["workspace", "focus", reuse.workspace_id], ["tab", "focus", reuse.tab_id]]) if (typeof a[2] === "string") await herdrRun(a, nearSock);
       }
       return pane;
     }
     if (reuse) return null; // user の既存 pane は閉じない
-    await herdrRun(workspace ? ["workspace", "close", workspace] : ["pane", "close", pane]); // 起動に失敗した空の pane / workspace を残さない (呼び元が Orca で開き直すので二重になる)
+    await herdrRun(workspace ? ["workspace", "close", workspace] : ["pane", "close", pane], nearSock); // 起動に失敗した空の pane / workspace を残さない (呼び元が Orca で開き直すので二重になる)
     return null;
   } catch { return null; }
 }
@@ -331,17 +389,19 @@ async function liveTerminals(maxAge: number): Promise<Term[] | null> {
 }
 
 // herdr の Claude が居る pane: `herdr agent list` の pane_id → {title: terminal_title (先頭の ◑ / ✳ が作業中 / 入力待ち)}。取れない (herdr 無し / exit 非 0 / JSON 不正) 時は null。memo は liveTerminals と同じ
-let herdrCache: { at: number; agents: Map<string, { title: string }> | null } | null = null;
-async function herdrAgents(maxAge: number): Promise<Map<string, { title: string }> | null> {
-  if (herdrCache && Date.now() - herdrCache.at < maxAge) return herdrCache.agents;
-  let agents: Map<string, { title: string }> | null = null;
-  try {
-    const p = Bun.spawn([HERDR, "agent", "list"], { stdout: "pipe", stderr: "ignore" });
-    const [out, code] = await Promise.all([new Response(p.stdout).text(), p.exited]);
-    const list = code === 0 ? JSON.parse(out)?.result?.agents : null;
-    if (Array.isArray(list)) agents = new Map(list.filter((a) => a?.agent === "claude" && typeof a?.pane_id === "string").map((a) => [a.pane_id, { title: String(a.terminal_title ?? "") }]));
-  } catch {}
-  herdrCache = { at: Date.now(), agents };
+// socket ごと (null = 既定 session) に memo する: pane id は herdr の session ごとに w1:p1 から振られて重なる。並走する呼びが同じ list を二重に叩かないよう promise を持つ
+const herdrCache = new Map<string, { at: number; agents: Promise<Map<string, { title: string }> | null> }>();
+function herdrAgents(sock: string | null, maxAge: number): Promise<Map<string, { title: string }> | null> {
+  const hit = herdrCache.get(sock ?? "");
+  if (hit && Date.now() - hit.at < maxAge) return hit.agents;
+  const agents = (async () => {
+    try {
+      const r = await herdrRun(["agent", "list"], sock);
+      const list = r.code === 0 ? JSON.parse(r.out)?.result?.agents : null;
+      return Array.isArray(list) ? new Map<string, { title: string }>(list.filter((a) => a?.agent === "claude" && typeof a?.pane_id === "string").map((a) => [a.pane_id, { title: String(a.terminal_title ?? "") }])) : null;
+    } catch { return null; }
+  })();
+  herdrCache.set(sock ?? "", { at: Date.now(), agents });
   return agents;
 }
 
@@ -508,17 +568,18 @@ async function shrink(path: string) {
 // herdr 配下の Claude は ORCA_TERMINAL_HANDLE を herdr 全体で共有するので、orca へ送ると focus 中の pane (別の Claude かもしれない) に入る。
 // hook が記録した herdr_pane があれば herdr CLI で pane に直接送る。orca への fallback はしない (誤送信防止が最優先)
 const HERDR_PANE = /^[A-Za-z0-9][\w:.-]*$/; // 先頭が "-" だと flag に化ける
-async function herdrRun(args: string[]): Promise<{ out: string; err: string; code: number }> {
-  const p = Bun.spawn([HERDR, ...args], { stdout: "pipe", stderr: "pipe" });
+// sock = その entry の herdr socket (名前付き session はここで切り替わる)。null は呼び出し元の env のまま = 既定 session
+async function herdrRun(args: string[], sock: string | null = null): Promise<{ out: string; err: string; code: number }> {
+  const p = Bun.spawn([HERDR, ...args], { stdout: "pipe", stderr: "pipe", ...(sock ? { env: { ...process.env, HERDR_SOCKET_PATH: sock } } : {}) });
   const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
   return { out, err, code };
 }
 // 送れる pane か。pane が無い (閉じた / herdr が別の server) → 409、herdr が呼べない・応答が読めない → 502、
 // pane はあるが Claude が居ない (終了して素のシェルが残った: 赤ペンの文がコマンドとして走る) → 409
-async function checkHerdrPane(pane: string): Promise<Response | null> {
+async function checkHerdrPane(pane: string, sock: string | null): Promise<Response | null> {
   if (!HERDR_PANE.test(pane)) return new Response("bad herdr pane", { status: 409 });
   try {
-    const r = await herdrRun(["pane", "get", pane]);
+    const r = await herdrRun(["pane", "get", pane], sock);
     if (r.code !== 0) return new Response(`herdr pane gone: ${r.out.trim() || r.err.trim()}`, { status: /pane_not_found/.test(r.out + r.err) ? 409 : 502 });
     if (JSON.parse(r.out)?.result?.pane?.agent !== "claude") return new Response(`herdr pane ${pane} に Claude が居ない`, { status: 409 });
     return null;
@@ -529,9 +590,9 @@ async function checkHerdrPane(pane: string): Promise<Response | null> {
 // orca の terminal send に流している制御文字 (Enter / Ctrl+V / 入力欄クリア) は herdr では send-keys のキー名で送る。それ以外は literal text。send-text に `--` は付けない: herdr は `--` も本文として送り、`-h` 始まりの文も flag にせず届く (2026-10-13 実測)。
 // 複数行も印を付けず生で送る: Claude の入力欄に複数行のまま入り途中で送信されない。bracketed paste で囲むと『貼り付けた文』扱いになり指示として読まれにくい (2026-10-13 実 Claude で確認)
 const HERDR_KEYS: Record<string, string[]> = { "\r": ["enter"], "\x16": ["ctrl+v"], "\x15\x7f": ["ctrl+u", "backspace"] };
-function herdrSend(pane: string, t: string): ReturnType<typeof herdrRun> {
+function herdrSend(pane: string, t: string, sock: string | null): ReturnType<typeof herdrRun> {
   const keys = HERDR_KEYS[t];
-  return herdrRun(keys ? ["pane", "send-keys", pane, ...keys] : ["pane", "send-text", pane, t]);
+  return herdrRun(keys ? ["pane", "send-keys", pane, ...keys] : ["pane", "send-text", pane, t], sock);
 }
 
 // Origin 必須 + 一致: 無いと任意の web ページが fetch POST で端末にキー入力を流し込める (CSRF)。
@@ -551,16 +612,17 @@ async function send(req: Request): Promise<Response> {
   // asking-<session>.md (返事ゼロの仮 entry、待機中の最初の依頼の送り先) は history に meta が無いので、state/prompt の記録 (terminal・herdr_pane・cwd 付き) を meta に使う
   const meta = await Bun.file(name.startsWith("asking-") ? `${PROMPT}/${name.slice(7, -3)}.json` : `${HIST}/${name.slice(0, -3)}.json`).json().catch(() => null);
   if (!meta) return new Response("not found", { status: 404 });
-  if (typeof meta.terminal !== "string" || !meta.terminal) return new Response("entry has no terminal", { status: 409 });
-  const pane: string | null = typeof meta.herdr_pane === "string" && meta.herdr_pane ? meta.herdr_pane : null;
-  if (pane) { const bad = await checkHerdrPane(pane); if (bad) return bad; }
-  // herdr pane がある時、orca の端末は焦点を戻す先 (herdr を載せている Orca タブ) としてだけ使う
-  const handle = pane ? meta.terminal : await resolveTerminal(meta);
-  if (!handle) return new Response(`terminal closed: 元の端末は閉じられ、同じフォルダ (${meta.cwd ?? ""}) の端末も無い`, { status: 409 });
+  const pane = herdrPaneOf(meta);
+  const sock = herdrSockOf(meta);
+  if (!pane && (typeof meta.terminal !== "string" || !meta.terminal)) return new Response("entry has no terminal", { status: 409 });
+  if (pane) { const bad = await checkHerdrPane(pane, sock); if (bad) return bad; }
+  // herdr pane がある時、orca の端末は焦点を戻す先 (herdr を載せている Orca タブ) としてだけ使う。Orca 無しの herdr だけの entry は handle なし (焦点は動かさない)
+  const handle = pane ? meta.terminal || null : await resolveTerminal(meta);
+  if (!pane && !handle) return new Response(`terminal closed: 元の端末は閉じられ、同じフォルダ (${meta.cwd ?? ""}) の端末も無い`, { status: 409 });
   // 本文と Enter を分けて送る: `--enter` は Claude 端末だと「turn が始まったか」を最大 8 秒観察してから戻る
   // (2026-09-29 実測: --enter 8.2s / 本文 + "\r" 別送り 0.4s、--wait-submit では変わらない)。複数行は生送りでも 1 メッセージで届く
   const typed = async (t: string) => {
-    if (pane) return herdrSend(pane, t);
+    if (pane) return herdrSend(pane, t, sock);
     const p = Bun.spawn([ORCA, "terminal", "send", "--terminal", handle, "--text", t, "--json"], { stdout: "pipe", stderr: "pipe" });
     const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
     return { out, err, code };
@@ -568,7 +630,7 @@ async function send(req: Request): Promise<Response> {
   // 端末の下書き欄にある [Image #N] の数。読めない時は -1
   const drafted = async () => {
     // herdr には draft フィールドが無い: 画面 (visible) 上の [Image #N] を数える。送信済みの分も数えるが attach は増減だけ見るので足りる
-    if (pane) { const r = await herdrRun(["pane", "read", pane, "--source", "visible"]).catch(() => null); return r && r.code === 0 ? (r.out.match(/\[Image #\d+\]/g) ?? []).length : -1; }
+    if (pane) { const r = await herdrRun(["pane", "read", pane, "--source", "visible"], sock).catch(() => null); return r && r.code === 0 ? (r.out.match(/\[Image #\d+\]/g) ?? []).length : -1; }
     const p = Bun.spawn([ORCA, "terminal", "read", "--terminal", handle, "--json"], { stdout: "pipe", stderr: "ignore" });
     const [out, code] = await Promise.all([new Response(p.stdout).text(), p.exited]);
     try { return code === 0 ? (String(JSON.parse(out)?.result?.terminal?.draft ?? "").match(/\[Image #\d+\]/g) ?? []).length : -1; } catch { return -1; }
@@ -632,7 +694,7 @@ async function send(req: Request): Promise<Response> {
     if (code === 0) ({ out, err, code } = await typed("\r"));
     if (code !== 0) return new Response(`${pane ? "herdr" : "orca"} exit ${code}: ${err.trim() || out.trim()}`, { status: 502 });
     // herdr 内で特定 pane を選ぶ CLI は無い (pane focus は方向指定のみ): Orca のタブを前に出すところまで
-    if (focus) await focusTerminal(handle);
+    if (focus && handle) await focusTerminal(handle);
     return new Response(out || "{}", { headers: { "content-type": "application/json; charset=utf-8" } });
   } catch (e) {
     return new Response(`orca spawn failed: ${e}`, { status: 502 });
@@ -648,13 +710,13 @@ async function approve(req: Request): Promise<Response> {
   const session = typeof body?.session === "string" ? body.session : "";
   if (!/^[\w-]+$/.test(session)) return new Response("bad session", { status: 400 });
   const perm = await readPerm(session);
-  if (!perm || perm.id !== body?.id || !perm.terminal) return new Response("許可待ちはもう無い", { status: 409 });
+  if (!perm || perm.id !== body?.id || (!perm.terminal && !perm.herdr_pane)) return new Response("許可待ちはもう無い", { status: 409 });
   // ファイル名 (session) と中身の端末・pane が食い違う perm には送らない (旧 hook が pane を区別せずに書いた分など)
   if (sessionKey(perm) !== session) return new Response("許可待ちの送り先が一致しない", { status: 409 });
   if (typeof perm.herdr_pane === "string" && perm.herdr_pane) { // herdr 配下は pane に直接 (送り方は send と同じ)
-    const bad = await checkHerdrPane(perm.herdr_pane);
+    const bad = await checkHerdrPane(perm.herdr_pane, herdrSockOf(perm));
     if (bad) return bad;
-    const { out, err, code } = await herdrSend(perm.herdr_pane, APPROVE_KEY).catch((e) => ({ out: "", err: String(e), code: -1 }));
+    const { out, err, code } = await herdrSend(perm.herdr_pane, APPROVE_KEY, herdrSockOf(perm)).catch((e) => ({ out: "", err: String(e), code: -1 }));
     return code !== 0 ? new Response(`herdr exit ${code}: ${err.trim() || out.trim()}`, { status: 502 }) : new Response(out || "{}", { headers: { "content-type": "application/json; charset=utf-8" } });
   }
   try {
