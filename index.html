@@ -891,8 +891,13 @@ const drafts = new Map();
 let pageVer = null; // 読み込んだ index.html の版 (/history の x-rmx-page)
 let cur = null; // 表示中の履歴 entry。latest.html だけ映している間は null (送信不可・コピーのみ)
 const curName = () => cur?.name ?? "";
-const draftOf = (n) => { if (!drafts.has(n)) drafts.set(n, { pins: new Map(), choice: null, free: "", imgs: [] }); return drafts.get(n); };
-const hasDraft = (n) => { const d = drafts.get(n ?? ""); return !!d && (d.pins.size > 0 || !!d.choice || !!d.free.trim() || d.imgs.length > 0); };
+const draftOf = (n) => { if (!drafts.has(n)) drafts.set(n, { pins: new Map(), choices: new Map(), free: "", imgs: [] }); return drafts.get(n); };
+const hasDraft = (n) => { const d = drafts.get(n ?? ""); return !!d && (d.pins.size > 0 || d.choices.size > 0 || !!d.free.trim() || d.imgs.length > 0); };
+// 案表 (Low-Load、1 列目が A〜E) の採用は表ごとに 1 案。choices = 表の通し番号 → { label, letter }。
+// label = 表がある番号段落の番号 (3)、取れない表は出現順 (表2)。同じ label が重なったら後の方を出現順に。表が複数ある返事だけ `3-A` と書く (1 つなら従来どおり `A`)
+const tableLabels = (anchors) => anchors.map((a, i) => (a && anchors.indexOf(a) === i ? a : `表${i + 1}`));
+const pickText = (choices, multi) => [...choices].sort((x, y) => x[0] - y[0]).map(([, c]) => (multi ? `${c.label}-${c.letter}` : c.letter)).join("、");
+const pickMulti = () => document.querySelectorAll("#reply table[data-ptbl]").length > 1;
 const cut = (s, n) => { const t = s.replace(/\s+/g, " ").trim(); return t.length > n ? t.slice(0, n) + "…" : t; };
 const textOf = (el) => {
   const c = el.cloneNode(true);
@@ -912,10 +917,14 @@ function decorate(el) {
     const r = it.textContent.trim()[0];
     it.dataset.anchor = n ? `${n}-${r}` : r;
   });
+  const isPickRow = (tr) => /^[A-E]$/.test(tr.cells[0]?.textContent.trim() ?? "");
+  const pickTbls = [...el.querySelectorAll("table")].filter((t) => [...t.querySelectorAll("tbody tr")].some(isPickRow)); // Low-Load の案表
+  const labels = tableLabels(pickTbls.map((t) => t.closest(".blk")?.dataset.anchor));
+  pickTbls.forEach((t, i) => { t.dataset.ptbl = String(i); t.dataset.plabel = labels[i]; });
   el.querySelectorAll("table tbody tr").forEach((tr) => {
     const first = tr.cells[0]?.textContent.trim() ?? "";
     tr.dataset.anchor = `表 ${cut(first, 12)}`;
-    if (/^[A-E]$/.test(first)) tr.cells[0].insertAdjacentHTML("beforeend", `<button class="pick" data-pick="${first}">これにする</button>`); // Low-Load の案表
+    if (isPickRow(tr)) tr.cells[0].insertAdjacentHTML("beforeend", `<button class="pick" data-pick="${first}">これにする</button>`);
   });
   el.querySelectorAll("[data-anchor]").forEach((x, i) => { x.dataset.pin = String(i); x.classList.add("pinable"); });
 }
@@ -951,7 +960,7 @@ function applyMarks() {
     if (on) host.dataset.badge = x.dataset.anchor; else delete host.dataset.badge;
   });
   document.querySelectorAll("#reply .pick").forEach((b) => {
-    const on = d?.choice === b.dataset.pick;
+    const on = d?.choices.get(+b.closest("table").dataset.ptbl)?.letter === b.dataset.pick;
     b.classList.toggle("on", on);
     b.textContent = on ? "採用" : "これにする";
     b.closest("tr").classList.toggle("chosen", on);
@@ -961,10 +970,10 @@ function applyMarks() {
 function renderTray() {
   const d = drafts.get(curName());
   const tray = document.getElementById("tray");
-  tray.hidden = !d || (!d.pins.size && !d.choice);
+  tray.hidden = !d || (!d.pins.size && !d.choices.size);
   if (tray.hidden) return;
   document.getElementById("pins").innerHTML =
-    (d.choice ? `<div class="pin"><b>採用</b><span class="q">${esc(d.choice)}</span><span></span><button data-x="" title="外す">×</button></div>` : "") +
+    [...d.choices].sort((x, y) => x[0] - y[0]).map(([t, c]) => `<div class="pin"><b>採用</b><span class="q">${esc(pickText([[t, c]], pickMulti()))}</span><span></span><button data-x="pick:${t}" title="外す">×</button></div>`).join("") +
     [...d.pins].map(([k, p]) => `<div class="pin" data-k="${esc(k)}"><b>${esc(p.anchor)}</b><span class="q">「${esc(p.quote)}」</span><textarea rows="1" placeholder="ひとこと">${esc(p.comment)}</textarea><button data-x="${esc(k)}" title="外す">×</button></div>`).join("");
   document.getElementById("free").value = d.free;
   const fimgs = document.getElementById("fimgs");
@@ -979,7 +988,7 @@ const refresh = () => { applyMarks(); renderTray(); };
 function message(d) {
   const head = cur?.ts ? `【赤ペン】(${hhmm(new Date(cur.ts))} の返事へ)` : "【赤ペン】";
   const pins = [...d.pins.values()].map((p) => `${p.anchor}「${p.quote}」${p.comment.trim() ? `→ ${p.comment.trim()}` : ""}`);
-  return [head, d.choice && `採用: ${d.choice}`, ...pins, d.free.trim()].filter(Boolean).join("\n");
+  return [head, d.choices.size > 0 && `採用: ${pickText(d.choices, pickMulti())}`, ...pins, d.free.trim()].filter(Boolean).join("\n");
 }
 
 document.getElementById("reply").addEventListener("click", (ev) => {
@@ -999,7 +1008,12 @@ document.getElementById("reply").addEventListener("click", (ev) => {
   if (ev.target.closest("a, input, textarea, iframe, .media")) return; // 画像・動画・音声の操作でピンを付けない
   const d = draftOf(curName());
   const pick = ev.target.closest(".pick");
-  if (pick) { d.choice = d.choice === pick.dataset.pick ? null : pick.dataset.pick; return refresh(); }
+  if (pick) {
+    const t = +pick.closest("table").dataset.ptbl;
+    if (d.choices.get(t)?.letter === pick.dataset.pick) d.choices.delete(t);
+    else d.choices.set(t, { label: pick.closest("table").dataset.plabel, letter: pick.dataset.pick });
+    return refresh();
+  }
   const mm = ev.target.closest("pre.mermaid");
   if (mm?.querySelector("svg") && (ev.target.closest(".mmzoom") || !ev.target.closest("svg [data-pin]"))) return openZoom(mm.querySelector("svg")); // 図の空き地 / ⤢
   if (String(getSelection())) return; // 文字を選択している最中はピンにしない
@@ -1029,7 +1043,7 @@ document.getElementById("pins").addEventListener("click", (ev) => {
   const x = ev.target.closest("[data-x]");
   if (!x) return;
   const d = draftOf(curName());
-  if (x.dataset.x === "") d.choice = null; else d.pins.delete(x.dataset.x);
+  if (x.dataset.x.startsWith("pick:")) d.choices.delete(+x.dataset.x.slice(5)); else d.pins.delete(x.dataset.x);
   refresh();
 });
 document.getElementById("free").addEventListener("input", (ev) => { draftOf(curName()).free = ev.target.value; });

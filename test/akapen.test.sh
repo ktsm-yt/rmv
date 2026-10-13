@@ -930,6 +930,27 @@ console.log(["dead", "alive", "gone"].map(pin).join(","));
 TS
 check "page: 終了した端末への送り先固定は外れ、生きている端末への固定は残る (,alive,gone)" "$(bun run "$TMP/chatpin.ts" "$A/index.html" 2>&1)" ",alive,gone"
 
+# 案表の採用は表ごと: 同じ文字 A が 2 つの表にあっても別々に選べ、送信文・tray の表記は表が複数の時だけ `<番号>-A`
+cat > "$TMP/picks.ts" <<'TS'
+import { readFileSync } from "node:fs";
+const html = readFileSync(process.argv[2], "utf8");
+const line = (name: string) => html.match(new RegExp(`^const ${name} = .*$`, "m"))![0];
+const f = new Function(line("tableLabels") + "\n" + line("pickText") + "\nreturn { tableLabels, pickText };")();
+const ch = (...e: [number, string, string][]) => new Map(e.map(([t, label, letter]) => [t, { label, letter }]));
+const two = ch([1, "表2", "A"], [0, "3", "B"]); // 表 3 は B、表 2 番目は A (挿入順と逆でも表の順に並ぶ)
+const same = ch([0, "3", "A"]);
+console.log([
+  f.tableLabels(["3", "4"]).join("/"),
+  f.tableLabels(["3", undefined]).join("/"),
+  f.tableLabels(["3", "3"]).join("/"),
+  f.pickText(same, false),
+  f.pickText(same, true),
+  f.pickText(two, true),
+  f.pickText(ch([0, "3", "A"]), true) === f.pickText(ch([1, "4", "A"]), true) ? "same" : "diff",
+].join(" "));
+TS
+check "page: 案表の採用ラベル (番号 / 取れない表は出現順 / 重複は出現順) と表記 (1 表なら A、複数なら 3-A、表の順)" "$(bun run "$TMP/picks.ts" "$A/index.html" 2>&1)" "3/4 3/表2 3/表2 A 3-A 3-B、表2-A diff"
+
 # --- /new は herdr が動いていれば、選んだ cwd と同じフォルダの pane を下に分割 (near → focused → 先頭)。同じフォルダの pane が無ければ workspace を新設。止まっていれば Orca (RMX_NEW_MODE 未設定 = tab) ---
 mkpanes() { printf '{"result":{"panes":[%s]}}' "$1" > "$TMP/hpanes"; }
 hp() { printf '{"pane_id":"%s","cwd":"%s","focused":%s,"agent":%s}' "$1" "$2" "$3" "${4:-null}"; }
