@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Claude Code SessionStart hook: 起動したばかりで依頼も返事も無い対話 session を state/prompt/<key>.json に「待機中」で置く ({prompt: "", waiting: true, ts, session_id, cwd, terminal, herdr_pane, herdr_socket})。
+"""Claude Code SessionStart hook: 起動したばかりで依頼も返事も無い対話 session を state/prompt/<key>.json に「待機中」で置く ({prompt: "", waiting: true, ts, session_id, cwd, terminal, herdr_pane})。
 置き場と形は prompt-state.py と同じ (key = stop-to-fragment.py の session_key)。server の /history がこれを仮の entry にして一覧に『待機中』で出し、チャット欄から最初の依頼を送れる。
   prompt-state.py が依頼を置くと同じファイルを上書きし、stop-to-fragment.py が返事を保存する時にこのファイルを消す (待機中は meta.prompt に載せない)
 置くのは source=startup の時だけ (resume / clear / compact は既に履歴がある session なので重複させない)。非対話 (判定は stop-to-fragment.py の is_interactive が正本) は置かない。
@@ -44,12 +44,12 @@ def main():
     if data.get("source") != "startup":
         return
     frag = fragment()
-    handle, herdr_pane, herdr_socket = frag.terminal_ids(data.get("session_id"))
-    key = frag.session_key(handle, herdr_pane, data.get("session_id"), herdr_socket)
-    if not (handle or herdr_pane) or not key or not frag.is_interactive():
-        return  # Orca 外かつ herdr 外 (送り先の端末が無い) は一覧に出せても送れないので置かない
+    handle, herdr_pane = frag.terminal_ids(data.get("session_id"))
+    key = frag.session_key(handle, herdr_pane, data.get("session_id"))
+    if not handle or not key or not frag.is_interactive():
+        return  # Orca 外 (送り先の端末が無い) は一覧に出せても送れないので置かない
     rec = {"prompt": "", "waiting": True, "ts": datetime.now().astimezone().isoformat(timespec="seconds"),
-           "session_id": data.get("session_id"), "cwd": data.get("cwd"), "terminal": handle, "herdr_pane": herdr_pane, "herdr_socket": herdr_socket}
+           "session_id": data.get("session_id"), "cwd": data.get("cwd"), "terminal": handle, "herdr_pane": herdr_pane}
     os.makedirs(PROMPT, exist_ok=True)
     path = os.path.join(PROMPT, key + ".json")
     with open(path + ".tmp", "w", encoding="utf-8") as f:

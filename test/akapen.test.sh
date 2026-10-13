@@ -14,7 +14,7 @@ export CLAUDE_CODE_ENTRYPOINT=cli
 # hook は Orca 外 (handle なし) の返事を記録しない。Orca の外から実行しても通るよう既定は handle あり (なしを試す箇所は env -u)
 export ORCA_TERMINAL_HANDLE=term_env
 # herdr 配下から実行しても結果が変わらないよう herdr の env は外す (herdr を試す箇所だけ明示で付ける)
-unset HERDR_ENV HERDR_PANE_ID HERDR_SOCKET_PATH HERDR_SESSION
+unset HERDR_ENV HERDR_PANE_ID
 TMP="$(mktemp -d)"
 # hook は Claude Code の sessions/ を読んで bg session の端末を取り直す。本物の ~/.claude/sessions を読まないよう空の場所に向ける
 export RMX_SESSIONS_DIR="$TMP/no-sessions"
@@ -257,9 +257,7 @@ HERDRSTUB="$TMP/herdr-stub"
 cat > "$HERDRSTUB" <<EOF
 #!/usr/bin/env bash
 # agent list は一覧用の読み取り: $TMP/hagents の中身を返す (無ければ失敗 = herdr の list が取れない)。hcalls には記録しない
-# 名前付き session (HERDR_SOCKET_PATH が .../sessions/solo/herdr.sock) の list は $TMP/hagents.solo (session ごとに別の一覧)
-sfx=; case "\${HERDR_SOCKET_PATH:-}" in */sessions/solo/*) sfx=.solo;; esac
-if [ "\$1 \$2" = "agent list" ]; then cat "$TMP/hagents\$sfx" 2>/dev/null || exit 1; exit 0; fi
+if [ "\$1 \$2" = "agent list" ]; then cat "$TMP/hagents" 2>/dev/null || exit 1; exit 0; fi
 # pane list も同じ読み取り: $TMP/hpanes の中身 (cwd 付きの pane 一覧、/new の分割元選びに使う)
 if [ "\$1 \$2" = "pane list" ]; then cat "$TMP/hpanes" 2>/dev/null || exit 1; exit 0; fi
 # pane process-info --pane <id>: id が $TMP/hidle に書かれていれば前面は shell 自身だけ (空き pane)、無ければ vim が前面 (既定 = 使えない pane)。hcalls には記録しない
@@ -269,8 +267,6 @@ fi
 # status server: $TMP/hrunning があれば動作中 (無ければ停止中)。pane split は新 pane w9:p9 を返す (どちらも hcalls に記録する)
 if [ "\$1" = status ]; then echo "status" >> "$TMP/hcalls"; [ -e "$TMP/hrunning" ] && echo '{"status":"running","running":true}' || echo '{"status":"stopped","running":false}'; exit 0; fi
 echo "\$2 \$3 \${*:4}" >> "$TMP/hcalls"
-# どの session (socket) に向けた呼びかを 1 行ずつ hsocks に記録する (hcalls と同じ行順。socket 無しは default)
-echo "\${HERDR_SOCKET_PATH:-default}" >> "$TMP/hsocks"
 if [ "\$2" = split ]; then echo '{"result":{"pane":{"pane_id":"w9:p9"},"type":"pane_info"}}'; exit 0; fi
 if [ "\$1 \$2" = "workspace create" ]; then echo '{"result":{"workspace":{"workspace_id":"w8"},"root_pane":{"pane_id":"w8:p1"}}}'; exit 0; fi
 [ -e "$TMP/hgone" ] && { echo '{"error":{"code":"pane_not_found","message":"pane not found"}}'; exit 1; }
@@ -840,44 +836,6 @@ check "herdr title: herdr の list が取れない時は従来どおり Orca の
 rm -f "$STATE/history/$PPA" "$STATE/history/${PPA%.md}.json" "$STATE/history/$PPB" "$STATE/history/${PPB%.md}.json"
 list "$(term term_test "$CWD" 1)"
 
-# --- herdr: 名前付き session (herdr --session solo) は socket が別で pane id が既定 session と重なる ---
-SOLO=/Users/i/.config/herdr/sessions/solo/herdr.sock; DFLT=/Users/i/.config/herdr/herdr.sock
-list "$(term term_test "$CWD" 1)" "$(term term_pp "$CWD" 5)"
-PPD="29990101T000000011-ppd.md"; PPS="29990101T000000012-pps.md"
-ppentry2() { # <socket> <dst name>: 同じ pane id w5:p1 の返事を、socket だけ変えて server の history に置く
-  local d="$TMP/pp-${2%.md}" n
-  pp w5:p1 HERDR_SOCKET_PATH="$1" RMX_STATE_DIR="$d" python3 "$HOOK" < "$FIX"
-  n="$(field "$d/latest.json" name)"
-  cp "$d/history/$n" "$STATE/history/$2"
-  python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); d["name"]=sys.argv[3]; json.dump(d,open(sys.argv[2],"w"),ensure_ascii=False)' "$d/history/${n%.md}.json" "$STATE/history/${2%.md}.json" "$2"
-}
-ppentry2 "$DFLT" "$PPD"; ppentry2 "$SOLO" "$PPS"
-check "named session hook: meta に herdr_socket を記録する (既定 / 名前付き)" "$(field "$TMP/pp-${PPD%.md}/latest.json" herdr_socket) $(field "$TMP/pp-${PPS%.md}/latest.json" herdr_socket)" "$DFLT $SOLO"
-check "named session: 同じ pane id (w5:p1) でも既定と名前付きは別 session、既定の key は従来のまま" "$(sessof "$PPD" "$PPS")" "term_pp__w5-p1,term_pp__w5-p1__solo"
-upr "$STATE" '依頼S' HERDR_ENV=1 HERDR_PANE_ID=w5:p1 HERDR_SOCKET_PATH="$SOLO" ORCA_TERMINAL_HANDLE=term_pp CLAUDE_CODE_ENTRYPOINT=cli
-check "named session: 依頼文の state key も session 名つき (既定の w5:p1 の依頼と混ざらない)" "$(ls "$STATE/prompt" | grep '^term_pp__w5-p1' | tr '\n' ' ')" "term_pp__w5-p1__solo.json "
-check "named session: 依頼は名前付きの entry にだけ付く" "$(askof "$PPD") $(askof "$PPS")" "None 依頼S"
-rm -f "$STATE/prompt/term_pp__w5-p1__solo.json"
-# 送信: 名前付き session の pane への送信は名前付きの socket にだけ向く (既定 session の w5:p1 には届かない)
-rm -f "$TMP/hcalls" "$TMP/hsocks" "$TMP/calls" "$TMP/argv"
-check "named session send: 200" "$(post "$GOOD" "$(body "$PPS" 赤S)")" 200
-check "named session send: 全ての herdr 呼び出しが名前付き socket 宛て (既定 socket には 0 回)" "$(sort -u "$TMP/hsocks" | tr '\n' ' ') default=$(grep -c '^default$' "$TMP/hsocks")" "$SOLO  default=0"
-rm -f "$TMP/hcalls" "$TMP/hsocks"
-check "default session send: 既定 session の entry は socket を切り替えずに届く" "$(post "$GOOD" "$(body "$PPD" 赤D)") $(sort -u "$TMP/hsocks" | tr '\n' ' ')" "200 $DFLT "
-# 許可: 名前付き session の perm は名前付きの key で、approve も名前付き socket にだけ
-printf '{"hook_event_name":"PermissionRequest","session_id":"sess-1","tool_name":"Bash","tool_input":{"command":"ls"}}' | HERDR_ENV=1 HERDR_PANE_ID=w5:p1 HERDR_SOCKET_PATH="$SOLO" ORCA_TERMINAL_HANDLE=term_pp CLAUDE_CODE_ENTRYPOINT=cli RMX_STATE_DIR="$STATE" python3 "$PERMHOOK"
-SPID="$(field "$STATE/perm/term_pp__w5-p1__solo.json" id)"
-rm -f "$TMP/hcalls" "$TMP/hsocks" "$TMP/calls"
-check "named session approve: 200 で名前付き socket にだけ 1 を送る" "$(apost "$GOOD" "{\"session\":\"term_pp__w5-p1__solo\",\"id\":\"$SPID\"}") $(sort -u "$TMP/hsocks" | tr '\n' ' ') $(tr '\n' ',' < "$TMP/hcalls")" "200 $SOLO  get w5:p1 ,send-text w5:p1 1,"
-rm -f "$STATE/perm/term_pp__w5-p1__solo.json"
-# 生死: socket ごとの agent list で決める (pane id が同じでも別 session の生死を取り違えない)
-agentlist "$(ag w5:p1 '◑ 既定側')"; printf '{"result":{"agents":[],"type":"agent_list"}}' > "$TMP/hagents.solo"
-check "named session live: 既定にだけ居る w5:p1 → 既定 entry は live、名前付き entry は live=false" "$(fld "$PPD" live) $(fld "$PPS" live)" "True False"
-printf '{"result":{"agents":[%s],"type":"agent_list"}}' "$(ag w5:p1 '✳ 名前付き側')" > "$TMP/hagents.solo"
-agentlist
-check "named session live: 名前付きにだけ居る w5:p1 → 名前付き entry は live で題名は名前付き側、既定 entry は live=false" "$(fld "$PPD" live) $(fld "$PPS" live) $(fld "$PPS" title)" "False True ✳ 名前付き側"
-rm -f "$TMP/hagents" "$TMP/hagents.solo" "$STATE/history/$PPD" "$STATE/history/${PPD%.md}.json" "$STATE/history/$PPS" "$STATE/history/${PPS%.md}.json"
-
 # --- 依頼文: /history の prompt (返事の上) と asking (返事待ちの状態行) ---
 check "/history: 依頼が無ければ asking null" "$(askof "$WITH")" None
 upr "$STATE" '状態行に出す依頼' ORCA_TERMINAL_HANDLE=term_test CLAUDE_CODE_ENTRYPOINT=cli
@@ -1034,61 +992,6 @@ check "new(herdr): 許可リスト外の cwd → 403 で herdr を呼ばない" 
 rm -f "$TMP/hrunning"
 check "new(herdr): herdr server 停止 → Orca の tab に落とす (split は呼ばない)" "$(hnew "{\"cwd\":\"$WTA\",\"near\":\"term_x__w3-pB\"}")" "200 status, orca-called"
 check "new(herdr): 落ちた先の戻りは従来の handle と mode tab" "$(cat "$TMP/body")" '{"handle":"term_new","mode":"tab"}'
-
-# --- herdr だけ (Orca 無し): ORCA_TERMINAL_HANDLE が無くても HERDR_ENV=1 + HERDR_PANE_ID があれば記録・一覧・送信・許可・新規が通る。Orca は呼ばない (RMX_ORCA_BIN = false) ---
-HO="$TMP/herdr-only"
-HOENV=(-u ORCA_TERMINAL_HANDLE HERDR_ENV=1 CLAUDE_CODE_ENTRYPOINT=cli)
-upr "$HO" '依頼H1' "${HOENV[@]}" HERDR_PANE_ID=w7:p1
-env "${HOENV[@]}" HERDR_PANE_ID=w7:p1 RMX_STATE_DIR="$HO" python3 "$HOOK" < "$FIX"
-HON="$(field "$HO/latest.json" name)"
-check "herdr だけ hook: Orca 無しでも pane があれば記録 (terminal は null、herdr_pane は pane)" "$(field "$HO/latest.json" terminal) $(field "$HO/latest.json" herdr_pane)" "null w7:p1"
-check "herdr だけ hook: 依頼文は herdr__<pane> の key で返事に載り、ファイルは消える" "$(field "$HO/history/${HON%.md}.json" prompt) $(pfile "$HO/prompt/herdr__w7-p1.json")" "依頼H1 none"
-upr "$HO" '依頼H2' "${HOENV[@]}" HERDR_PANE_ID=w7:p2
-check "herdr だけ prompt hook: key は herdr__<pane> (session_id の key にしない)" "$(ls "$HO/prompt")" "herdr__w7-p2.json"
-swt "$HO" startup "${HOENV[@]}" HERDR_PANE_ID=w7:p3
-check "herdr だけ session-wait hook: 待機中を herdr__<pane> に置く" "$(ls "$HO/prompt" | tr '\n' ' ')" "herdr__w7-p2.json herdr__w7-p3.json "
-pev "$HO" PermissionRequest Bash '{"command":"ls"}' "${HOENV[@]}" HERDR_PANE_ID=w7:p1
-check "herdr だけ perm hook: 許可待ちを herdr__<pane> に置く (terminal は null)" "$(field "$HO/perm/herdr__w7-p1.json" terminal) $(field "$HO/perm/herdr__w7-p1.json" herdr_pane)" "null w7:p1"
-env -u ORCA_TERMINAL_HANDLE -u HERDR_ENV -u HERDR_PANE_ID CLAUDE_CODE_ENTRYPOINT=cli RMX_STATE_DIR="$TMP/neither" python3 "$HOOK" < "$FIX"
-check "herdr だけ hook: Orca も herdr も無ければ従来どおり記録しない" "$(ls "$TMP/neither/history" 2>/dev/null | wc -l | tr -d ' ')" 0
-# bg session: 映している対話プロセスが herdr だけ (ORCA_TERMINAL_HANDLE 無し) なら、その pane を handle なしで使う
-printf 'claude --resume HERDR_ENV=1 HERDR_PANE_ID=w9:p8 HOME=/x\n' > "$TMP/bgps-4242"
-env -u ORCA_TERMINAL_HANDLE HERDR_ENV=1 HERDR_PANE_ID=w1:daemon RMX_SESSIONS_DIR="$HSESS" RMX_PS_BIN="$BGPS" RMX_STATE_DIR="$TMP/bg-herdr3" python3 "$HOOK" < "$FIX"
-check "herdr だけ hook(bg): 映している対話プロセスの pane (daemon の w1:daemon ではない)" "$(field "$TMP/bg-herdr3/latest.json" herdr_pane) $(field "$TMP/bg-herdr3/latest.json" terminal)" "w9:p8 null"
-
-PORT3="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')"
-B3="http://127.0.0.1:$PORT3"
-RMX_STATE_DIR="$HO" RMX_PORT="$PORT3" RMX_ORCA_BIN=/usr/bin/false RMX_HERDR_BIN="$HERDRSTUB" RMX_WT_TTL_MS=0 RMX_LIVE_TTL_MS=0 RMX_OSASCRIPT_BIN="$OSASTUB" bun run "$SERVER" > "$TMP/server3.log" 2>&1 &
-SRV3=$!
-trap 'kill $SRV $SRV2 $SRV3 2>/dev/null' EXIT
-for _ in $(seq 50); do curl -s -o /dev/null "$B3/history" && break; sleep 0.1; done
-h3() { curl -s -D "$TMP/h3head" "$B3/history"; }
-f3() { h3 | python3 -c "import json,sys; print([e[sys.argv[2]] for e in json.load(sys.stdin) if e['name']==sys.argv[1]][0])" "$1" "$2"; }
-p3() { curl -s -o "$TMP/body" -w '%{http_code}' -X POST -H "Origin: $B3" -H 'content-type: application/json' --data "$2" "$B3/$1"; }
-AKQ="asking-herdr__w7-p2.md"
-agentlist "$(ag w7:p1 '◑ 作業H')" "$(ag w7:p2 '✳ 待ちH')"
-check "herdr だけ /history: 返事の session / terminal / title / live" "$(f3 "$HON" session) $(f3 "$HON" terminal) $(f3 "$HON" title) $(f3 "$HON" live)" "herdr__w7-p1 True ◑ 作業H True"
-check "herdr だけ /history: 生死判定が取れているので x-rmx-live は ok (Orca の list は取れない)" "$(grep -i '^x-rmx-live:' "$TMP/h3head" | cut -d: -f2 | tr -d ' \r')" ok
-check "herdr だけ /history: 返事ゼロの仮 entry も出る (依頼文と pane 付き)" "$(f3 "$AKQ" session) $(f3 "$AKQ" terminal) $(f3 "$AKQ" live)" "herdr__w7-p2 True True"
-agentlist "$(ag w7:p2 '✳ 待ちH')"
-check "herdr だけ /history: herdr から居なくなった pane は live=false" "$(f3 "$HON" live)" "False"
-rm -f "$TMP/hagents"
-check "herdr だけ /history: herdr の list が取れない時は live (fail open)" "$(f3 "$HON" live)" "True"
-rm -f "$TMP/calls" "$TMP/hcalls"
-check "herdr だけ send: terminal が無くても herdr_pane があれば 200" "$(p3 send "$(body "$HON" '赤ペンH')")" 200
-check "herdr だけ send: herdr に pane 宛てで 存在確認 → 本文 → Enter、Orca の switch は呼ばない" "$(tr '\n' ',' < "$TMP/hcalls")[$(calls)]" "get w7:p1 ,send-text w7:p1 赤ペンH,send-keys w7:p1 enter,[]"
-check "herdr だけ send: 返事ゼロの仮 entry にも届く" "$(p3 send "$(body "$AKQ" 初回H)")" 200
-HOPID="$(field "$HO/perm/herdr__w7-p1.json" id)"
-rm -f "$TMP/hcalls"
-check "herdr だけ approve: 正しい id → 200 で 1 だけを pane へ" "$(p3 approve "{\"session\":\"herdr__w7-p1\",\"id\":\"$HOPID\"}") $(tr '\n' ',' < "$TMP/hcalls")" "200 get w7:p1 ,send-text w7:p1 1,"
-# 新規: Orca の worktree list が取れない時は herdr の pane の cwd が許可リスト
-mkpanes "$(hp w7:p1 "$WTA" true '"claude"'),$(hp w7:p2 "$WTA" false),$(hp w7:p3 "$OTHER" false)"
-touch "$TMP/hrunning"
-check "herdr だけ worktrees: Orca が取れない時は herdr の pane の cwd (重複なし)" "$(curl -s "$B3/worktrees" | python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)))')" "$WTA,$OTHER"
-rm -f "$TMP/hcalls"
-check "herdr だけ new: herdr に開いてある cwd → 200、pane を分割して herdr で起動" "$(p3 new "{\"cwd\":\"$WTA\"}") $(cat "$TMP/body")" '200 {"handle":"w9:p9","mode":"herdr"}'
-rm -f "$TMP/hcalls"
-check "herdr だけ new: herdr に無い cwd → 403、herdr を呼ばない" "$(p3 new '{"cwd":"/Users/i/elsewhere"}') [$(cat "$TMP/hcalls" 2>/dev/null)]" "403 []"
 
 echo "checked $N cases ($FAIL failed)"
 [ "$FAIL" -eq 0 ]

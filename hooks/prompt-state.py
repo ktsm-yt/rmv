@@ -35,14 +35,14 @@ def main():
     if not isinstance(prompt, str) or not prompt.strip() or any(m in prompt for m in AUTO_MARKERS):
         return
     frag = fragment()
-    handle, herdr_pane, herdr_socket = frag.terminal_ids(data.get("session_id"))
-    key = frag.session_key(handle, herdr_pane, data.get("session_id"), herdr_socket)
+    handle, herdr_pane = frag.terminal_ids(data.get("session_id"))
+    key = frag.session_key(handle, herdr_pane, data.get("session_id"))
     if not key or not frag.is_interactive():
         return
     prompt = re.sub(r"</?pasted_content[^>]*>", "", prompt)  # 貼り付けの目印タグ (id 付き) は表示に要らない
     rec = {"prompt": prompt.strip()[:PROMPT_MAX], "ts": datetime.now().astimezone().isoformat(timespec="seconds"),
            "session_id": data.get("session_id"), "cwd": data.get("cwd"),  # cwd: 返事ゼロの新セッションを server が repo 列に置く用
-           "terminal": handle, "herdr_pane": herdr_pane, "herdr_socket": herdr_socket}  # 同上: 仮 entry の端末・pane を key から割り戻さず記録から読む
+           "terminal": handle, "herdr_pane": herdr_pane}  # 同上: 仮 entry の端末・pane を key から割り戻さず記録から読む
     os.makedirs(PROMPT, exist_ok=True)
     path = os.path.join(PROMPT, key + ".json")
     with open(path + ".tmp", "w", encoding="utf-8") as f:

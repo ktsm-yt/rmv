@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Claude Code hook: 許可ダイアログ (permission prompt) で止まっている間だけ state/perm/<key>.json を置く。
-  PermissionRequest       → 対話 session なら {id, tool, detail, ts, session_id, cwd, terminal, herdr_pane, herdr_socket, agent_id} を書く
+  PermissionRequest       → 対話 session なら {id, tool, detail, ts, session_id, cwd, terminal, herdr_pane, agent_id} を書く
   それ以外 (PostToolUse / PostToolUseFailure / Stop / UserPromptSubmit 等) → そのファイルを消すだけ
                             (UserPromptSubmit 以外は agent_id が記録と同じ時だけ。サブエージェント並走中に
                              別 agent の tool 完了で 3 秒後に消えてボタンが出なかった実害、2026-10-10)
@@ -44,8 +44,8 @@ def summarize(tool, tool_input):
 def main():
     data = json.load(sys.stdin)
     frag = fragment()
-    handle, herdr_pane, herdr_socket = frag.terminal_ids(data.get("session_id"))
-    key = frag.session_key(handle, herdr_pane, data.get("session_id"), herdr_socket)
+    handle, herdr_pane = frag.terminal_ids(data.get("session_id"))
+    key = frag.session_key(handle, herdr_pane, data.get("session_id"))
     if not key:
         return
     path = os.path.join(PERM, key + ".json")
@@ -69,7 +69,7 @@ def main():
     rec = {"id": uuid.uuid4().hex[:8], "tool": tool, "detail": summarize(tool, data.get("tool_input")),
            "ts": datetime.now().astimezone().isoformat(timespec="seconds"),
            "session_id": data.get("session_id"), "cwd": data.get("cwd"), "terminal": handle or None,
-           "herdr_pane": herdr_pane, "herdr_socket": herdr_socket, "agent_id": data.get("agent_id")}
+           "herdr_pane": herdr_pane, "agent_id": data.get("agent_id")}
     os.makedirs(PERM, exist_ok=True)
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
