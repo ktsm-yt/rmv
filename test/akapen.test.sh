@@ -227,10 +227,13 @@ cat > "$HERDRSTUB" <<EOF
 #!/usr/bin/env bash
 # agent list は一覧用の読み取り: $TMP/hagents の中身を返す (無ければ失敗 = herdr の list が取れない)。hcalls には記録しない
 if [ "\$1 \$2" = "agent list" ]; then cat "$TMP/hagents" 2>/dev/null || exit 1; exit 0; fi
+# pane list も同じ読み取り: $TMP/hpanes の中身 (cwd 付きの pane 一覧、/new の分割元選びに使う)
+if [ "\$1 \$2" = "pane list" ]; then cat "$TMP/hpanes" 2>/dev/null || exit 1; exit 0; fi
 # status server: $TMP/hrunning があれば動作中 (無ければ停止中)。pane split は新 pane w9:p9 を返す (どちらも hcalls に記録する)
 if [ "\$1" = status ]; then echo "status" >> "$TMP/hcalls"; [ -e "$TMP/hrunning" ] && echo '{"status":"running","running":true}' || echo '{"status":"stopped","running":false}'; exit 0; fi
 echo "\$2 \$3 \${*:4}" >> "$TMP/hcalls"
 if [ "\$2" = split ]; then echo '{"result":{"pane":{"pane_id":"w9:p9"},"type":"pane_info"}}'; exit 0; fi
+if [ "\$1 \$2" = "workspace create" ]; then echo '{"result":{"workspace":{"workspace_id":"w8"},"root_pane":{"pane_id":"w8:p1"}}}'; exit 0; fi
 [ -e "$TMP/hgone" ] && { echo '{"error":{"code":"pane_not_found","message":"pane not found"}}'; exit 1; }
 if [ "\$2" = get ]; then if [ -e "$TMP/hshell" ]; then echo '{"result":{"pane":{"pane_id":"x"}}}'; else echo '{"result":{"pane":{"pane_id":"x","agent":"claude"}}}'; fi; exit 0; fi
 if [ "\$2" = read ]; then n=\$(grep -c '^send-keys .*ctrl+v' "$TMP/hcalls"); [ -e "$TMP/hnoimg" ] && n=0; for ((i = 1; i <= n; i++)); do echo "> [Image #\$i]"; done; exit 0; fi
@@ -871,18 +874,28 @@ console.log(["dead", "alive", "gone"].map(pin).join(","));
 TS
 check "page: 終了した端末への送り先固定は外れ、生きている端末への固定は残る (,alive,gone)" "$(bun run "$TMP/chatpin.ts" "$A/index.html" 2>&1)" ",alive,gone"
 
-# --- /new は herdr が動いていれば pane を下に分割 (near の pane → focused の pane)。止まっていれば Orca (RMX_NEW_MODE 未設定 = tab) ---
-printf '{"result":{"agents":[{"agent":"claude","pane_id":"w3:p1","focused":false,"cwd":"/x","terminal_title":"a"},{"agent":"claude","pane_id":"w3:pB","focused":true,"cwd":"/x","terminal_title":"b"}]}}' > "$TMP/hagents"
+# --- /new は herdr が動いていれば、選んだ cwd と同じフォルダの pane を下に分割 (near → focused → 先頭)。同じフォルダの pane が無ければ workspace を新設。止まっていれば Orca (RMX_NEW_MODE 未設定 = tab) ---
+mkpanes() { printf '{"result":{"panes":[%s]}}' "$1" > "$TMP/hpanes"; }
+hp() { printf '{"pane_id":"%s","cwd":"%s","focused":%s,"agent":%s}' "$1" "$2" "$3" "${4:-null}"; }
+OTHER="/Users/i/elsewhere-other"
+mkpanes "$(hp w3:p1 "$WTA" false '"claude"'),$(hp w3:pB "$WTA" true '"claude"'),$(hp w1:p1 "$OTHER" true)"
 hnew() { rm -f "$TMP/hcalls" "$TMP/newargv"; echo "$(nw "$GOOD" "$1") $(sed -E 's/^(start) rmv-[0-9a-z]+/\1 rmv-N/' "$TMP/hcalls" 2>/dev/null | tr '\n' ',') $([ -e "$TMP/newargv" ] && echo orca-called || echo orca-none)"; }
 touch "$TMP/hrunning"
-check "new(herdr): near の pane (w3:p1) を下に分割し claude を起動、orca は呼ばない" "$(hnew "{\"cwd\":\"$WTA\",\"near\":\"term_x__w3-p1\"}")" "200 status,split w3:p1 --direction down --cwd $WTA --focus,start rmv-N --kind claude --pane w9:p9, orca-none"
+check "new(herdr): near の pane (w3:p1) が同じフォルダ → それを下に分割し claude を起動、orca は呼ばない" "$(hnew "{\"cwd\":\"$WTA\",\"near\":\"term_x__w3-p1\"}")" "200 status,split w3:p1 --direction down --cwd $WTA --focus,start rmv-N --kind claude --pane w9:p9, orca-none"
 check "new(herdr): 戻りは新 pane と mode herdr" "$(cat "$TMP/body")" '{"handle":"w9:p9","mode":"herdr"}'
-check "new(herdr): near 無し → focused の pane (w3:pB) を分割" "$(hnew "{\"cwd\":\"$WTA\"}")" "200 status,split w3:pB --direction down --cwd $WTA --focus,start rmv-N --kind claude --pane w9:p9, orca-none"
-check "new(herdr): near の pane が agent list に居ない → focused の pane" "$(hnew "{\"cwd\":\"$WTA\",\"near\":\"term_x__w3-pZ\"}")" "200 status,split w3:pB --direction down --cwd $WTA --focus,start rmv-N --kind claude --pane w9:p9, orca-none"
+check "new(herdr): near 無し → 同じフォルダの focused の pane (w3:pB)" "$(hnew "{\"cwd\":\"$WTA\"}")" "200 status,split w3:pB --direction down --cwd $WTA --focus,start rmv-N --kind claude --pane w9:p9, orca-none"
+check "new(herdr): near が別フォルダ (w1:p1) → 同じフォルダの pane (w3:pB) を分割、別フォルダの pane は分割しない" "$(hnew "{\"cwd\":\"$WTA\",\"near\":\"term_x__w1-p1\"}")" "200 status,split w3:pB --direction down --cwd $WTA --focus,start rmv-N --kind claude --pane w9:p9, orca-none"
+mkpanes "$(hp w3:p1 "$WTA" false),$(hp w3:p2 "$WTA" false),$(hp w1:p1 "$OTHER" true)"
+check "new(herdr): 同じフォルダの pane に near も focused も無い → 先頭 (素の shell の pane も対象)" "$(hnew "{\"cwd\":\"$WTA\"}")" "200 status,split w3:p1 --direction down --cwd $WTA --focus,start rmv-N --kind claude --pane w9:p9, orca-none"
+mkpanes "$(hp w1:p1 "$OTHER" true)"
+check "new(herdr): 同じフォルダの pane が無い → workspace を新設 (フォルダ名の label) してその root pane で claude を起動" "$(hnew "{\"cwd\":\"$WTA\",\"near\":\"term_x__w1-p1\"}")" "200 status,create --cwd $WTA --label $(basename "$WTA") --focus,start rmv-N --kind claude --pane w8:p1, orca-none"
+check "new(herdr): workspace 新設時の戻りは root pane と mode herdr" "$(cat "$TMP/body")" '{"handle":"w8:p1","mode":"herdr"}'
+touch "$TMP/hfail"
+check "new(herdr): workspace 新設後に起動が失敗 → その workspace を閉じて Orca の tab に落とす" "$(hnew "{\"cwd\":\"$WTA\"}")" "200 status,create --cwd $WTA --label $(basename "$WTA") --focus,start rmv-N --kind claude --pane w8:p1,close w8 , orca-called"
+mkpanes "$(hp w3:p1 "$WTA" true)"
+check "new(herdr): 既存 pane を分割した後に起動が失敗 → その pane だけ閉じて Orca の tab に落とす" "$(hnew "{\"cwd\":\"$WTA\"}")" "200 status,split w3:p1 --direction down --cwd $WTA --focus,start rmv-N --kind claude --pane w9:p9,close w9:p9 , orca-called"
+rm -f "$TMP/hfail"
 check "new(herdr): 許可リスト外の cwd → 403 で herdr を呼ばない" "$(hnew '{"cwd":"/Users/i/elsewhere"}')" "403  orca-none"
-printf '{"result":{"agents":[{"agent":"claude","pane_id":"w3:p1","focused":false}]}}' > "$TMP/hagents"
-check "new(herdr): near も focused も無い → Orca の tab に落とす (split は呼ばない)" "$(hnew "{\"cwd\":\"$WTA\"}")" "200 status, orca-called"
-printf '{"result":{"agents":[{"agent":"claude","pane_id":"w3:pB","focused":true}]}}' > "$TMP/hagents"
 rm -f "$TMP/hrunning"
 check "new(herdr): herdr server 停止 → Orca の tab に落とす (split は呼ばない)" "$(hnew "{\"cwd\":\"$WTA\",\"near\":\"term_x__w3-pB\"}")" "200 status, orca-called"
 check "new(herdr): 落ちた先の戻りは従来の handle と mode tab" "$(cat "$TMP/body")" '{"handle":"term_new","mode":"tab"}'

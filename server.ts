@@ -207,24 +207,35 @@ async function worktrees(): Promise<Response> {
 // cwd は orca worktree list に載っている path と完全一致する時だけ (任意の dir で任意の command を走らせない)。command は RMX_NEW_CMD (既定 claude)。shell は通さない
 const NEW_CMD = process.env.RMX_NEW_CMD || "claude";
 const NEW_MODE = process.env.RMX_NEW_MODE === "split" ? "split" : "tab"; // tab = 新しいタブ (既定) / split = 画面の送り先の端末を分割
-// herdr が動いていれば pane を下に分割して NEW_CMD を起動し、その pane id を返す。分割元 = near の pane (herdr agent list に居れば) → focused の pane。
-// 動いていない・分割元が無い・途中で失敗は null (呼び元が Orca に落とす)。near は `<handle>__<paneKey>` なので paneKey が一致する pane を探す
+// herdr が動いていれば選んだ cwd と同じフォルダの pane を下に分割して NEW_CMD を起動し、その pane id を返す。herdr は「フォルダごとに workspace」で使うので、
+// 別フォルダの pane を分割すると新 pane がそのフォルダの画面の中に入り、選んだフォルダで立ち上がったように見えない (2026-10-13 実機)。
+// 分割元 = pane list (素の shell も含む) のうち cwd 一致 → near の pane → focused → 先頭。一致する pane が無ければ workspace を新設してその root pane を使う。
+// 動いていない・途中で失敗は null (呼び元が Orca に落とす)。near は `<handle>__<paneKey>` なので paneKey が一致する pane を探す
 async function newInHerdr(cwd: string, near: unknown): Promise<string | null> {
+  let workspace: string | null = null; // この呼びで作った workspace (起動に失敗したら閉じる)
   try {
     const st = await herdrRun(["status", "server", "--json"]);
     if (st.code !== 0 || JSON.parse(st.out)?.running !== true) return null;
-    const agents = await herdrAgents(0);
-    if (!agents) return null;
+    const ls = await herdrRun(["pane", "list"]);
+    if (ls.code !== 0) return null;
+    const panes = (JSON.parse(ls.out)?.result?.panes ?? []).filter((p: any) => p?.cwd === cwd && typeof p?.pane_id === "string");
     const nearKey = String(near).split("__")[1];
-    const from = [...agents].find(([id]) => nearKey && paneKey(id) === nearKey) ?? [...agents].find(([, a]) => a.focused);
-    if (!from) return null;
-    const sp = await herdrRun(["pane", "split", from[0], "--direction", "down", "--cwd", cwd, "--focus"]);
-    const pane = sp.code === 0 ? JSON.parse(sp.out)?.result?.pane?.pane_id : null; // pane split は新 pane を .result.pane に返す (herdr --skill)
-    if (typeof pane !== "string" || !HERDR_PANE.test(pane)) return null;
+    const from = panes.find((p: any) => nearKey && paneKey(p.pane_id) === nearKey) ?? panes.find((p: any) => p.focused === true) ?? panes[0];
+    let pane: unknown;
+    if (from) {
+      const sp = await herdrRun(["pane", "split", from.pane_id, "--direction", "down", "--cwd", cwd, "--focus"]);
+      pane = sp.code === 0 ? JSON.parse(sp.out)?.result?.pane?.pane_id : null; // pane split は新 pane を .result.pane に返す (herdr --skill)
+    } else {
+      const ws = await herdrRun(["workspace", "create", "--cwd", cwd, "--label", cwd.split("/").filter(Boolean).pop() ?? cwd, "--focus"]);
+      const res = ws.code === 0 ? JSON.parse(ws.out)?.result : null;
+      pane = res?.root_pane?.pane_id;
+      workspace = typeof res?.workspace?.workspace_id === "string" ? res.workspace.workspace_id : null;
+    }
+    if (typeof pane !== "string" || !HERDR_PANE.test(pane)) { if (workspace) await herdrRun(["workspace", "close", workspace]); return null; }
     // 既定の claude は agent start (起動完了まで待ち、agent list に名前付きで載る)。他の command は shell にそのまま打つ
     const r = await herdrRun(NEW_CMD === "claude" ? ["agent", "start", `rmv-${Date.now().toString(36)}`, "--kind", "claude", "--pane", pane] : ["pane", "run", pane, NEW_CMD]);
     if (r.code === 0) return pane;
-    await herdrRun(["pane", "close", pane]); // 起動に失敗した空の pane を残さない (呼び元が Orca で開き直すので二重になる)
+    await herdrRun(workspace ? ["workspace", "close", workspace] : ["pane", "close", pane]); // 起動に失敗した空の pane / workspace を残さない (呼び元が Orca で開き直すので二重になる)
     return null;
   } catch { return null; }
 }
@@ -294,16 +305,15 @@ async function liveTerminals(maxAge: number): Promise<Term[] | null> {
 }
 
 // herdr の Claude が居る pane: `herdr agent list` の pane_id → {title: terminal_title (先頭の ◑ / ✳ が作業中 / 入力待ち)}。取れない (herdr 無し / exit 非 0 / JSON 不正) 時は null。memo は liveTerminals と同じ
-type HerdrAgent = { title: string; focused: boolean };
-let herdrCache: { at: number; agents: Map<string, HerdrAgent> | null } | null = null;
-async function herdrAgents(maxAge: number): Promise<Map<string, HerdrAgent> | null> {
+let herdrCache: { at: number; agents: Map<string, { title: string }> | null } | null = null;
+async function herdrAgents(maxAge: number): Promise<Map<string, { title: string }> | null> {
   if (herdrCache && Date.now() - herdrCache.at < maxAge) return herdrCache.agents;
-  let agents: Map<string, HerdrAgent> | null = null;
+  let agents: Map<string, { title: string }> | null = null;
   try {
     const p = Bun.spawn([HERDR, "agent", "list"], { stdout: "pipe", stderr: "ignore" });
     const [out, code] = await Promise.all([new Response(p.stdout).text(), p.exited]);
     const list = code === 0 ? JSON.parse(out)?.result?.agents : null;
-    if (Array.isArray(list)) agents = new Map(list.filter((a) => a?.agent === "claude" && typeof a?.pane_id === "string").map((a) => [a.pane_id, { title: String(a.terminal_title ?? ""), focused: a.focused === true }]));
+    if (Array.isArray(list)) agents = new Map(list.filter((a) => a?.agent === "claude" && typeof a?.pane_id === "string").map((a) => [a.pane_id, { title: String(a.terminal_title ?? "") }]));
   } catch {}
   herdrCache = { at: Date.now(), agents };
   return agents;
