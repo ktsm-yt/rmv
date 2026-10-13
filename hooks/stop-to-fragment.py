@@ -2,7 +2,7 @@
 """Claude Code Stop hook: 最後の assistant text を rmv/state/ に書く。
   latest.html  返事の markdown 生 (変換はブラウザ側 index.html)
   latest.json  {cwd, session_id, ts, name, terminal, herdr_pane}: どのセッションの返事か。
-               terminal = Orca 端末の ORCA_TERMINAL_HANDLE (赤ペンの送り先、Orca 外なら null。bg session は terminal_handle が映している端末に直す)
+               terminal = Orca 端末の ORCA_TERMINAL_HANDLE (赤ペンの送り先、Orca 外なら null。herdr だけなら herdr_pane が送り先。bg session は terminal_handle が映している端末に直す)
                herdr_pane = herdr 配下 (HERDR_ENV=1) の HERDR_PANE_ID。ある時、赤ペンは Orca でなくこの pane へ直接届く (terminal は herdr 全体で共有され pane を区別できない)
   history/<ts>-<session_id 先頭 8>.md (+ 同名 .json に同じメタ)。直近 KEEP 件だけ残す
 SubagentStop でも同じ script を配線する: meta に agent {type, id} を足し、history にだけ書く
@@ -126,11 +126,11 @@ def terminal_ids(session_id):
         # 相手が claude の時だけ使う: 消え残った sessions/<pid>.json の pid が素のシェルに再利用されていると、赤ペンの文がコマンドとして走る
         ok = p.returncode == 0 and re.match(r"\S*claude", p.stdout.lstrip())
         m = re.search(r"(?:^|\s)ORCA_TERMINAL_HANDLE=(\S+)", p.stdout) if ok else None
-        if not m:
-            return env
         # pane も相手の env から取る (daemon の env の pane は別の Claude のもの)。相手が herdr 配下でなければ None
-        pane = re.search(r"(?:^|\s)HERDR_PANE_ID=(\S+)", p.stdout) if re.search(r"(?:^|\s)HERDR_ENV=1(?:\s|$)", p.stdout) else None
-        return (m.group(1), pane.group(1) if pane else None)
+        pane = re.search(r"(?:^|\s)HERDR_PANE_ID=(\S+)", p.stdout) if ok and re.search(r"(?:^|\s)HERDR_ENV=1(?:\s|$)", p.stdout) else None
+        if not m and not pane:  # Orca も herdr も無い相手は env のまま。herdr だけ (Orca 無し) の相手は handle なしの pane として使う
+            return env
+        return (m.group(1) if m else None, pane.group(1) if pane else None)
     except Exception:
         return env
 
@@ -147,9 +147,10 @@ def terminal_handle(session_id):
 def session_key(handle, pane, session_id):
     """返事・依頼文・許可待ちの state ファイル名 = server の item.session (sessionKey in server.ts と同じ式。片方だけ直さない)。
     herdr 配下の pane は Orca 端末 handle を共有するので、pane があれば `<handle>__<pane>` にして pane ごとに分ける。
+    Orca 無し (handle なし) の herdr だけの環境は handle の代わりに固定の "herdr" を置く (`herdr__<pane>`)。
     pane の ":" は "-" にし、残りの記号は捨てる (state ファイル名・URL・dataset に安全な [A-Za-z0-9_-] だけ。handle に "__" は現れない)。"""
-    key = re.sub(r"[^A-Za-z0-9_-]", "", handle or str(session_id or ""))
-    if handle and pane:
+    key = re.sub(r"[^A-Za-z0-9_-]", "", handle or ("herdr" if pane else str(session_id or "")))
+    if pane:
         key += "__" + re.sub(r"[^A-Za-z0-9_-]", "", str(pane).replace(":", "-"))
     return key
 
@@ -180,8 +181,8 @@ def main():
         if sub:  # worker は一時 worktree (<repo>/.harness-worktrees/<id>) で動く。返事は親の repo に寄せる (別 project として並ばないように)
             cwd = re.sub(r"/\.(harness-)?worktrees/.*$", "", cwd)
         terminal, herdr_pane = terminal_ids(sid)
-        if terminal is None:
-            return  # Orca 外 (返信先の端末が無い) セッションは記録しない
+        if terminal is None and not herdr_pane:
+            return  # Orca 外かつ herdr 外 (返信先の端末が無い) セッションは記録しない
         meta = {"cwd": cwd, "session_id": sid, "ts": now.isoformat(timespec="seconds"), "name": name,
                 "terminal": terminal, "herdr_pane": herdr_pane}
         if sub:

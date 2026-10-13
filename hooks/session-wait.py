@@ -46,8 +46,8 @@ def main():
     frag = fragment()
     handle, herdr_pane = frag.terminal_ids(data.get("session_id"))
     key = frag.session_key(handle, herdr_pane, data.get("session_id"))
-    if not handle or not key or not frag.is_interactive():
-        return  # Orca 外 (送り先の端末が無い) は一覧に出せても送れないので置かない
+    if not (handle or herdr_pane) or not key or not frag.is_interactive():
+        return  # Orca 外かつ herdr 外 (送り先の端末が無い) は一覧に出せても送れないので置かない
     rec = {"prompt": "", "waiting": True, "ts": datetime.now().astimezone().isoformat(timespec="seconds"),
            "session_id": data.get("session_id"), "cwd": data.get("cwd"), "terminal": handle, "herdr_pane": herdr_pane}
     os.makedirs(PROMPT, exist_ok=True)
