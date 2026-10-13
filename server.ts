@@ -424,11 +424,11 @@ async function checkHerdrPane(pane: string): Promise<Response | null> {
     return new Response(`herdr spawn failed: ${e}`, { status: 502 });
   }
 }
-// orca の terminal send に流している制御文字 (Enter / Ctrl+V / 入力欄クリア) は herdr では send-keys のキー名で送る。それ以外は literal text
+// orca の terminal send に流している制御文字 (Enter / Ctrl+V / 入力欄クリア) は herdr では send-keys のキー名で送る。それ以外は literal text。send-text に `--` は付けない: herdr は `--` も本文として送り、`-h` 始まりの文も flag にせず届く (2026-10-13 実測)
 const HERDR_KEYS: Record<string, string[]> = { "\r": ["enter"], "\x16": ["ctrl+v"], "\x15\x7f": ["ctrl+u", "backspace"] };
 function herdrSend(pane: string, t: string): ReturnType<typeof herdrRun> {
   const keys = HERDR_KEYS[t];
-  return herdrRun(keys ? ["pane", "send-keys", pane, ...keys] : ["pane", "send-text", pane, "--", t]);
+  return herdrRun(keys ? ["pane", "send-keys", pane, ...keys] : ["pane", "send-text", pane, t]);
 }
 
 // Origin 必須 + 一致: 無いと任意の web ページが fetch POST で端末にキー入力を流し込める (CSRF)。
