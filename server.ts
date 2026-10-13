@@ -37,19 +37,19 @@ async function readAsking(session: string, lastReplyTs: number): Promise<{ promp
   return typeof p?.prompt === "string" && Date.now() - t < (waiting ? WAIT_TTL : PERM_TTL) && !(t < lastReplyTs) ? { prompt: p.prompt, ts: p.ts, ...(waiting && { waiting: true as const }) } : null;
 }
 // 一覧のまとめ目印 (item.session) = state/perm・state/prompt のファイル名。hooks/stop-to-fragment.py の session_key と同じ式 (片方だけ直さない)。
-// herdr 配下の pane は Orca 端末 handle を共有するので、pane があれば `<handle>__<pane>` (":" は "-"、他の記号は捨てる) にして pane ごとに分ける。pane 無しは従来の handle || session_id
+// herdr 配下の pane は Orca 端末 handle を共有するので、pane があれば `<handle>__<pane>` (":" は "-"、他の記号は捨てる) にして pane ごとに分ける。Orca 無し (terminal なし) の herdr だけの環境は handle の代わりに "herdr"。pane 無しは従来の handle || session_id
 const paneKey = (pane: string) => pane.replace(/:/g, "-").replace(/[^A-Za-z0-9_-]/g, "");
 function sessionKey(meta: { terminal?: unknown; session_id?: unknown; herdr_pane?: unknown }): string {
-  const handle = String(meta.terminal || meta.session_id || "");
-  const pane = meta.terminal && typeof meta.herdr_pane === "string" ? paneKey(meta.herdr_pane) : "";
+  const pane = typeof meta.herdr_pane === "string" && meta.herdr_pane ? paneKey(meta.herdr_pane) : "";
+  const handle = String(meta.terminal || (pane ? "herdr" : meta.session_id || ""));
   return pane ? `${handle}__${pane}` : handle;
 }
 const NAME = /^[\w.-]+\.md$/; // [\w.-] のみ: "/" を含まないので state/history の外は読めない
 const TEXT = { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" };
 
-// herdr 配下の pane (hook が記録した herdr_pane)。Orca 外 (terminal 無し) では pane を持たない
-function herdrPaneOf(meta: { terminal?: unknown; herdr_pane?: unknown }): string | null {
-  return meta.terminal && typeof meta.herdr_pane === "string" && meta.herdr_pane ? meta.herdr_pane : null;
+// herdr 配下の pane (hook が記録した herdr_pane)。Orca 無し (terminal 無し) の herdr だけの環境でも pane は持つ
+function herdrPaneOf(meta: { herdr_pane?: unknown }): string | null {
+  return typeof meta.herdr_pane === "string" && meta.herdr_pane ? meta.herdr_pane : null;
 }
 // pane 付き entry の見え方。title / lastOutputAt は Orca の端末 (herdr 全体で共有) でなく herdr の pane から取る。herdr に居ない pane は alive=false。
 // herdr の list が取れない時 (agents null) は従来どおり Orca の値・alive=true。herdr agent list に出力時刻は無いので lastOutputAt は null (共有端末の別 pane の時刻を出さない)
@@ -87,7 +87,7 @@ async function history(repo: string | null): Promise<Response> {
       const perm = perms.get(session);
       const pane = herdrPaneOf(meta);
       const shown = paneView(pane, agents, byHandle.get(meta.terminal));
-      return { name, prompt: typeof meta.prompt === "string" ? meta.prompt : null, ts: meta.ts ?? null, cwd, root, repo: root.split("/").filter(Boolean).pop() ?? "", head: body.replace(/\s+/g, " ").trim().slice(0, 40), terminal: Boolean(meta.terminal), live: shown.herdr ? shown.alive : (terms ? Boolean(meta.terminal) && handles.has(meta.terminal) : true) && shown.alive, session, perm: perm ? { id: perm.id, tool: perm.tool, detail: perm.detail, ts: perm.ts } : null, agent: meta.agent ?? null, title: shown.title, lastOutputAt: shown.lastOutputAt };
+      return { name, prompt: typeof meta.prompt === "string" ? meta.prompt : null, ts: meta.ts ?? null, cwd, root, repo: root.split("/").filter(Boolean).pop() ?? "", head: body.replace(/\s+/g, " ").trim().slice(0, 40), terminal: Boolean(meta.terminal) || pane !== null, live: shown.herdr ? shown.alive : (pane !== null && !meta.terminal ? true : terms ? Boolean(meta.terminal) && handles.has(meta.terminal) : true) && shown.alive, session, perm: perm ? { id: perm.id, tool: perm.tool, detail: perm.detail, ts: perm.ts } : null, agent: meta.agent ?? null, title: shown.title, lastOutputAt: shown.lastOutputAt };
     }),
   );
   // 1 つの端末で順に別の repo を開くと、端末が生きている限り昔の repo まで live になる (2026-09-29 実機: 1 端末で 4 repo)。
@@ -113,16 +113,16 @@ async function history(repo: string | null): Promise<Response> {
     const handle = isTerm ? session.split("__")[0] : "";
     // 端末・pane は記録から読み、ファイル名 (session) と合わなければ出さない (pane を取り違えた entry を作らない)
     const pane = herdrPaneOf({ terminal: p?.terminal, herdr_pane: p?.herdr_pane });
-    if (p?.terminal ? sessionKey(p) !== session : session.includes("__")) continue;
+    if (p?.terminal || pane ? sessionKey(p) !== session : session.includes("__")) continue;
     const shown = paneView(pane, agents, byHandle.get(handle));
     const wt = isTerm ? byHandle.get(handle)?.worktreePath : undefined;
     const root = typeof wt === "string" && wt ? wt : cwd;
     asking.set(session, a);
-    items.unshift({ name: `asking-${session}.md`, prompt: null, ts: a.ts, cwd, root, repo: root.split("/").filter(Boolean).pop() ?? "", head: "", terminal: isTerm, live: shown.herdr ? shown.alive : (terms ? isTerm && handles.has(handle) : true) && shown.alive, session, perm: null, agent: null, title: shown.title, lastOutputAt: shown.lastOutputAt });
+    items.unshift({ name: `asking-${session}.md`, prompt: null, ts: a.ts, cwd, root, repo: root.split("/").filter(Boolean).pop() ?? "", head: "", terminal: isTerm || pane !== null, live: shown.herdr ? shown.alive : (pane !== null && !isTerm ? true : terms ? isTerm && handles.has(handle) : true) && shown.alive, session, perm: null, agent: null, title: shown.title, lastOutputAt: shown.lastOutputAt });
   }
   const out = items.map(({ root, ...e }) => ({ ...e, asking: asking.get(e.session) ?? null }));
   const want = repo?.toLowerCase();
-  return Response.json(want ? out.filter((e) => e.repo.toLowerCase() === want) : out, { headers: { "cache-control": "no-store", "x-rmx-live": terms ? "ok" : "unknown" } });
+  return Response.json(want ? out.filter((e) => e.repo.toLowerCase() === want) : out, { headers: { "cache-control": "no-store", "x-rmx-live": terms || agents ? "ok" : "unknown" } });
 }
 
 // GET /file?p=<絶対パス>: 返事に出た絶対パス (スクショ・動画・生成 html 等) を viewer にそのまま出す口。
@@ -187,6 +187,7 @@ async function open(req: Request): Promise<Response> {
 }
 
 // orca の worktree path 一覧 (GET /worktrees の元、POST /new の許可リスト)。取れない時は null。60 秒 memo (terminal list と同じ方式)
+// Orca が取れない (無い) 時だけ herdr の pane の cwd 一覧で代える: 今 herdr に開いてあるフォルダだけを許可リストに入れる (Orca がある環境の一覧は変えない)
 const WT_TTL = Number(process.env.RMX_WT_TTL_MS ?? 60000); // env はテストでキャッシュを切る用
 let wtCache: { at: number; paths: string[] | null } | null = null;
 async function worktreePaths(): Promise<string[] | null> {
@@ -198,8 +199,16 @@ async function worktreePaths(): Promise<string[] | null> {
     const list = code === 0 ? JSON.parse(out)?.result?.worktrees : null;
     if (Array.isArray(list)) paths = list.map((w) => w?.path).filter((x): x is string => typeof x === "string" && x.startsWith("/"));
   } catch {}
+  if (!paths) paths = await herdrCwds();
   wtCache = { at: Date.now(), paths };
   return paths;
+}
+async function herdrCwds(): Promise<string[] | null> {
+  try {
+    const r = await herdrRun(["pane", "list"]);
+    const panes = r.code === 0 ? JSON.parse(r.out)?.result?.panes : null;
+    return Array.isArray(panes) ? [...new Set<string>(panes.map((p) => p?.cwd).filter((x): x is string => typeof x === "string" && x.startsWith("/")))] : null;
+  } catch { return null; }
 }
 async function worktrees(): Promise<Response> {
   const paths = await worktreePaths();
@@ -551,12 +560,12 @@ async function send(req: Request): Promise<Response> {
   // asking-<session>.md (返事ゼロの仮 entry、待機中の最初の依頼の送り先) は history に meta が無いので、state/prompt の記録 (terminal・herdr_pane・cwd 付き) を meta に使う
   const meta = await Bun.file(name.startsWith("asking-") ? `${PROMPT}/${name.slice(7, -3)}.json` : `${HIST}/${name.slice(0, -3)}.json`).json().catch(() => null);
   if (!meta) return new Response("not found", { status: 404 });
-  if (typeof meta.terminal !== "string" || !meta.terminal) return new Response("entry has no terminal", { status: 409 });
-  const pane: string | null = typeof meta.herdr_pane === "string" && meta.herdr_pane ? meta.herdr_pane : null;
+  const pane = herdrPaneOf(meta);
+  if (!pane && (typeof meta.terminal !== "string" || !meta.terminal)) return new Response("entry has no terminal", { status: 409 });
   if (pane) { const bad = await checkHerdrPane(pane); if (bad) return bad; }
-  // herdr pane がある時、orca の端末は焦点を戻す先 (herdr を載せている Orca タブ) としてだけ使う
-  const handle = pane ? meta.terminal : await resolveTerminal(meta);
-  if (!handle) return new Response(`terminal closed: 元の端末は閉じられ、同じフォルダ (${meta.cwd ?? ""}) の端末も無い`, { status: 409 });
+  // herdr pane がある時、orca の端末は焦点を戻す先 (herdr を載せている Orca タブ) としてだけ使う。Orca 無しの herdr だけの entry は handle なし (焦点は動かさない)
+  const handle = pane ? meta.terminal || null : await resolveTerminal(meta);
+  if (!pane && !handle) return new Response(`terminal closed: 元の端末は閉じられ、同じフォルダ (${meta.cwd ?? ""}) の端末も無い`, { status: 409 });
   // 本文と Enter を分けて送る: `--enter` は Claude 端末だと「turn が始まったか」を最大 8 秒観察してから戻る
   // (2026-09-29 実測: --enter 8.2s / 本文 + "\r" 別送り 0.4s、--wait-submit では変わらない)。複数行は生送りでも 1 メッセージで届く
   const typed = async (t: string) => {
@@ -632,7 +641,7 @@ async function send(req: Request): Promise<Response> {
     if (code === 0) ({ out, err, code } = await typed("\r"));
     if (code !== 0) return new Response(`${pane ? "herdr" : "orca"} exit ${code}: ${err.trim() || out.trim()}`, { status: 502 });
     // herdr 内で特定 pane を選ぶ CLI は無い (pane focus は方向指定のみ): Orca のタブを前に出すところまで
-    if (focus) await focusTerminal(handle);
+    if (focus && handle) await focusTerminal(handle);
     return new Response(out || "{}", { headers: { "content-type": "application/json; charset=utf-8" } });
   } catch (e) {
     return new Response(`orca spawn failed: ${e}`, { status: 502 });
@@ -648,7 +657,7 @@ async function approve(req: Request): Promise<Response> {
   const session = typeof body?.session === "string" ? body.session : "";
   if (!/^[\w-]+$/.test(session)) return new Response("bad session", { status: 400 });
   const perm = await readPerm(session);
-  if (!perm || perm.id !== body?.id || !perm.terminal) return new Response("許可待ちはもう無い", { status: 409 });
+  if (!perm || perm.id !== body?.id || (!perm.terminal && !perm.herdr_pane)) return new Response("許可待ちはもう無い", { status: 409 });
   // ファイル名 (session) と中身の端末・pane が食い違う perm には送らない (旧 hook が pane を区別せずに書いた分など)
   if (sessionKey(perm) !== session) return new Response("許可待ちの送り先が一致しない", { status: 409 });
   if (typeof perm.herdr_pane === "string" && perm.herdr_pane) { // herdr 配下は pane に直接 (送り方は send と同じ)
