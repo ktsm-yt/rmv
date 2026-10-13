@@ -7,7 +7,7 @@
   history/<ts>-<session_id 先頭 8>.md (+ 同名 .json に同じメタ)。直近 KEEP 件だけ残す
 SubagentStop でも同じ script を配線する: meta に agent {type, id} を足し、history にだけ書く
   (latest.* は本体の返事を subagent の報告で上書きしないため触らない)。本文は先頭 AGENT_MAX 字まで。
-本体の返事には、prompt-state.py (UserPromptSubmit) が置いた依頼文 state/prompt/<key>.json を meta.prompt として載せ、そのファイルを消す。
+本体の返事には、prompt-state.py (UserPromptSubmit) が置いた依頼文 state/prompt/<key>.json (key は session_key: herdr の pane ごと) を meta.prompt として載せ、そのファイルを消す。
 stdout には何も出さない (hook 出力は user 画面に出る)。exit 0 固定。
 """
 import json
@@ -144,6 +144,16 @@ def terminal_handle(session_id):
     return terminal_ids(session_id)[0]
 
 
+def session_key(handle, pane, session_id):
+    """返事・依頼文・許可待ちの state ファイル名 = server の item.session (sessionKey in server.ts と同じ式。片方だけ直さない)。
+    herdr 配下の pane は Orca 端末 handle を共有するので、pane があれば `<handle>__<pane>` にして pane ごとに分ける。
+    pane の ":" は "-" にし、残りの記号は捨てる (state ファイル名・URL・dataset に安全な [A-Za-z0-9_-] だけ。handle に "__" は現れない)。"""
+    key = re.sub(r"[^A-Za-z0-9_-]", "", handle or str(session_id or ""))
+    if handle and pane:
+        key += "__" + re.sub(r"[^A-Za-z0-9_-]", "", str(pane).replace(":", "-"))
+    return key
+
+
 def main():
     if not is_interactive():
         return  # 他の hook / script が起動した claude -p の返事は viewer に載せない
@@ -177,7 +187,7 @@ def main():
         if sub:
             meta["agent"] = {"type": data.get("agent_type"), "id": data.get("agent_id")}
         else:  # 本体の返事には prompt-state.py が置いた依頼文を載せて、ファイルは消す
-            pf = os.path.join(STATE, "prompt", re.sub(r"[^A-Za-z0-9_-]", "", meta["terminal"] or sid) + ".json")
+            pf = os.path.join(STATE, "prompt", session_key(terminal, herdr_pane, sid) + ".json")
             try:
                 with open(pf, encoding="utf-8") as f:
                     meta["prompt"] = json.load(f).get("prompt")

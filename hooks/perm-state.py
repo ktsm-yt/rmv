@@ -5,7 +5,7 @@
                             (UserPromptSubmit 以外は agent_id が記録と同じ時だけ。サブエージェント並走中に
                              別 agent の tool 完了で 3 秒後に消えてボタンが出なかった実害、2026-10-10)
                             (毎ツール呼び出しで走るので is_interactive は呼ばない。ps は bg session の key 解決だけ)
-key = 端末 handle (stop-to-fragment.py の terminal_handle)、無ければ session_id (stop-to-fragment.py の meta.terminal || session_id = server の item.session と同じ集合)。
+key = stop-to-fragment.py の session_key (端末 handle、herdr 配下なら handle + pane。無ければ session_id。server の item.session と同じ集合)。
 server の /history が perm を各 entry に付け、/approve が id を照合して端末へ "1" を送る。
 stdout には何も出さない (hook 出力は user 画面に出る)。exit 0 固定。
 """
@@ -45,7 +45,7 @@ def main():
     data = json.load(sys.stdin)
     frag = fragment()
     handle, herdr_pane = frag.terminal_ids(data.get("session_id"))
-    key = re.sub(r"[^A-Za-z0-9_-]", "", handle or str(data.get("session_id") or ""))
+    key = frag.session_key(handle, herdr_pane, data.get("session_id"))
     if not key:
         return
     path = os.path.join(PERM, key + ".json")

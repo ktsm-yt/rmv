@@ -225,6 +225,8 @@ chmod +x "$TMP/pbpaste-stub" "$TMP/pbcopy-stub"
 HERDRSTUB="$TMP/herdr-stub"
 cat > "$HERDRSTUB" <<EOF
 #!/usr/bin/env bash
+# agent list は一覧用の読み取り: $TMP/hagents の中身を返す (無ければ失敗 = herdr の list が取れない)。hcalls には記録しない
+if [ "\$1" = agent ]; then cat "$TMP/hagents" 2>/dev/null || exit 1; exit 0; fi
 echo "\$2 \$3 \${*:4}" >> "$TMP/hcalls"
 [ -e "$TMP/hgone" ] && { echo '{"error":{"code":"pane_not_found","message":"pane not found"}}'; exit 1; }
 if [ "\$2" = get ]; then if [ -e "$TMP/hshell" ]; then echo '{"result":{"pane":{"pane_id":"x"}}}'; else echo '{"result":{"pane":{"pane_id":"x","agent":"claude"}}}'; fi; exit 0; fi
@@ -662,7 +664,7 @@ check "herdr hook: HERDR_ENV=1 + HERDR_PANE_ID → meta に herdr_pane (terminal
 HERDR_PANE_ID=w3:p2 ORCA_TERMINAL_HANDLE=term_hd RMX_STATE_DIR="$TMP/herdr-noenv" python3 "$HOOK" < "$FIX"
 check "herdr hook: HERDR_ENV が無ければ herdr_pane は null (従来どおり)" "$(field "$TMP/herdr-noenv/latest.json" herdr_pane)" null
 printf '{"hook_event_name":"PermissionRequest","session_id":"sess-1","tool_name":"Bash","tool_input":{"command":"ls"}}' | HERDR_ENV=1 HERDR_PANE_ID=w3:p2 ORCA_TERMINAL_HANDLE=term_hd CLAUDE_CODE_ENTRYPOINT=cli RMX_STATE_DIR="$HDIR" python3 "$PERMHOOK"
-check "herdr hook(perm): perm にも herdr_pane" "$(field "$HDIR/perm/term_hd.json" herdr_pane)" w3:p2
+check "herdr hook(perm): perm にも herdr_pane" "$(field "$HDIR/perm/term_hd__w3-p2.json" herdr_pane)" w3:p2
 # bg session: pane も映している対話プロセスの env から取る (daemon の env の pane は別の Claude のもの)
 HSESS="$TMP/sess-herdr"; mkdir -p "$HSESS"; printf '%s' "$BG" > "$HSESS/1.json"; printf '%s' "$PANE" > "$HSESS/2.json"  # (sess() はこの時点で別物に差し替わっている)
 printf 'claude --resume HERDR_ENV=1 HERDR_PANE_ID=w9:p9 ORCA_TERMINAL_HANDLE=term_pane HOME=/x\n' > "$TMP/bgps-4242"
@@ -709,19 +711,91 @@ rm -f "$TMP/hfail"
 rm -f "$TMP/calls" "$TMP/argv" "$TMP/hcalls"
 check "herdr 回帰: herdr_pane の無い entry → orca に届き herdr は呼ばれない" "$(post "$GOOD" "$(body "$WITH" x)") $(calls) $([ -e "$TMP/hcalls" ] && echo herdr-called || echo herdr-none)" "200 terminal send term_test,terminal send term_test,terminal switch term_test, herdr-none"
 # approve
-HPID="$(field "$HDIR/perm/term_hd.json" id)"
-cp "$HDIR/perm/term_hd.json" "$STATE/perm/term_hd.json"
+HPID="$(field "$HDIR/perm/term_hd__w3-p2.json" id)"
+cp "$HDIR/perm/term_hd__w3-p2.json" "$STATE/perm/term_hd__w3-p2.json"
 rm -f "$TMP/calls" "$TMP/hcalls"
-check "herdr approve: 正しい id → 200" "$(apost "$GOOD" "{\"session\":\"term_hd\",\"id\":\"$HPID\"}")" 200
+check "herdr approve: 正しい id → 200" "$(apost "$GOOD" "{\"session\":\"term_hd__w3-p2\",\"id\":\"$HPID\"}")" 200
 check "herdr approve: 1 だけを pane へ (Enter 無し)、orca は呼ばない" "$(tr '\n' ',' < "$TMP/hcalls")[$(calls)]" "get w3:p2 ,send-text w3:p2 1,[]"
 touch "$TMP/hgone"
-check "herdr approve: pane が閉じている → 409、orca へ fallback しない" "$(apost "$GOOD" "{\"session\":\"term_hd\",\"id\":\"$HPID\"}") [$(calls)]" "409 []"
+check "herdr approve: pane が閉じている → 409、orca へ fallback しない" "$(apost "$GOOD" "{\"session\":\"term_hd__w3-p2\",\"id\":\"$HPID\"}") [$(calls)]" "409 []"
 rm -f "$TMP/hgone"; touch "$TMP/hfail"
-check "herdr approve: herdr の送信失敗 → 502" "$(apost "$GOOD" "{\"session\":\"term_hd\",\"id\":\"$HPID\"}")" 502
-rm -f "$TMP/hfail" "$STATE/perm/term_hd.json" "$STATE/history/$HNAME" "$STATE/history/${HNAME%.md}.json"
+check "herdr approve: herdr の送信失敗 → 502" "$(apost "$GOOD" "{\"session\":\"term_hd__w3-p2\",\"id\":\"$HPID\"}")" 502
+rm -f "$TMP/hfail" "$STATE/perm/term_hd__w3-p2.json" "$STATE/history/$HNAME" "$STATE/history/${HNAME%.md}.json"
+
+# --- herdr: 同じ Orca 端末の別 pane は別 session (まとめ目印・許可待ち・依頼文を pane 単位に) ---
+hist() { curl -s "$BASE/history"; }
+askof() { hist | python3 -c "import json,sys; a=[e['asking'] for e in json.load(sys.stdin) if e['name']==sys.argv[1]][0]; print(None if a is None else a['prompt'])" "$1"; }
+rm -f "$TMP/ps-list"  # ps が取れない = (b) の orca の端末一覧だけで live 判定
+sessof() { hist | python3 -c "import json,sys; print(','.join(sorted(e['session'] for e in json.load(sys.stdin) if e['name'] in sys.argv[1:])))" "$@"; }
+fld() { hist | python3 -c "import json,sys; print([e[sys.argv[2]] for e in json.load(sys.stdin) if e['name']==sys.argv[1]][0])" "$1" "$2"; }
+pp() { env HERDR_ENV=1 HERDR_PANE_ID="$1" ORCA_TERMINAL_HANDLE=term_pp CLAUDE_CODE_ENTRYPOINT=cli "${@:2}"; }
+list "$(term term_test "$CWD" 1)" "$(term term_pp "$CWD" 5)"
+# 依頼文: key は pane ごと。返事ゼロの仮 entry も pane ごとに出て、それぞれ自分の依頼を持つ
+upr "$STATE" '依頼A' HERDR_ENV=1 HERDR_PANE_ID=w5:p1 ORCA_TERMINAL_HANDLE=term_pp CLAUDE_CODE_ENTRYPOINT=cli
+upr "$STATE" '依頼B' HERDR_ENV=1 HERDR_PANE_ID=w5:p2 ORCA_TERMINAL_HANDLE=term_pp CLAUDE_CODE_ENTRYPOINT=cli
+check "herdr prompt hook: 依頼文の key は pane ごと (同じ端末でも別ファイル)" "$(ls "$STATE/prompt" | grep '^term_pp' | tr '\n' ' ')" "term_pp__w5-p1.json term_pp__w5-p2.json "
+check "herdr asking: 返事ゼロの仮 entry は pane ごとに別 session で出る" "$(sessof asking-term_pp__w5-p1.md asking-term_pp__w5-p2.md)" "term_pp__w5-p1,term_pp__w5-p2"
+check "herdr asking: 仮 entry はそれぞれ自分の依頼 (pane をまたいで混ざらない)" "$(askof asking-term_pp__w5-p1.md) $(askof asking-term_pp__w5-p2.md)" "依頼A 依頼B"
+check "herdr asking: 仮 entry の本文 (/history/asking-…) も pane ごと" "$(curl -s "$BASE/history/asking-term_pp__w5-p2.md" | tail -1)" "依頼B"
+rm -f "$STATE/prompt/term_pp__w5-p1.json" "$STATE/prompt/term_pp__w5-p2.json"
+# 返事: 同じ端末・別 pane の 2 entry
+PPA="29990101T000000001-ppa.md"; PPB="29990101T000000002-ppb.md"
+ppentry() { # <pane> <dst name>: hook が書いた返事を、名前を付け替えて server の history に置く
+  local d="$TMP/pp-${2%.md}" n
+  pp "$1" RMX_STATE_DIR="$d" python3 "$HOOK" < "$FIX"
+  n="$(field "$d/latest.json" name)"
+  cp "$d/history/$n" "$STATE/history/$2"
+  python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); d["name"]=sys.argv[3]; json.dump(d,open(sys.argv[2],"w"),ensure_ascii=False)' "$d/history/${n%.md}.json" "$STATE/history/${2%.md}.json" "$2"
+}
+ppentry w5:p1 "$PPA"; ppentry w5:p2 "$PPB"
+check "herdr session: 同じ terminal・別 pane の 2 entry は別 session" "$(sessof "$PPA" "$PPB")" "term_pp__w5-p1,term_pp__w5-p2"
+check "herdr session: pane 無し entry は従来どおり terminal のまま (回帰)" "$(sessof "$WITH")" "term_test"
+# asking: 返事の後に A だけ依頼を出す → A の entry にだけ付く
+upr "$STATE" '依頼A2' HERDR_ENV=1 HERDR_PANE_ID=w5:p1 ORCA_TERMINAL_HANDLE=term_pp CLAUDE_CODE_ENTRYPOINT=cli
+check "herdr asking: pane A の依頼は A の entry にだけ付き、B には付かない" "$(askof "$PPA") $(askof "$PPB")" "依頼A2 None"
+# 返事が届くと、その pane の依頼だけが meta.prompt に載り消える (別 pane の依頼は触らない)
+upr "$STATE" '依頼B2' HERDR_ENV=1 HERDR_PANE_ID=w5:p2 ORCA_TERMINAL_HANDLE=term_pp CLAUDE_CODE_ENTRYPOINT=cli
+pp w5:p2 RMX_STATE_DIR="$STATE" python3 "$HOOK" < "$FIX"
+BREPLY="$(field "$STATE/latest.json" name)"
+check "herdr asking: B の返事は B の依頼を載せ、A の依頼ファイルは残る" "$(field "$STATE/history/${BREPLY%.md}.json" prompt) $(pfile "$STATE/prompt/term_pp__w5-p2.json") $(pfile "$STATE/prompt/term_pp__w5-p1.json")" "依頼B2 none written"
+rm -f "$STATE/prompt/term_pp__w5-p1.json" "$STATE/history/$BREPLY" "$STATE/history/${BREPLY%.md}.json"
+# 許可待ち: 同じ端末の 2 pane が同時でも両方出る
+printf '{"hook_event_name":"PermissionRequest","session_id":"sess-a","tool_name":"Bash","tool_input":{"command":"cmd-A"}}' | pp w5:p1 RMX_STATE_DIR="$STATE" python3 "$PERMHOOK"
+printf '{"hook_event_name":"PermissionRequest","session_id":"sess-b","tool_name":"Bash","tool_input":{"command":"cmd-B"}}' | pp w5:p2 RMX_STATE_DIR="$STATE" python3 "$PERMHOOK"
+check "herdr perm hook: 許可待ちの key も pane ごと" "$(ls "$STATE/perm" | grep '^term_pp' | tr '\n' ' ')" "term_pp__w5-p1.json term_pp__w5-p2.json "
+PIDA="$(field "$STATE/perm/term_pp__w5-p1.json" id)"; PIDB="$(field "$STATE/perm/term_pp__w5-p2.json" id)"
+check "herdr perm: 2 pane 同時の許可待ちが両方 /history に出る (それぞれ自分の detail)" "$(permof "$PPA") $(permof "$PPB")" "('$PIDA', 'Bash', 'cmd-A') ('$PIDB', 'Bash', 'cmd-B')"
+rm -f "$TMP/calls" "$TMP/hcalls"
+check "herdr approve: A の id は A の session で通る" "$(apost "$GOOD" "{\"session\":\"term_pp__w5-p1\",\"id\":\"$PIDA\"}")" 200
+check "herdr approve: A の許可は w5:p1 にだけ届く (B の pane には送らない)" "$(tr '\n' ',' < "$TMP/hcalls")[$(calls)]" "get w5:p1 ,send-text w5:p1 1,[]"
+rm -f "$TMP/hcalls"
+check "herdr approve: B の id は B の session で通る" "$(apost "$GOOD" "{\"session\":\"term_pp__w5-p2\",\"id\":\"$PIDB\"}")" 200
+check "herdr approve: B の許可は w5:p2 にだけ届く" "$(tr '\n' ',' < "$TMP/hcalls")" "get w5:p2 ,send-text w5:p2 1,"
+rm -f "$TMP/hcalls"
+check "herdr approve: 他 pane の id を使うと 409 で何も送らない" "$(apost "$GOOD" "{\"session\":\"term_pp__w5-p1\",\"id\":\"$PIDB\"}") $(cat "$TMP/hcalls" 2>/dev/null | grep -c 'send-')" "409 0"
+check "herdr approve: pane を含まない session (端末だけ) では pane 付き perm に届かない → 409" "$(apost "$GOOD" "{\"session\":\"term_pp\",\"id\":\"$PIDA\"}") $(cat "$TMP/hcalls" 2>/dev/null | grep -c 'send-')" "409 0"
+# 食い違った perm (ファイル名の pane と中身の pane が違う) には送らない
+python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["herdr_pane"]="w5:p9"; json.dump(d,open(p,"w"))' "$STATE/perm/term_pp__w5-p1.json"
+check "herdr approve: ファイル名と中身の pane が食い違う perm → 409、何も送らない" "$(apost "$GOOD" "{\"session\":\"term_pp__w5-p1\",\"id\":\"$PIDA\"}") $(cat "$TMP/hcalls" 2>/dev/null | grep -c 'send-')" "409 0"
+# 別 pane のイベントでは消えない (消す規則は pane 単位の key でも保たれる)
+printf '{"hook_event_name":"PostToolUse","session_id":"sess-b","tool_name":"Bash"}' | pp w5:p2 RMX_STATE_DIR="$STATE" python3 "$PERMHOOK"
+check "herdr perm hook: pane B の PostToolUse は B の perm だけ消し、A の perm は残る" "$(pfile "$STATE/perm/term_pp__w5-p2.json") $(pfile "$STATE/perm/term_pp__w5-p1.json")" "none written"
+rm -f "$STATE/perm/term_pp__w5-p1.json"
+# 題名・live: herdr の pane から取る
+agentlist() { printf '{"result":{"agents":[%s],"type":"agent_list"}}' "$(IFS=,; echo "$*")" > "$TMP/hagents"; }
+ag() { printf '{"agent":"claude","pane_id":"%s","terminal_title":"%s"}' "$1" "$2"; }
+agentlist "$(ag w5:p1 '◑ 作業A')" "$(ag w5:p2 '✳ 待ちB')"
+check "herdr title: pane 付き entry の題名は herdr の pane から (Orca の共有端末の題名ではない)" "$(fld "$PPA" title) $(fld "$PPB" title)" "◑ 作業A ✳ 待ちB"
+check "herdr title: herdr に出力時刻は無いので共有端末の lastOutputAt は載せない" "$(fld "$PPA" lastOutputAt)" None
+check "herdr live: herdr に居る pane は live" "$(fld "$PPA" live) $(fld "$PPB" live)" "True True"
+agentlist "$(ag w5:p1 '◑ 作業A')"
+check "herdr live: herdr に居なくなった pane は live=false (同じ端末の別 pane は live のまま)" "$(fld "$PPA" live) $(fld "$PPB" live)" "True False"
+rm -f "$TMP/hagents"
+check "herdr title: herdr の list が取れない時は従来どおり Orca の値・live" "$(fld "$PPA" live) $(fld "$PPA" lastOutputAt)" "True 5"
+rm -f "$STATE/history/$PPA" "$STATE/history/${PPA%.md}.json" "$STATE/history/$PPB" "$STATE/history/${PPB%.md}.json"
+list "$(term term_test "$CWD" 1)"
 
 # --- 依頼文: /history の prompt (返事の上) と asking (返事待ちの状態行) ---
-askof() { curl -s "$BASE/history" | python3 -c "import json,sys; a=[e['asking'] for e in json.load(sys.stdin) if e['name']==sys.argv[1]][0]; print(None if a is None else a['prompt'])" "$1"; }
 check "/history: 依頼が無ければ asking null" "$(askof "$WITH")" None
 upr "$STATE" '状態行に出す依頼' ORCA_TERMINAL_HANDLE=term_test CLAUDE_CODE_ENTRYPOINT=cli
 check "/history: 返事前の依頼は、その端末の entry に asking で付く" "$(askof "$WITH")" "状態行に出す依頼"

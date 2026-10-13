@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Claude Code UserPromptSubmit hook: 送った依頼文を state/prompt/<key>.json に置く ({prompt, ts, session_id})。
-key = 端末 handle (stop-to-fragment.py の terminal_handle)、無ければ session_id (perm-state.py / stop-to-fragment.py と同じ集合)。
+key = stop-to-fragment.py の session_key (端末 handle、herdr 配下なら handle + pane。無ければ session_id。perm-state.py / stop-to-fragment.py と同じ集合)。
   stop-to-fragment.py が返事を保存する時にこれを読んで meta.prompt に移し、ファイルを消す (返事が来た = 未返答でなくなる)
   server の /history は残っている間を「未返答の依頼」として状態行に出す
 記録しないもの: 自動通知 (<task-notification> / <system-reminder> / [SYSTEM NOTIFICATION / <agent-message (subagent の hand-back) を含む prompt。UserPromptSubmit は
@@ -35,12 +35,14 @@ def main():
     if not isinstance(prompt, str) or not prompt.strip() or any(m in prompt for m in AUTO_MARKERS):
         return
     frag = fragment()
-    key = re.sub(r"[^A-Za-z0-9_-]", "", frag.terminal_handle(data.get("session_id")) or str(data.get("session_id") or ""))
+    handle, herdr_pane = frag.terminal_ids(data.get("session_id"))
+    key = frag.session_key(handle, herdr_pane, data.get("session_id"))
     if not key or not frag.is_interactive():
         return
     prompt = re.sub(r"</?pasted_content[^>]*>", "", prompt)  # 貼り付けの目印タグ (id 付き) は表示に要らない
     rec = {"prompt": prompt.strip()[:PROMPT_MAX], "ts": datetime.now().astimezone().isoformat(timespec="seconds"),
-           "session_id": data.get("session_id"), "cwd": data.get("cwd")}  # cwd: 返事ゼロの新セッションを server が repo 列に置く用
+           "session_id": data.get("session_id"), "cwd": data.get("cwd"),  # cwd: 返事ゼロの新セッションを server が repo 列に置く用
+           "terminal": handle, "herdr_pane": herdr_pane}  # 同上: 仮 entry の端末・pane を key から割り戻さず記録から読む
     os.makedirs(PROMPT, exist_ok=True)
     path = os.path.join(PROMPT, key + ".json")
     with open(path + ".tmp", "w", encoding="utf-8") as f:
