@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Claude Code Stop hook: 最後の assistant text を rmv/state/ に書く。
   latest.html  返事の markdown 生 (変換はブラウザ側 index.html)
-  latest.json  {cwd, session_id, ts, name, terminal, herdr_pane}: どのセッションの返事か。
+  latest.json  {cwd, session_id, ts, name, terminal, herdr_pane, herdr_socket}: どのセッションの返事か。
                terminal = Orca 端末の ORCA_TERMINAL_HANDLE (赤ペンの送り先、Orca 外なら null。herdr だけなら herdr_pane が送り先。bg session は terminal_handle が映している端末に直す)
                herdr_pane = herdr 配下 (HERDR_ENV=1) の HERDR_PANE_ID。ある時、赤ペンは Orca でなくこの pane へ直接届く (terminal は herdr 全体で共有され pane を区別できない)
+               herdr_socket = その pane の HERDR_SOCKET_PATH (名前付き session は session ごとに別。herdr CLI をこの socket に向けて pane を操作する。pane 無しなら null)
   history/<ts>-<session_id 先頭 8>.md (+ 同名 .json に同じメタ)。直近 KEEP 件だけ残す
 SubagentStop でも同じ script を配線する: meta に agent {type, id} を足し、history にだけ書く
   (latest.* は本体の返事を subagent の報告で上書きしないため触らない)。本文は先頭 AGENT_MAX 字まで。
@@ -97,10 +98,11 @@ def is_interactive():
 
 
 def terminal_ids(session_id):
-    """(ORCA_TERMINAL_HANDLE, HERDR_PANE_ID) の組。pane は herdr 配下 (HERDR_ENV=1) の時だけ、無ければ None。"""
+    """(ORCA_TERMINAL_HANDLE, HERDR_PANE_ID, HERDR_SOCKET_PATH) の組。pane と socket は herdr 配下 (HERDR_ENV=1) の時だけ、無ければ None。
+    socket は herdr の session (名前付きは session ごとに別) の見分け: pane id は session ごとに w1:p1 から振られて重なる。"""
     env_handle = os.environ.get("ORCA_TERMINAL_HANDLE")
     env_pane = os.environ.get("HERDR_PANE_ID") if os.environ.get("HERDR_ENV") == "1" else None
-    env = (env_handle, env_pane or None)
+    env = (env_handle, env_pane or None, (os.environ.get("HERDR_SOCKET_PATH") or None) if env_pane else None)
     try:
         d = os.environ.get("RMX_SESSIONS_DIR") or os.path.join(os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude"), "sessions")
         recs = []
@@ -128,9 +130,10 @@ def terminal_ids(session_id):
         m = re.search(r"(?:^|\s)ORCA_TERMINAL_HANDLE=(\S+)", p.stdout) if ok else None
         # pane も相手の env から取る (daemon の env の pane は別の Claude のもの)。相手が herdr 配下でなければ None
         pane = re.search(r"(?:^|\s)HERDR_PANE_ID=(\S+)", p.stdout) if ok and re.search(r"(?:^|\s)HERDR_ENV=1(?:\s|$)", p.stdout) else None
+        sock = re.search(r"(?:^|\s)HERDR_SOCKET_PATH=(\S+)", p.stdout) if pane else None
         if not m and not pane:  # Orca も herdr も無い相手は env のまま。herdr だけ (Orca 無し) の相手は handle なしの pane として使う
             return env
-        return (m.group(1) if m else None, pane.group(1) if pane else None)
+        return (m.group(1) if m else None, pane.group(1) if pane else None, sock.group(1) if sock else None)
     except Exception:
         return env
 
@@ -144,14 +147,23 @@ def terminal_handle(session_id):
     return terminal_ids(session_id)[0]
 
 
-def session_key(handle, pane, session_id):
+def herdr_session_name(sock):
+    """名前付き herdr session (`herdr --session <name>`) の socket = <config>/sessions/<name>/herdr.sock から name を取る。既定 session (herdr.sock 直下) や socket 無しは None。"""
+    m = re.search(r"/sessions/([^/]+)/herdr\.sock$", sock or "")
+    return re.sub(r"[^A-Za-z0-9_-]", "", m.group(1)) or None if m else None
+
+
+def session_key(handle, pane, session_id, sock=None):
     """返事・依頼文・許可待ちの state ファイル名 = server の item.session (sessionKey in server.ts と同じ式。片方だけ直さない)。
     herdr 配下の pane は Orca 端末 handle を共有するので、pane があれば `<handle>__<pane>` にして pane ごとに分ける。
     Orca 無し (handle なし) の herdr だけの環境は handle の代わりに固定の "herdr" を置く (`herdr__<pane>`)。
+    名前付き herdr session の pane は pane id が既定 session と重なるので末尾に `__<session 名>` を足す (既定 session の key は変えない)。
     pane の ":" は "-" にし、残りの記号は捨てる (state ファイル名・URL・dataset に安全な [A-Za-z0-9_-] だけ。handle に "__" は現れない)。"""
     key = re.sub(r"[^A-Za-z0-9_-]", "", handle or ("herdr" if pane else str(session_id or "")))
     if pane:
         key += "__" + re.sub(r"[^A-Za-z0-9_-]", "", str(pane).replace(":", "-"))
+        if herdr_session_name(sock):
+            key += "__" + herdr_session_name(sock)
     return key
 
 
@@ -180,15 +192,15 @@ def main():
         cwd = data.get("cwd") or ""
         if sub:  # worker は一時 worktree (<repo>/.harness-worktrees/<id>) で動く。返事は親の repo に寄せる (別 project として並ばないように)
             cwd = re.sub(r"/\.(harness-)?worktrees/.*$", "", cwd)
-        terminal, herdr_pane = terminal_ids(sid)
+        terminal, herdr_pane, herdr_socket = terminal_ids(sid)
         if terminal is None and not herdr_pane:
             return  # Orca 外かつ herdr 外 (返信先の端末が無い) セッションは記録しない
         meta = {"cwd": cwd, "session_id": sid, "ts": now.isoformat(timespec="seconds"), "name": name,
-                "terminal": terminal, "herdr_pane": herdr_pane}
+                "terminal": terminal, "herdr_pane": herdr_pane, "herdr_socket": herdr_socket}
         if sub:
             meta["agent"] = {"type": data.get("agent_type"), "id": data.get("agent_id")}
         else:  # 本体の返事には prompt-state.py が置いた依頼文を載せて、ファイルは消す
-            pf = os.path.join(STATE, "prompt", session_key(terminal, herdr_pane, sid) + ".json")
+            pf = os.path.join(STATE, "prompt", session_key(terminal, herdr_pane, sid, herdr_socket) + ".json")
             try:
                 with open(pf, encoding="utf-8") as f:
                     rec = json.load(f)
