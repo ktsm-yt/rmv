@@ -13,6 +13,8 @@ PERMHOOK="${RMX_PERM_HOOK:-$A/hooks/perm-state.py}"
 export CLAUDE_CODE_ENTRYPOINT=cli
 # hook は Orca 外 (handle なし) の返事を記録しない。Orca の外から実行しても通るよう既定は handle あり (なしを試す箇所は env -u)
 export ORCA_TERMINAL_HANDLE=term_env
+# herdr 配下から実行しても結果が変わらないよう herdr の env は外す (herdr を試す箇所だけ明示で付ける)
+unset HERDR_ENV HERDR_PANE_ID
 TMP="$(mktemp -d)"
 # hook は Claude Code の sessions/ を読んで bg session の端末を取り直す。本物の ~/.claude/sessions を読まないよう空の場所に向ける
 export RMX_SESSIONS_DIR="$TMP/no-sessions"
@@ -218,7 +220,20 @@ chmod +x "$OSASTUB"
 printf '#!/usr/bin/env bash\ncat "%s/clip"\n' "$TMP" > "$TMP/pbpaste-stub"
 printf '#!/usr/bin/env bash\ncat > "%s/clip"; : > "%s/pbcopied"\n' "$TMP" "$TMP" > "$TMP/pbcopy-stub"
 chmod +x "$TMP/pbpaste-stub" "$TMP/pbcopy-stub"
-GEMINI_API_KEY= RMX_TTS_KEYCHAIN_SERVICE="rmv-test-nonexistent-$$" RMX_PROJECTS_DIR="$TMP/projects" RMX_CC_SETTINGS="$TMP/cc-settings.json" RMX_MONO_FONT="$TMP/mono.ttf" RMX_STATE_DIR="$STATE" RMX_PORT="$PORT" RMX_ORCA_BIN="$STUB" RMX_OSASCRIPT_BIN="$OSASTUB" RMX_PBPASTE_BIN="$TMP/pbpaste-stub" RMX_PBCOPY_BIN="$TMP/pbcopy-stub" RMX_PS_BIN="$PSSTUB" RMX_OPEN_BIN="$TMP/open-stub" RMX_LIVE_TTL_MS=0 RMX_WT_TTL_MS=0 RMX_ORIGINS="https://mac.tailtest.ts.net" bun run "$SERVER" > "$TMP/server.log" 2>&1 &
+# herdr stub: 1 回の呼び出しを "<サブコマンド> <pane> <残り>" の 1 行で $TMP/hcalls に追記。$TMP/hgone があれば pane_not_found で exit 1、$TMP/hshell があれば Claude の居ない pane (agent 無し)、
+#   $TMP/hfail があれば send 系だけ exit 1。pane read は ctrl+v の数だけ [Image #N] を画面に出す ($TMP/hnoimg があれば出さない)
+HERDRSTUB="$TMP/herdr-stub"
+cat > "$HERDRSTUB" <<EOF
+#!/usr/bin/env bash
+echo "\$2 \$3 \${*:4}" >> "$TMP/hcalls"
+[ -e "$TMP/hgone" ] && { echo '{"error":{"code":"pane_not_found","message":"pane not found"}}'; exit 1; }
+if [ "\$2" = get ]; then if [ -e "$TMP/hshell" ]; then echo '{"result":{"pane":{"pane_id":"x"}}}'; else echo '{"result":{"pane":{"pane_id":"x","agent":"claude"}}}'; fi; exit 0; fi
+if [ "\$2" = read ]; then n=\$(grep -c '^send-keys .*ctrl+v' "$TMP/hcalls"); [ -e "$TMP/hnoimg" ] && n=0; for ((i = 1; i <= n; i++)); do echo "> [Image #\$i]"; done; exit 0; fi
+[ -e "$TMP/hfail" ] && { echo "herdr boom" >&2; exit 1; }
+echo '{"result":{"type":"ok"}}'
+EOF
+chmod +x "$HERDRSTUB"
+GEMINI_API_KEY= RMX_TTS_KEYCHAIN_SERVICE="rmv-test-nonexistent-$$" RMX_PROJECTS_DIR="$TMP/projects" RMX_CC_SETTINGS="$TMP/cc-settings.json" RMX_MONO_FONT="$TMP/mono.ttf" RMX_STATE_DIR="$STATE" RMX_PORT="$PORT" RMX_ORCA_BIN="$STUB" RMX_HERDR_BIN="$HERDRSTUB" RMX_OSASCRIPT_BIN="$OSASTUB" RMX_PBPASTE_BIN="$TMP/pbpaste-stub" RMX_PBCOPY_BIN="$TMP/pbcopy-stub" RMX_PS_BIN="$PSSTUB" RMX_OPEN_BIN="$TMP/open-stub" RMX_LIVE_TTL_MS=0 RMX_WT_TTL_MS=0 RMX_ORIGINS="https://mac.tailtest.ts.net" bun run "$SERVER" > "$TMP/server.log" 2>&1 &
 SRV=$!
 trap 'kill $SRV 2>/dev/null' EXIT
 for _ in $(seq 50); do curl -s -o /dev/null "$BASE/history" && break; sleep 0.1; done
@@ -638,6 +653,69 @@ rm -f "$TMP/calls"
 check "approve: 30 分より古い perm → 409" "$(apost "$GOOD" "{\"session\":\"term_test\",\"id\":\"$PID\"}")" 409
 check "approve: TTL 切れでは orca を呼ばない" "$(calls)" ""
 rm -f "$STATE/perm/term_test.json"
+
+# --- herdr 配下: 記録した pane に herdr CLI で直接届く (orca の端末は herdr 全体で共有され、送ると focus 中の別 pane に入る) ---
+HDIR="$TMP/herdr-state"
+HERDR_ENV=1 HERDR_PANE_ID=w3:p2 ORCA_TERMINAL_HANDLE=term_hd RMX_STATE_DIR="$HDIR" python3 "$HOOK" < "$FIX"
+HN="$(field "$HDIR/latest.json" name)"
+check "herdr hook: HERDR_ENV=1 + HERDR_PANE_ID → meta に herdr_pane (terminal も残る)" "$(field "$HDIR/latest.json" herdr_pane) $(field "$HDIR/latest.json" terminal)" "w3:p2 term_hd"
+HERDR_PANE_ID=w3:p2 ORCA_TERMINAL_HANDLE=term_hd RMX_STATE_DIR="$TMP/herdr-noenv" python3 "$HOOK" < "$FIX"
+check "herdr hook: HERDR_ENV が無ければ herdr_pane は null (従来どおり)" "$(field "$TMP/herdr-noenv/latest.json" herdr_pane)" null
+printf '{"hook_event_name":"PermissionRequest","session_id":"sess-1","tool_name":"Bash","tool_input":{"command":"ls"}}' | HERDR_ENV=1 HERDR_PANE_ID=w3:p2 ORCA_TERMINAL_HANDLE=term_hd CLAUDE_CODE_ENTRYPOINT=cli RMX_STATE_DIR="$HDIR" python3 "$PERMHOOK"
+check "herdr hook(perm): perm にも herdr_pane" "$(field "$HDIR/perm/term_hd.json" herdr_pane)" w3:p2
+# bg session: pane も映している対話プロセスの env から取る (daemon の env の pane は別の Claude のもの)
+HSESS="$TMP/sess-herdr"; mkdir -p "$HSESS"; printf '%s' "$BG" > "$HSESS/1.json"; printf '%s' "$PANE" > "$HSESS/2.json"  # (sess() はこの時点で別物に差し替わっている)
+printf 'claude --resume HERDR_ENV=1 HERDR_PANE_ID=w9:p9 ORCA_TERMINAL_HANDLE=term_pane HOME=/x\n' > "$TMP/bgps-4242"
+HERDR_ENV=1 HERDR_PANE_ID=w1:daemon ORCA_TERMINAL_HANDLE=term_daemon RMX_SESSIONS_DIR="$HSESS" RMX_PS_BIN="$BGPS" RMX_STATE_DIR="$TMP/bg-herdr" python3 "$HOOK" < "$FIX"
+check "herdr hook(bg): 映している対話プロセスの pane (daemon の w1:daemon ではない)" "$(field "$TMP/bg-herdr/latest.json" herdr_pane)" w9:p9
+printf 'claude --resume ORCA_TERMINAL_HANDLE=term_pane HOME=/x\n' > "$TMP/bgps-4242"
+HERDR_ENV=1 HERDR_PANE_ID=w1:daemon ORCA_TERMINAL_HANDLE=term_daemon RMX_SESSIONS_DIR="$HSESS" RMX_PS_BIN="$BGPS" RMX_STATE_DIR="$TMP/bg-herdr2" python3 "$HOOK" < "$FIX"
+check "herdr hook(bg): 対話プロセスが herdr 配下でなければ pane は null (daemon の pane を使わない)" "$(field "$TMP/bg-herdr2/latest.json" herdr_pane)" null
+
+# 以降は server の history / perm に herdr_pane 付きを置いて試す
+HNAME="29990101T000000000-herdr.md"
+cp "$HDIR/history/$HN" "$STATE/history/$HNAME"
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); d["name"]=sys.argv[3]; json.dump(d,open(sys.argv[2],"w"),ensure_ascii=False)' "$HDIR/history/${HN%.md}.json" "$STATE/history/${HNAME%.md}.json" "$HNAME"
+rm -f "$TMP/calls" "$TMP/argv" "$TMP/hcalls"
+check "herdr send: herdr_pane 付き entry → 200" "$(post "$GOOD" "$(body "$HNAME" '赤ペン本文')")" 200
+check "herdr send: herdr に pane 宛てで 存在確認 → 本文 → Enter" "$(tr '\n' ',' < "$TMP/hcalls")" "get w3:p2 ,send-text w3:p2 -- 赤ペン本文,send-keys w3:p2 enter,"
+check "herdr send: orca は本文を受け取らない (Orca のタブを前に出す switch だけ)" "$(calls)$([ -e "$TMP/argv" ] && echo sent)" "terminal switch term_hd,"
+rm -f "$TMP/calls" "$TMP/hcalls"
+check "herdr send: focus=false → switch も呼ばない" "$(post "$GOOD" "{\"name\":\"$HNAME\",\"text\":\"x\",\"focus\":false}")$(calls)" "200"
+rm -f "$TMP/hcalls"
+post "$GOOD" "{\"name\":\"$HNAME\",\"text\":\"1\",\"reset\":true,\"focus\":false}" > /dev/null
+check "herdr send: reset → ctrl+u backspace を先に送る" "$(grep -v '^get ' "$TMP/hcalls" | tr '\n' ',')" "send-keys w3:p2 ctrl+u backspace,send-text w3:p2 -- 1,send-keys w3:p2 enter,"
+# 画像: ctrl+v で貼り、pane read の [Image #N] が増えるのを待つ
+mkdir -p "$STATE/paste"; printf '\x89PNG' > "$STATE/paste/1700000000000-deadbeef.png"
+rm -f "$TMP/hcalls" "$TMP/calls"
+check "herdr send: 画像 → 200" "$(post "$GOOD" "{\"name\":\"$HNAME\",\"images\":[\"$STATE/paste/1700000000000-deadbeef.png\"],\"text\":\"画像\",\"focus\":false}")" 200
+check "herdr send: 画像は ctrl+v で貼り pane read で数える (read は貼る前と貼った後の 2 回)" "$(grep -c '^send-keys .*ctrl+v' "$TMP/hcalls") $(grep -c '^read ' "$TMP/hcalls")" "1 2"
+check "herdr send(画像): orca は呼ばない" "$(calls)" ""
+touch "$TMP/hnoimg"; rm -f "$TMP/hcalls"
+check "herdr send: 画像が画面に出ない → 502 で本文は送らない" "$(post "$GOOD" "{\"name\":\"$HNAME\",\"images\":[\"$STATE/paste/1700000000000-deadbeef.png\"],\"text\":\"画像\",\"focus\":false}") $(grep -c 'send-text' "$TMP/hcalls")" "502 0"
+rm -f "$TMP/hnoimg" "$TMP/calls"
+# 誤送信防止: pane が無い / Claude が居ない / herdr 失敗では何も送らず、orca にも fallback しない
+touch "$TMP/hgone"; rm -f "$TMP/hcalls"
+check "herdr send: pane が閉じている → 409、何も送らず orca にも fallback しない" "$(post "$GOOD" "$(body "$HNAME" x)") $(grep -c 'send-' "$TMP/hcalls") [$(calls)]" "409 0 []"
+rm -f "$TMP/hgone"; touch "$TMP/hshell"; rm -f "$TMP/hcalls"
+check "herdr send: pane に Claude が居ない (素のシェル) → 409、何も送らない" "$(post "$GOOD" "$(body "$HNAME" x)") $(grep -c 'send-' "$TMP/hcalls") [$(calls)]" "409 0 []"
+rm -f "$TMP/hshell"; touch "$TMP/hfail"
+check "herdr send: herdr の送信失敗 → 502、orca にも fallback しない" "$(post "$GOOD" "$(body "$HNAME" x)") [$(calls)]" "502 []"
+rm -f "$TMP/hfail"
+# herdr_pane の無い entry は従来どおり orca (回帰)
+rm -f "$TMP/calls" "$TMP/argv" "$TMP/hcalls"
+check "herdr 回帰: herdr_pane の無い entry → orca に届き herdr は呼ばれない" "$(post "$GOOD" "$(body "$WITH" x)") $(calls) $([ -e "$TMP/hcalls" ] && echo herdr-called || echo herdr-none)" "200 terminal send term_test,terminal send term_test,terminal switch term_test, herdr-none"
+# approve
+HPID="$(field "$HDIR/perm/term_hd.json" id)"
+cp "$HDIR/perm/term_hd.json" "$STATE/perm/term_hd.json"
+rm -f "$TMP/calls" "$TMP/hcalls"
+check "herdr approve: 正しい id → 200" "$(apost "$GOOD" "{\"session\":\"term_hd\",\"id\":\"$HPID\"}")" 200
+check "herdr approve: 1 だけを pane へ (Enter 無し)、orca は呼ばない" "$(tr '\n' ',' < "$TMP/hcalls")[$(calls)]" "get w3:p2 ,send-text w3:p2 -- 1,[]"
+touch "$TMP/hgone"
+check "herdr approve: pane が閉じている → 409、orca へ fallback しない" "$(apost "$GOOD" "{\"session\":\"term_hd\",\"id\":\"$HPID\"}") [$(calls)]" "409 []"
+rm -f "$TMP/hgone"; touch "$TMP/hfail"
+check "herdr approve: herdr の送信失敗 → 502" "$(apost "$GOOD" "{\"session\":\"term_hd\",\"id\":\"$HPID\"}")" 502
+rm -f "$TMP/hfail" "$STATE/perm/term_hd.json" "$STATE/history/$HNAME" "$STATE/history/${HNAME%.md}.json"
 
 # --- 依頼文: /history の prompt (返事の上) と asking (返事待ちの状態行) ---
 askof() { curl -s "$BASE/history" | python3 -c "import json,sys; a=[e['asking'] for e in json.load(sys.stdin) if e['name']==sys.argv[1]][0]; print(None if a is None else a['prompt'])" "$1"; }

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Claude Code Stop hook: 最後の assistant text を rmv/state/ に書く。
   latest.html  返事の markdown 生 (変換はブラウザ側 index.html)
-  latest.json  {cwd, session_id, ts, name, terminal}: どのセッションの返事か。
+  latest.json  {cwd, session_id, ts, name, terminal, herdr_pane}: どのセッションの返事か。
                terminal = Orca 端末の ORCA_TERMINAL_HANDLE (赤ペンの送り先、Orca 外なら null。bg session は terminal_handle が映している端末に直す)
+               herdr_pane = herdr 配下 (HERDR_ENV=1) の HERDR_PANE_ID。ある時、赤ペンは Orca でなくこの pane へ直接届く (terminal は herdr 全体で共有され pane を区別できない)
   history/<ts>-<session_id 先頭 8>.md (+ 同名 .json に同じメタ)。直近 KEEP 件だけ残す
 SubagentStop でも同じ script を配線する: meta に agent {type, id} を足し、history にだけ書く
   (latest.* は本体の返事を subagent の報告で上書きしないため触らない)。本文は先頭 AGENT_MAX 字まで。
@@ -95,13 +96,11 @@ def is_interactive():
     return not os.environ.get("CLAUDE_CODE_ENTRYPOINT", "").startswith("sdk")
 
 
-def terminal_handle(session_id):
-    """返事・依頼文・許可待ちの key になる端末 handle (prompt-state.py / perm-state.py もこれを読み込んで使う)。
-    普段は env の ORCA_TERMINAL_HANDLE。bg session (daemon の fork) は daemon を起こした端末 (閉じていることが多い) の値を継ぐので、
-    その job を画面に映している対話プロセスの env から取り直す。手がかりは sessions/<pid>.json (2.1.288 実測):
-      bg 側 {sessionId, kind: "bg", jobId} / 映している対話側 {pid, kind: "interactive", parkedJobId: jobId}
-    Claude Code の非公開形式なので、読めない・形が違う・相手が死んでいる時は env の値のまま (修正前と同じ結果)。"""
-    env = os.environ.get("ORCA_TERMINAL_HANDLE")
+def terminal_ids(session_id):
+    """(ORCA_TERMINAL_HANDLE, HERDR_PANE_ID) の組。pane は herdr 配下 (HERDR_ENV=1) の時だけ、無ければ None。"""
+    env_handle = os.environ.get("ORCA_TERMINAL_HANDLE")
+    env_pane = os.environ.get("HERDR_PANE_ID") if os.environ.get("HERDR_ENV") == "1" else None
+    env = (env_handle, env_pane or None)
     try:
         d = os.environ.get("RMX_SESSIONS_DIR") or os.path.join(os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude"), "sessions")
         recs = []
@@ -127,9 +126,22 @@ def terminal_handle(session_id):
         # 相手が claude の時だけ使う: 消え残った sessions/<pid>.json の pid が素のシェルに再利用されていると、赤ペンの文がコマンドとして走る
         ok = p.returncode == 0 and re.match(r"\S*claude", p.stdout.lstrip())
         m = re.search(r"(?:^|\s)ORCA_TERMINAL_HANDLE=(\S+)", p.stdout) if ok else None
-        return m.group(1) if m else env
+        if not m:
+            return env
+        # pane も相手の env から取る (daemon の env の pane は別の Claude のもの)。相手が herdr 配下でなければ None
+        pane = re.search(r"(?:^|\s)HERDR_PANE_ID=(\S+)", p.stdout) if re.search(r"(?:^|\s)HERDR_ENV=1(?:\s|$)", p.stdout) else None
+        return (m.group(1), pane.group(1) if pane else None)
     except Exception:
         return env
+
+
+def terminal_handle(session_id):
+    """返事・依頼文・許可待ちの key になる端末 handle (prompt-state.py / perm-state.py もこれを読み込んで使う)。
+    普段は env の ORCA_TERMINAL_HANDLE。bg session (daemon の fork) は daemon を起こした端末 (閉じていることが多い) の値を継ぐので、
+    その job を画面に映している対話プロセスの env から取り直す。手がかりは sessions/<pid>.json (2.1.288 実測):
+      bg 側 {sessionId, kind: "bg", jobId} / 映している対話側 {pid, kind: "interactive", parkedJobId: jobId}
+    Claude Code の非公開形式なので、読めない・形が違う・相手が死んでいる時は env の値のまま (修正前と同じ結果)。"""
+    return terminal_ids(session_id)[0]
 
 
 def main():
@@ -157,11 +169,11 @@ def main():
         cwd = data.get("cwd") or ""
         if sub:  # worker は一時 worktree (<repo>/.harness-worktrees/<id>) で動く。返事は親の repo に寄せる (別 project として並ばないように)
             cwd = re.sub(r"/\.(harness-)?worktrees/.*$", "", cwd)
-        terminal = terminal_handle(sid)
+        terminal, herdr_pane = terminal_ids(sid)
         if terminal is None:
             return  # Orca 外 (返信先の端末が無い) セッションは記録しない
         meta = {"cwd": cwd, "session_id": sid, "ts": now.isoformat(timespec="seconds"), "name": name,
-                "terminal": terminal}
+                "terminal": terminal, "herdr_pane": herdr_pane}
         if sub:
             meta["agent"] = {"type": data.get("agent_type"), "id": data.get("agent_id")}
         else:  # 本体の返事には prompt-state.py が置いた依頼文を載せて、ファイルは消す

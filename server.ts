@@ -8,6 +8,7 @@ const STATE = process.env.RMX_STATE_DIR || `${DIR}/state`; // RMX_STATE_DIR は�
 const FRAGMENT = `${STATE}/latest.html`;
 const HIST = `${STATE}/history`;
 const ORCA = process.env.RMX_ORCA_BIN || "orca"; // env はテストの stub 差し替え用
+const HERDR = process.env.RMX_HERDR_BIN || "herdr"; // 同上 (herdr 配下の Claude へ pane 単位で送る)
 const OSASCRIPT = process.env.RMX_OSASCRIPT_BIN || "osascript"; // 同上
 const PBPASTE = process.env.RMX_PBPASTE_BIN || "pbpaste"; // 同上 (クリップボードの文字の退避と復元)
 const PBCOPY = process.env.RMX_PBCOPY_BIN || "pbcopy";
@@ -19,7 +20,7 @@ const PERM = `${STATE}/perm`; // hooks/perm-state.py が許可待ちの間だけ
 const PERM_TTL = 30 * 60_000; // 強制終了した端末に取り残された perm を無視する
 // Claude Code の許可ダイアログは 1 = Yes。Enter 無しの 1 打で通り、入力欄に 1 は残らない (2.1.285 の WebFetch ダイアログで実機確認、2026-09-30)
 const APPROVE_KEY = "1";
-type Perm = { id: string; tool: string; detail: string; ts: string; terminal?: string | null };
+type Perm = { id: string; tool: string; detail: string; ts: string; terminal?: string | null; herdr_pane?: string | null };
 // 許可待ちの記録を返す。無い・壊れている・TTL 切れは null
 async function readPerm(session: string): Promise<Perm | null> {
   const p = await Bun.file(`${PERM}/${session}.json`).json().catch(() => null);
@@ -402,6 +403,34 @@ async function shrink(path: string) {
   if (edge > MAX_EDGE) await Bun.spawn([SIPS, "-Z", String(MAX_EDGE), path], { stdout: "ignore", stderr: "ignore" }).exited;
 }
 
+// herdr 配下の Claude は ORCA_TERMINAL_HANDLE を herdr 全体で共有するので、orca へ送ると focus 中の pane (別の Claude かもしれない) に入る。
+// hook が記録した herdr_pane があれば herdr CLI で pane に直接送る。orca への fallback はしない (誤送信防止が最優先)
+const HERDR_PANE = /^[A-Za-z0-9][\w:.-]*$/; // 先頭が "-" だと flag に化ける
+async function herdrRun(args: string[]): Promise<{ out: string; err: string; code: number }> {
+  const p = Bun.spawn([HERDR, ...args], { stdout: "pipe", stderr: "pipe" });
+  const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
+  return { out, err, code };
+}
+// 送れる pane か。pane が無い (閉じた / herdr が別の server) → 409、herdr が呼べない・応答が読めない → 502、
+// pane はあるが Claude が居ない (終了して素のシェルが残った: 赤ペンの文がコマンドとして走る) → 409
+async function checkHerdrPane(pane: string): Promise<Response | null> {
+  if (!HERDR_PANE.test(pane)) return new Response("bad herdr pane", { status: 409 });
+  try {
+    const r = await herdrRun(["pane", "get", pane]);
+    if (r.code !== 0) return new Response(`herdr pane gone: ${r.out.trim() || r.err.trim()}`, { status: /pane_not_found/.test(r.out + r.err) ? 409 : 502 });
+    if (JSON.parse(r.out)?.result?.pane?.agent !== "claude") return new Response(`herdr pane ${pane} に Claude が居ない`, { status: 409 });
+    return null;
+  } catch (e) {
+    return new Response(`herdr spawn failed: ${e}`, { status: 502 });
+  }
+}
+// orca の terminal send に流している制御文字 (Enter / Ctrl+V / 入力欄クリア) は herdr では send-keys のキー名で送る。それ以外は literal text
+const HERDR_KEYS: Record<string, string[]> = { "\r": ["enter"], "\x16": ["ctrl+v"], "\x15\x7f": ["ctrl+u", "backspace"] };
+function herdrSend(pane: string, t: string): ReturnType<typeof herdrRun> {
+  const keys = HERDR_KEYS[t];
+  return herdrRun(keys ? ["pane", "send-keys", pane, ...keys] : ["pane", "send-text", pane, "--", t]);
+}
+
 // Origin 必須 + 一致: 無いと任意の web ページが fetch POST で端末にキー入力を流し込める (CSRF)。
 async function send(req: Request): Promise<Response> {
   if (!ORIGINS.has(req.headers.get("origin") ?? "")) return new Response("forbidden origin", { status: 403 });
@@ -419,17 +448,23 @@ async function send(req: Request): Promise<Response> {
   const meta = await Bun.file(`${HIST}/${name.slice(0, -3)}.json`).json().catch(() => null);
   if (!meta) return new Response("not found", { status: 404 });
   if (typeof meta.terminal !== "string" || !meta.terminal) return new Response("entry has no terminal", { status: 409 });
-  const handle = await resolveTerminal(meta);
+  const pane: string | null = typeof meta.herdr_pane === "string" && meta.herdr_pane ? meta.herdr_pane : null;
+  if (pane) { const bad = await checkHerdrPane(pane); if (bad) return bad; }
+  // herdr pane がある時、orca の端末は焦点を戻す先 (herdr を載せている Orca タブ) としてだけ使う
+  const handle = pane ? meta.terminal : await resolveTerminal(meta);
   if (!handle) return new Response(`terminal closed: 元の端末は閉じられ、同じフォルダ (${meta.cwd ?? ""}) の端末も無い`, { status: 409 });
   // 本文と Enter を分けて送る: `--enter` は Claude 端末だと「turn が始まったか」を最大 8 秒観察してから戻る
   // (2026-09-29 実測: --enter 8.2s / 本文 + "\r" 別送り 0.4s、--wait-submit では変わらない)。複数行は生送りでも 1 メッセージで届く
   const typed = async (t: string) => {
+    if (pane) return herdrSend(pane, t);
     const p = Bun.spawn([ORCA, "terminal", "send", "--terminal", handle, "--text", t, "--json"], { stdout: "pipe", stderr: "pipe" });
     const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
     return { out, err, code };
   };
   // 端末の下書き欄にある [Image #N] の数。読めない時は -1
   const drafted = async () => {
+    // herdr には draft フィールドが無い: 画面 (visible) 上の [Image #N] を数える。送信済みの分も数えるが attach は増減だけ見るので足りる
+    if (pane) { const r = await herdrRun(["pane", "read", pane, "--source", "visible"]).catch(() => null); return r && r.code === 0 ? (r.out.match(/\[Image #\d+\]/g) ?? []).length : -1; }
     const p = Bun.spawn([ORCA, "terminal", "read", "--terminal", handle, "--json"], { stdout: "pipe", stderr: "ignore" });
     const [out, code] = await Promise.all([new Response(p.stdout).text(), p.exited]);
     try { return code === 0 ? (String(JSON.parse(out)?.result?.terminal?.draft ?? "").match(/\[Image #\d+\]/g) ?? []).length : -1; } catch { return -1; }
@@ -466,7 +501,7 @@ async function send(req: Request): Promise<Response> {
     const [oerr, ocode] = await Promise.all([new Response(o.stderr).text(), o.exited]);
     if (ocode !== 0) return `osascript exit ${ocode}: ${oerr.trim()}`;
     const v = await typed("\x16");
-    if (v.code !== 0) return `orca exit ${v.code}: ${v.err.trim() || v.out.trim()}`;
+    if (v.code !== 0) return `${pane ? "herdr" : "orca"} exit ${v.code}: ${v.err.trim() || v.out.trim()}`;
     for (const t0 = Date.now(); Date.now() - t0 < 10_000; await Bun.sleep(150)) { // 回数でなく時間で区切る (orca terminal read 自体に時間がかかる)
       if ((await drafted()) > before) return null;
     }
@@ -486,12 +521,13 @@ async function send(req: Request): Promise<Response> {
     // Ctrl+U で文字を消し、Backspace で `!` (シェル入力の状態) を外す。空の欄に送っても何も起きない (実測)。複数行の書きかけは今の行しか消えない
     if (reset) {
       const r = await typed("\x15\x7f");
-      if (r.code !== 0) return new Response(`orca exit ${r.code}: ${r.err.trim() || r.out.trim()}`, { status: 502 });
+      if (r.code !== 0) return new Response(`${pane ? "herdr" : "orca"} exit ${r.code}: ${r.err.trim() || r.out.trim()}`, { status: 502 });
     }
     let { out, err, code } = text ? await typed(text) : { out: "", err: "", code: 0 };
     // orca は失敗理由を stdout の JSON に出し stderr が空のことがある (terminal_not_writable、2026-09-29 実測)
     if (code === 0) ({ out, err, code } = await typed("\r"));
-    if (code !== 0) return new Response(`orca exit ${code}: ${err.trim() || out.trim()}`, { status: 502 });
+    if (code !== 0) return new Response(`${pane ? "herdr" : "orca"} exit ${code}: ${err.trim() || out.trim()}`, { status: 502 });
+    // herdr 内で特定 pane を選ぶ CLI は無い (pane focus は方向指定のみ): Orca のタブを前に出すところまで
     if (focus) await focusTerminal(handle);
     return new Response(out || "{}", { headers: { "content-type": "application/json; charset=utf-8" } });
   } catch (e) {
@@ -509,6 +545,12 @@ async function approve(req: Request): Promise<Response> {
   if (!/^[\w-]+$/.test(session)) return new Response("bad session", { status: 400 });
   const perm = await readPerm(session);
   if (!perm || perm.id !== body?.id || !perm.terminal) return new Response("許可待ちはもう無い", { status: 409 });
+  if (typeof perm.herdr_pane === "string" && perm.herdr_pane) { // herdr 配下は pane に直接 (送り方は send と同じ)
+    const bad = await checkHerdrPane(perm.herdr_pane);
+    if (bad) return bad;
+    const { out, err, code } = await herdrSend(perm.herdr_pane, APPROVE_KEY).catch((e) => ({ out: "", err: String(e), code: -1 }));
+    return code !== 0 ? new Response(`herdr exit ${code}: ${err.trim() || out.trim()}`, { status: 502 }) : new Response(out || "{}", { headers: { "content-type": "application/json; charset=utf-8" } });
+  }
   try {
     const p = Bun.spawn([ORCA, "terminal", "send", "--terminal", perm.terminal, "--text", APPROVE_KEY, "--json"], { stdout: "pipe", stderr: "pipe" });
     const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
