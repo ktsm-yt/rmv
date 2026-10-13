@@ -264,7 +264,6 @@ async function worktrees(): Promise<Response> {
 // POST /new {cwd}: まっさらな Claude Code セッションを起動する。herdr が動いていればその pane 分割 (newInHerdr)、でなければ Orca の新しい端末タブ。
 // cwd は orca worktree list に載っている path と完全一致する時だけ (任意の dir で任意の command を走らせない)。command は RMX_NEW_CMD (既定 claude)。shell は通さない
 const NEW_CMD = process.env.RMX_NEW_CMD || "claude";
-const NEW_MODE = process.env.RMX_NEW_MODE === "split" ? "split" : "tab"; // tab = 新しいタブ (既定) / split = 画面の送り先の端末を分割
 // herdr が動いていれば選んだ cwd と同じフォルダの pane を下に分割して NEW_CMD を起動し、その pane id を返す。herdr は「フォルダごとに workspace」で使うので、
 // 別フォルダの pane を分割すると新 pane がそのフォルダの画面の中に入り、選んだフォルダで立ち上がったように見えない (2026-10-13 実機)。
 // 分割元 = pane list (素の shell も含む) のうち cwd 一致 → near の pane → focused → 先頭。一致する pane が無ければ workspace を新設してその root pane を使う。
@@ -281,16 +280,17 @@ async function paneIsIdleShell(pane: string, sock: string | null): Promise<boole
     return typeof info?.shell_pid === "number" && Array.isArray(fg) && fg.length === 1 && fg[0]?.pid === info.shell_pid;
   } catch { return false; }
 }
-async function newInHerdr(cwd: string, near: unknown): Promise<string | null> {
+// 失敗は理由付きの Error で投げる (呼び元が画面に出す)。Orca の端末へは落ちない (2026-10-13: 無言で Orca に落ちて原因が分からなかった)
+async function newInHerdr(cwd: string, near: unknown): Promise<string> {
   let workspace: string | null = null; // この呼びで作った workspace (起動に失敗したら閉じる)
-  try {
+  {
     // near が名前付き session なら、その session の socket で分割する (見つからなければ near の pane は使わず既定 session)
     const nearSock = typeof near === "string" ? await socketOfSession(near) : null;
     if (typeof near === "string" && near.split("__").length >= 3 && !nearSock) near = null;
     const st = await herdrRun(["status", "server", "--json"], nearSock);
-    if (st.code !== 0 || JSON.parse(st.out)?.running !== true) return null;
+    if (st.code !== 0 || JSON.parse(st.out)?.running !== true) throw new Error("herdr server が動いていない");
     const ls = await herdrRun(["pane", "list"], nearSock);
-    if (ls.code !== 0) return null;
+    if (ls.code !== 0) throw new Error(`herdr pane list に失敗: ${ls.err?.trim() || ls.code}`);
     const panes = (JSON.parse(ls.out)?.result?.panes ?? []).filter((p: any) => p?.cwd === cwd && typeof p?.pane_id === "string");
     const nearKey = String(near).split("__")[1];
     const order = (a: any[]) => [...a.filter((p) => nearKey && paneKey(p.pane_id) === nearKey), ...a.filter((p) => p.focused === true), ...a]; // near → focused → 先頭
@@ -309,7 +309,7 @@ async function newInHerdr(cwd: string, near: unknown): Promise<string | null> {
       pane = res?.root_pane?.pane_id;
       workspace = typeof res?.workspace?.workspace_id === "string" ? res.workspace.workspace_id : null;
     }
-    if (typeof pane !== "string" || !HERDR_PANE.test(pane)) { if (workspace) await herdrRun(["workspace", "close", workspace], nearSock); return null; }
+    if (typeof pane !== "string" || !HERDR_PANE.test(pane)) { if (workspace) await herdrRun(["workspace", "close", workspace], nearSock); throw new Error(from ? "herdr の pane 分割に失敗" : "herdr の workspace 作成に失敗"); }
     // 既定の claude は agent start (起動完了まで待ち、agent list に名前付きで載る)。他の command は shell にそのまま打つ
     const r = await herdrRun(NEW_CMD === "claude" ? ["agent", "start", `rmv-${Date.now().toString(36)}`, "--kind", "claude", "--pane", pane] : ["pane", "run", pane, NEW_CMD], nearSock);
     if (r.code === 0) {
@@ -318,10 +318,9 @@ async function newInHerdr(cwd: string, near: unknown): Promise<string | null> {
       }
       return pane;
     }
-    if (reuse) return null; // user の既存 pane は閉じない
-    await herdrRun(workspace ? ["workspace", "close", workspace] : ["pane", "close", pane], nearSock); // 起動に失敗した空の pane / workspace を残さない (呼び元が Orca で開き直すので二重になる)
-    return null;
-  } catch { return null; }
+    if (!reuse) await herdrRun(workspace ? ["workspace", "close", workspace] : ["pane", "close", pane], nearSock); // 起動に失敗した空の pane / workspace を残さない (user の既存 pane は閉じない)
+    throw new Error(`${NEW_CMD} の起動に失敗: ${r.err?.trim() || r.code}`);
+  }
 }
 async function newSession(req: Request): Promise<Response> {
   if (!ORIGINS.has(req.headers.get("origin") ?? "")) return new Response("forbidden origin", { status: 403 });
@@ -329,27 +328,12 @@ async function newSession(req: Request): Promise<Response> {
   if (typeof cwd !== "string" || !cwd) return new Response("missing cwd", { status: 400 });
   const paths = await worktreePaths();
   if (!paths?.includes(cwd)) return new Response("forbidden cwd", { status: 403 });
-  const herdrPane = await newInHerdr(cwd, near);
-  if (herdrPane) return Response.json({ handle: herdrPane, mode: "herdr" }); // 画面は応答の handle を使わない (ok かどうかだけ見る)
   try {
-    // split: 選んだ cwd と worktreePath が一致する生きた端末を下に分割する (cfork の「下に分割」と同じ形)。near (画面の送り先) が一致すればそれ、無ければ同じフォルダの別の端末。
-    // 別フォルダの端末を split すると、Orca 上はその端末の worktree のタブに入り「新しいフォルダで開いた」と見えない (2026-10-04 実機)。一致する端末が無ければ tab と同じ create に落とす
-    // ponytail: 同じフォルダに端末が複数あれば near 以外は orca terminal list の先頭。上限 = どのペインの下に出るかを選びたくなるまで
-    // direction は cfork の down と同じ horizontal。cwd は単引用符で囲む (中の ' は '\'' に)。cwd は上で許可リストと完全一致済み
-    const same = NEW_MODE === "split" ? ((await liveTerminals(0)) ?? []).filter((t) => t.worktreePath === cwd) : [];
-    const target = (same.find((t) => t.handle === String(near).split("__")[0]) ?? same[0])?.handle; // near は画面の session key: pane 付きは `<handle>__<pane>`
-    const mode = target ? "split" : "tab";
-    const argv = target
-      ? [ORCA, "terminal", "split", "--terminal", target, "--direction", "horizontal", "--command", `cd '${cwd.replace(/'/g, `'\\''`)}' && ${NEW_CMD}`, "--json"]
-      : [ORCA, "terminal", "create", "--worktree", `path:${cwd}`, "--command", NEW_CMD, "--focus", "--json"];
-    const proc = Bun.spawn(argv, { stdout: "pipe", stderr: "pipe" });
-    const [out, err, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
-    if (code !== 0) return new Response(err.trim() || out.trim() || `orca exited ${code}`, { status: 500 });
-    let handle: string | null = null;
-    try { const r = JSON.parse(out)?.result; handle = r?.terminal?.handle ?? r?.handle ?? null; } catch {}
-    return Response.json({ handle, mode });
+    return Response.json({ handle: await newInHerdr(cwd, near), mode: "herdr" }); // 画面は応答の handle を使わない (ok かどうかだけ見る)
   } catch (e) {
-    return new Response(`orca spawn failed: ${e}`, { status: 500 });
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error(`new session failed: ${msg}`);
+    return new Response(msg, { status: 500 });
   }
 }
 

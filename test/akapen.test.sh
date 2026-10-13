@@ -544,17 +544,16 @@ check "open: 500 に stderr を返す" "$(cat "$TMP/body")" boom
 check "page: index.html に拡張子一覧 OPEN_EXT が残っていない (判定は server だけ)" "$(grep -c 'OPEN_EXT' "$A/index.html")" 0
 check "page: open 型リンクの描画 (data-open) がある" "$(grep -c 'data-open=' "$A/index.html")" 1
 
-# --- /worktrees と /new: orca worktree list に載る cwd だけ新規セッションを起動 ---
+# --- /worktrees と /new: orca worktree list (無ければ herdr の cwd) に載る cwd だけ新規セッションを起動。起動先は herdr のみ ---
 WTA="$TMP/wt-a"; WTB="$TMP/wt-b"
 printf '{"ok":true,"result":{"worktrees":[{"path":"%s"},{"path":"%s"}]}}' "$WTA" "$WTB" > "$TMP/wt.json"
 check "worktrees: orca の path 一覧を返す" "$(curl -s "$BASE/worktrees" | python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)))')" "$WTA,$WTB"
 rm -f "$TMP/newargv"
 nw() { curl -s -o "$TMP/body" -w '%{http_code}' -X POST ${1:+-H "Origin: $1"} -H 'content-type: application/json' --data "$2" "$BASE/new"; }
-check "new: 一覧に載る cwd → 200" "$(nw "$GOOD" "{\"cwd\":\"$WTA\"}")" 200
-check "new: orca terminal create の引数" "$(tr '\n' ' ' < "$TMP/newargv")" "terminal create --worktree path:$WTA --command claude --focus --json "
-check "new: 戻りに handle と mode (RMX_NEW_MODE 未設定 = tab)" "$(cat "$TMP/body")" '{"handle":"term_new","mode":"tab"}'
+check "new: 一覧に載る cwd でも herdr が止まっていれば 500 (Orca には落ちない)" "$(nw "$GOOD" "{\"cwd\":\"$WTA\"}")" 500
+check "new: 500 の本文に理由" "$(cat "$TMP/body")" "herdr server が動いていない"
+check "new: 500 では orca terminal create を呼ばない" "$([ -e "$TMP/newargv" ] && echo called || echo none)" none
 rm -f "$TMP/newargv"
-check "new: RMX_NEW_MODE 未設定なら near があっても create" "$(nw "$GOOD" "{\"cwd\":\"$WTA\",\"near\":\"term_near\"}")$(tr '\n' ' ' < "$TMP/newargv" | cut -c1-15)" "200terminal create"
 rm -f "$TMP/newargv"
 check "new: 一覧に無い cwd → 403" "$(nw "$GOOD" '{"cwd":"/Users/i/elsewhere"}')" 403
 check "new: Origin 無し → 403" "$(nw "" "{\"cwd\":\"$WTA\"}")" 403
@@ -562,38 +561,6 @@ check "new: 別 Origin → 403" "$(nw "bad-origin" "{\"cwd\":\"$WTA\"}")" 403
 check "new: 403 では terminal create を呼ばない" "$([ -e "$TMP/newargv" ] && echo called || echo none)" none
 check "new: cwd 無し → 400" "$(nw "$GOOD" '{}')" 400
 check "page: ＋ 新規ボタン (#newbtn) と一覧 (#newpop) がある" "$(curl -s "$BASE/" | grep -c 'id="newbtn"\|id="newpop"')" 2
-# --- RMX_NEW_MODE=split: near が list に載っていれば画面の送り先の端末を分割 (direction = cfork の down = horizontal) ---
-WTQ="$TMP/it's wt"
-WTC="$TMP/wt-c" # 許可リストには載るが端末が 1 つも無いフォルダ
-printf '{"ok":true,"result":{"worktrees":[{"path":"%s"},{"path":"%s"},{"path":"%s"}]}}' "$WTA" "$WTQ" "$WTC" > "$TMP/wt.json"
-list "$(term term_near "$WTA" 1)" "$(term term_ro "$WTA" 1 true false)" "$(term term_nearq "$WTQ" 1)"
-PORT2="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')"
-RMX_NEW_MODE=split RMX_STATE_DIR="$STATE" RMX_PORT="$PORT2" RMX_ORCA_BIN="$STUB" RMX_HERDR_BIN="$HERDRSTUB" RMX_WT_TTL_MS=0 RMX_LIVE_TTL_MS=0 bun run "$SERVER" > "$TMP/server2.log" 2>&1 &
-SRV2=$!
-trap 'kill $SRV $SRV2 2>/dev/null' EXIT
-for _ in $(seq 50); do curl -s -o /dev/null "http://127.0.0.1:$PORT2/history" && break; sleep 0.1; done
-nw2() { curl -s -o "$TMP/body" -w '%{http_code}' -X POST -H "Origin: http://127.0.0.1:$PORT2" -H 'content-type: application/json' --data "$1" "http://127.0.0.1:$PORT2/new"; }
-rm -f "$TMP/newargv"
-check "new(split): near が list に載る → 200" "$(nw2 "{\"cwd\":\"$WTA\",\"near\":\"term_near\"}")" 200
-check "new(split): terminal split --terminal <near> --direction horizontal --command cd '<cwd>' && claude" "$(tr '\n' ' ' < "$TMP/newargv")" "terminal split --terminal term_near --direction horizontal --command cd '$WTA' && claude --json "
-check "new(split): 戻りに mode split" "$(cat "$TMP/body")" '{"handle":"term_split","mode":"split"}'
-rm -f "$TMP/newargv"
-check "new(split): cwd に ' を含む → '\\'' にエスケープ" "$(nw2 "{\"cwd\":\"$WTQ\",\"near\":\"term_nearq\"}") $(sed -n 8p "$TMP/newargv")" "200 cd '$TMP/it'\\''s wt' && claude"
-rm -f "$TMP/newargv"
-check "new(split): near が list に無くても同じフォルダの端末があればそれを分割" "$(nw2 "{\"cwd\":\"$WTA\",\"near\":\"term_dead\"}") $(sed -n 4p "$TMP/newargv")" "200 term_near"
-rm -f "$TMP/newargv"
-check "new(split): 書けない端末 (writable false) は分割先にしない" "$(nw2 "{\"cwd\":\"$WTA\",\"near\":\"term_ro\"}") $(sed -n 4p "$TMP/newargv")" "200 term_near"
-rm -f "$TMP/newargv"
-check "new(split): near 無しでも同じフォルダの端末を分割" "$(nw2 "{\"cwd\":\"$WTA\"}") $(sed -n 4p "$TMP/newargv")" "200 term_near"
-rm -f "$TMP/newargv"
-# 別フォルダの端末を split すると Orca 上はその端末の worktree のタブに入る (2026-10-04 実機)。選んだフォルダの端末を分割する
-check "new(split): cwd が near と別フォルダ → そのフォルダの端末を分割 (mode split)" "$(nw2 "{\"cwd\":\"$WTQ\",\"near\":\"term_near\"}") $(sed -n 4p "$TMP/newargv") $(cat "$TMP/body")" '200 term_nearq {"handle":"term_split","mode":"split"}'
-rm -f "$TMP/newargv"
-check "new(split): そのフォルダに端末が無い → create (mode tab)" "$(nw2 "{\"cwd\":\"$WTC\",\"near\":\"term_near\"}") $(cat "$TMP/body")" '200 {"handle":"term_new","mode":"tab"}'
-check "new(split): create は terminal create --worktree path:<cwd>" "$(tr '\n' ' ' < "$TMP/newargv")" "terminal create --worktree path:$WTC --command claude --focus --json "
-rm -f "$TMP/newargv"
-check "new(split): 許可リスト外の cwd は near があっても 403" "$(nw2 '{"cwd":"/Users/i/elsewhere","near":"term_near"}')" 403
-check "new(split): 403 では split も create も呼ばない" "$([ -e "$TMP/newargv" ] && echo called || echo none)" none
 list "$(term term_test "$CWD" 1)"
 
 # --- /send + images: クリップボード経由で端末に貼ってから本文 ---
@@ -993,7 +960,7 @@ console.log([
 TS
 check "page: 案表の採用ラベル (番号 / 取れない表は出現順 / 重複は出現順) と表記 (1 表なら A、複数なら 3-A、表の順)" "$(bun run "$TMP/picks.ts" "$A/index.html" 2>&1)" "3/4 3/表2 3/表2 A 3-A 3-B、表2-A diff"
 
-# --- /new は herdr が動いていれば、選んだ cwd と同じフォルダの pane を下に分割 (near → focused → 先頭)。同じフォルダの pane が無ければ workspace を新設。止まっていれば Orca (RMX_NEW_MODE 未設定 = tab) ---
+# --- /new は herdr が動いていれば、選んだ cwd と同じフォルダの pane を下に分割 (near → focused → 先頭)。同じフォルダの pane が無ければ workspace を新設。止まっていれば理由付きの 500 (Orca には落ちない、2026-10-13) ---
 mkpanes() { printf '{"result":{"panes":[%s]}}' "$1" > "$TMP/hpanes"; }
 hp() { printf '{"pane_id":"%s","cwd":"%s","focused":%s,"agent":%s}' "$1" "$2" "$3" "${4:-null}"; }
 OTHER="/Users/i/elsewhere-other"
@@ -1022,18 +989,18 @@ check "new(herdr): 前面が shell でない (vim 等) pane には打たず分�
 mkpanes "$(hp w3:p3 "$WTA" true)"
 printf 'w3:p3\n' > "$TMP/hidle"
 touch "$TMP/hfail"
-check "new(herdr): 再利用した pane で起動が失敗 → pane は閉じず Orca の tab に落とす" "$(hnew "{\"cwd\":\"$WTA\"}")" "200 status,start rmv-N --kind claude --pane w3:p3, orca-called"
+check "new(herdr): 再利用した pane で起動が失敗 → pane は閉じず 500、Orca には落ちない" "$(hnew "{\"cwd\":\"$WTA\"}")" "500 status,start rmv-N --kind claude --pane w3:p3, orca-none"
 rm -f "$TMP/hidle"
 mkpanes "$(hp w1:p1 "$OTHER" true)"
 touch "$TMP/hfail"
-check "new(herdr): workspace 新設後に起動が失敗 → その workspace を閉じて Orca の tab に落とす" "$(hnew "{\"cwd\":\"$WTA\"}")" "200 status,create --cwd $WTA --label $(basename "$WTA") --focus,start rmv-N --kind claude --pane w8:p1,close w8 , orca-called"
+check "new(herdr): workspace 新設後に起動が失敗 → その workspace を閉じて 500" "$(hnew "{\"cwd\":\"$WTA\"}")" "500 status,create --cwd $WTA --label $(basename "$WTA") --focus,start rmv-N --kind claude --pane w8:p1,close w8 , orca-none"
 mkpanes "$(hp w3:p1 "$WTA" true)"
-check "new(herdr): 既存 pane を分割した後に起動が失敗 → その pane だけ閉じて Orca の tab に落とす" "$(hnew "{\"cwd\":\"$WTA\"}")" "200 status,split w3:p1 --direction down --cwd $WTA --focus,start rmv-N --kind claude --pane w9:p9,close w9:p9 , orca-called"
+check "new(herdr): 既存 pane を分割した後に起動が失敗 → その pane だけ閉じて 500" "$(hnew "{\"cwd\":\"$WTA\"}")" "500 status,split w3:p1 --direction down --cwd $WTA --focus,start rmv-N --kind claude --pane w9:p9,close w9:p9 , orca-none"
 rm -f "$TMP/hfail"
 check "new(herdr): 許可リスト外の cwd → 403 で herdr を呼ばない" "$(hnew '{"cwd":"/Users/i/elsewhere"}')" "403  orca-none"
 rm -f "$TMP/hrunning"
-check "new(herdr): herdr server 停止 → Orca の tab に落とす (split は呼ばない)" "$(hnew "{\"cwd\":\"$WTA\",\"near\":\"term_x__w3-pB\"}")" "200 status, orca-called"
-check "new(herdr): 落ちた先の戻りは従来の handle と mode tab" "$(cat "$TMP/body")" '{"handle":"term_new","mode":"tab"}'
+check "new(herdr): herdr server 停止 → 500、Orca には落ちない (split も create も呼ばない)" "$(hnew "{\"cwd\":\"$WTA\",\"near\":\"term_x__w3-pB\"}")" "500 status, orca-none"
+check "new(herdr): 500 の本文に理由 (画面の cmsg に出る)" "$(cat "$TMP/body")" "herdr server が動いていない"
 
 # --- herdr だけ (Orca 無し): ORCA_TERMINAL_HANDLE が無くても HERDR_ENV=1 + HERDR_PANE_ID があれば記録・一覧・送信・許可・新規が通る。Orca は呼ばない (RMX_ORCA_BIN = false) ---
 HO="$TMP/herdr-only"
@@ -1060,7 +1027,7 @@ PORT3="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); 
 B3="http://127.0.0.1:$PORT3"
 RMX_STATE_DIR="$HO" RMX_PORT="$PORT3" RMX_ORCA_BIN=/usr/bin/false RMX_HERDR_BIN="$HERDRSTUB" RMX_WT_TTL_MS=0 RMX_LIVE_TTL_MS=0 RMX_OSASCRIPT_BIN="$OSASTUB" bun run "$SERVER" > "$TMP/server3.log" 2>&1 &
 SRV3=$!
-trap 'kill $SRV $SRV2 $SRV3 2>/dev/null' EXIT
+trap 'kill $SRV $SRV3 2>/dev/null' EXIT
 for _ in $(seq 50); do curl -s -o /dev/null "$B3/history" && break; sleep 0.1; done
 h3() { curl -s -D "$TMP/h3head" "$B3/history"; }
 f3() { h3 | python3 -c "import json,sys; print([e[sys.argv[2]] for e in json.load(sys.stdin) if e['name']==sys.argv[1]][0])" "$1" "$2"; }
