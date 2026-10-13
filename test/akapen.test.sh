@@ -125,7 +125,8 @@ check "perm hook: 親が -p 無しの対話 claude なら書く (判定は stop-
 # --- prompt-state hook: 送った依頼文 → state/prompt/<key>.json → 返事の meta.prompt ---
 PROMPTHOOK="${RMX_PROMPT_HOOK:-$A/hooks/prompt-state.py}"
 # upr <state dir> <prompt> <env 引数...> → UserPromptSubmit を 1 回実行 (prompt は python で JSON 化)
-upr() { local d="$1" p="$2"; shift 2; python3 -c 'import json,sys,os; print(json.dumps({"hook_event_name":"UserPromptSubmit","session_id":"sess-1","prompt":sys.argv[1],"cwd":os.getcwd()}))' "$p" | env "$@" RMX_STATE_DIR="$d" python3 "$PROMPTHOOK"; }
+# session_id は fixture の返事と同じにする (別 session_id の依頼は「次のセッションの依頼」として前の返事に付かない)
+upr() { local d="$1" p="$2"; shift 2; python3 -c 'import json,sys,os; print(json.dumps({"hook_event_name":"UserPromptSubmit","session_id":"abcd1234-ef56-7890-aaaa-bbbbccccdddd","prompt":sys.argv[1],"cwd":os.getcwd()}))' "$p" | env "$@" RMX_STATE_DIR="$d" python3 "$PROMPTHOOK"; }
 pfile() { [ -e "$1" ] && echo written || echo none; }
 upr "$TMP/pr1" $'長い依頼\n二行目' ORCA_TERMINAL_HANDLE=term_p CLAUDE_CODE_ENTRYPOINT=cli
 check "prompt hook: 通常の prompt → prompt/term_p.json に本文 (改行は保つ)" "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["prompt"].replace("\n","|"))' "$TMP/pr1/prompt/term_p.json")" "長い依頼|二行目"
@@ -145,7 +146,7 @@ check "prompt hook: agent-message (subagent の hand-back) の prompt は記録�
 upr "$TMP/pr5" 'x' ORCA_TERMINAL_HANDLE=term_p CLAUDE_CODE_ENTRYPOINT=sdk-cli
 check "prompt hook: entrypoint=sdk-cli (claude -p) の prompt は記録しない" "$(pfile "$TMP/pr5/prompt/term_p.json")" none
 upr "$TMP/pr6" 'x' -u ORCA_TERMINAL_HANDLE CLAUDE_CODE_ENTRYPOINT=cli
-check "prompt hook: 端末 handle 無しは session_id が key" "$(pfile "$TMP/pr6/prompt/sess-1.json")" written
+check "prompt hook: 端末 handle 無しは session_id が key" "$(pfile "$TMP/pr6/prompt/abcd1234-ef56-7890-aaaa-bbbbccccdddd.json")" written
 upr "$TMP/pr7" $'<pasted_content id="a1">\n貼った本文\n</pasted_content id="a1">' ORCA_TERMINAL_HANDLE=term_p CLAUDE_CODE_ENTRYPOINT=cli
 check "prompt hook: 貼り付けの目印タグ (pasted_content) は外す" "$(field "$TMP/pr7/prompt/term_p.json" prompt)" "貼った本文"
 upr "$TMP/pr9" "$(python3 -c 'print("a" * 100001)')" ORCA_TERMINAL_HANDLE=term_p CLAUDE_CODE_ENTRYPOINT=cli
@@ -851,6 +852,15 @@ check "herdr title: herdr に出力時刻は無いので共有端末の lastOutp
 check "herdr live: herdr に居る pane は live" "$(fld "$PPA" live) $(fld "$PPB" live)" "True True"
 agentlist "$(ag w5:p1 '◑ 作業A')"
 check "herdr live: herdr に居なくなった pane は live=false (同じ端末の別 pane は live のまま)" "$(fld "$PPA" live) $(fld "$PPB" live)" "True False"
+# /exit → 同じ pane で次の Claude: pane は生きているので前のセッションの返事まで live になっていた (2026-10-13)。今のセッション (最新の返事 / state/prompt の session_id) だけ live
+PPC="29990101T000000003-ppc.md"
+cp "$STATE/history/$PPA" "$STATE/history/$PPC"
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); d["name"]=sys.argv[2]; d["session_id"]="sess-c"; d["ts"]="2999-01-01T00:00:03+09:00"; json.dump(d,open(sys.argv[3],"w"),ensure_ascii=False)' "$STATE/history/${PPA%.md}.json" "$PPC" "$STATE/history/${PPC%.md}.json"
+check "herdr live: 同じ pane で次のセッションが返事したら、前のセッションの返事は live=false" "$(fld "$PPA" live) $(fld "$PPC" live)" "False True"
+upr "$STATE" '三つ目の依頼' HERDR_ENV=1 HERDR_PANE_ID=w5:p1 ORCA_TERMINAL_HANDLE=term_pp CLAUDE_CODE_ENTRYPOINT=cli
+python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["session_id"]="sess-d"; d["ts"]="2999-01-01T00:00:04+09:00"; json.dump(d,open(p,"w"),ensure_ascii=False)' "$STATE/prompt/term_pp__w5-p1.json"
+check "herdr live: 同じ pane で次のセッションが起動・依頼したら (返事前)、前の返事は全部 live=false で依頼は仮 entry に出る" "$(fld "$PPA" live) $(fld "$PPC" live) $(askof "$PPC") $(askof asking-term_pp__w5-p1.md) $(fld asking-term_pp__w5-p1.md live)" "False False None 三つ目の依頼 True"
+rm -f "$STATE/prompt/term_pp__w5-p1.json" "$STATE/history/$PPC" "$STATE/history/${PPC%.md}.json"
 list "$(term term_test "$CWD" 1)"  # herdr を起動した Orca 端末 (term_pp) を閉じた状態
 check "herdr live: 共有の Orca 端末が Orca から消えても、herdr に居る pane は live" "$(fld "$PPA" live) $(fld "$PPB" live)" "True False"
 list "$(term term_test "$CWD" 1)" "$(term term_pp "$CWD" 5)"

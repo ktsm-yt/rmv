@@ -103,7 +103,7 @@ async function history(repo: string | null): Promise<Response> {
       const perm = perms.get(session);
       const pane = herdrPaneOf(meta);
       const shown = paneView(pane, await agentsOf(herdrSockOf(meta)), byHandle.get(meta.terminal));
-      return { name, prompt: typeof meta.prompt === "string" ? meta.prompt : null, ts: meta.ts ?? null, cwd, root, repo: root.split("/").filter(Boolean).pop() ?? "", head: body.replace(/\s+/g, " ").trim().slice(0, 40), terminal: Boolean(meta.terminal) || pane !== null, live: shown.herdr ? shown.alive : (pane !== null && !meta.terminal ? true : terms ? Boolean(meta.terminal) && handles.has(meta.terminal) : true) && shown.alive, session, perm: perm ? { id: perm.id, tool: perm.tool, detail: perm.detail, ts: perm.ts } : null, agent: meta.agent ?? null, title: shown.title, lastOutputAt: shown.lastOutputAt };
+      return { name, prompt: typeof meta.prompt === "string" ? meta.prompt : null, ts: meta.ts ?? null, cwd, root, repo: root.split("/").filter(Boolean).pop() ?? "", head: body.replace(/\s+/g, " ").trim().slice(0, 40), sid: typeof meta.session_id === "string" && meta.session_id ? meta.session_id : null, terminal: Boolean(meta.terminal) || pane !== null, live: shown.herdr ? shown.alive : (pane !== null && !meta.terminal ? true : terms ? Boolean(meta.terminal) && handles.has(meta.terminal) : true) && shown.alive, session, perm: perm ? { id: perm.id, tool: perm.tool, detail: perm.detail, ts: perm.ts } : null, agent: meta.agent ?? null, title: shown.title, lastOutputAt: shown.lastOutputAt };
     }),
   );
   // 1 つの端末で順に別の repo を開くと、端末が生きている限り昔の repo まで live になる (2026-09-29 実機: 1 端末で 4 repo)。
@@ -111,11 +111,23 @@ async function history(repo: string | null): Promise<Response> {
   const nowCwd = new Map<string, string>();
   for (const e of items) if (e.live && !e.agent && !nowCwd.has(e.session)) nowCwd.set(e.session, e.root); // items は新しい順
   for (const e of items) if (e.live && nowCwd.has(e.session) && nowCwd.get(e.session) !== e.root) e.live = false;
-  // 状態行用: 端末ごとの最新の本体の返事より後に送られた依頼 (返事待ち) を、その端末の entry 全部に付ける (perm と同じ)
-  const lastReply = new Map<string, number>();
-  for (const e of items) if (!e.agent && !lastReply.has(e.session)) lastReply.set(e.session, Date.parse(e.ts ?? "") || 0);
+  const lastReply = new Map<string, number>(); // 端末ごとの最新の本体の返事の時刻
+  const replySid = new Map<string, string>(); // その返事の session_id
+  for (const e of items) if (!e.agent && !lastReply.has(e.session)) { lastReply.set(e.session, Date.parse(e.ts ?? "") || 0); if (e.sid) replySid.set(e.session, e.sid); }
+  // 同じ pane で Claude を /exit して次を開くと、pane が生きている限り前のセッションの返事まで live になる (2026-10-13 実害: w2:p1 で 2 セッション分が稼働中)。
+  // 端末ごとの「今のセッション」= state/prompt (起動時・依頼時に hook が書く) の session_id が最新の返事より新しければそれ、無ければ最新の返事の session_id。別の session_id の entry は live=false
+  const curSid = new Map<string, string>();
+  for (const s of new Set(items.map((e) => e.session))) {
+    const p = await Bun.file(`${PROMPT}/${s}.json`).json().catch(() => null);
+    const fresh = typeof p?.session_id === "string" && p.session_id && (Date.parse(p.ts ?? "") || 0) > (lastReply.get(s) ?? 0);
+    const sid = fresh ? p.session_id : replySid.get(s);
+    if (sid) curSid.set(s, sid);
+  }
+  for (const e of items) if (e.live && e.sid && curSid.has(e.session) && curSid.get(e.session) !== e.sid) e.live = false;
+  // 状態行用: 端末ごとの最新の本体の返事より後に送られた依頼 (返事待ち) を、その端末の entry 全部に付ける (perm と同じ)。
+  // 次のセッションの依頼は前のセッションの返事に付けず、下の仮 entry (asking-<session>.md) に出す
   const asking = new Map<string, Awaited<ReturnType<typeof readAsking>>>();
-  for (const s of new Set(items.map((e) => e.session))) asking.set(s, await readAsking(s, lastReply.get(s) ?? 0));
+  for (const s of new Set(items.map((e) => e.session))) if (curSid.get(s) === replySid.get(s)) asking.set(s, await readAsking(s, lastReply.get(s) ?? 0));
   // 返事がまだ 1 件も無い新しいセッション (起動直後の初回依頼) は history に entry が無く一覧から消える (2026-10-12 user 指摘)。
   // state/prompt/<session>.json (cwd 付き) だけを根拠に仮の entry を先頭に足す。name は asking-<session>.md で /history/<name> が依頼文を返す
   for (const n of (await readdir(PROMPT).catch(() => [] as string[])).filter((n) => n.endsWith(".json"))) {
@@ -138,7 +150,7 @@ async function history(repo: string | null): Promise<Response> {
     items.push({ name: `asking-${session}.md`, prompt: null, ts: a.ts, cwd, root, repo: root.split("/").filter(Boolean).pop() ?? "", head: "", terminal: isTerm || pane !== null, live, session, perm: null, agent: null, title: shown.title, lastOutputAt: shown.lastOutputAt });
   }
   items.sort((x, y) => (Date.parse(y.ts ?? "") || 0) - (Date.parse(x.ts ?? "") || 0)); // 仮の entry も時刻順。先頭固定だと端末が閉じた後も残る state/prompt の待機中が「最新」に居座り、追従が止まる (2026-10-13 実害: 19:57 の Crewforce が 2 時間先頭に残った)
-  const out = items.map(({ root, ...e }) => ({ ...e, asking: asking.get(e.session) ?? null }));
+  const out = items.map(({ root, ...e }) => ({ ...e, asking: (e.name.startsWith("asking-") || curSid.get(e.session) === replySid.get(e.session) ? asking.get(e.session) : null) ?? null })); // 次のセッションの依頼は前のセッションの返事に付けない
   const want = repo?.toLowerCase();
   return Response.json(want ? out.filter((e) => e.repo.toLowerCase() === want) : out, { headers: { "cache-control": "no-store", "x-rmx-live": terms || agents || named ? "ok" : "unknown" } });
 }
