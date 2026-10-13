@@ -642,6 +642,55 @@ check "speak: 別 Origin → 403" "$(spk "https://evil.example")" 403
 check "speak: Origin なし → 403" "$(spk -)" 403
 check "speak: キーが env にもキーチェーンにも無い → 503" "$(spk "$GOOD")" 503
 
+# VOICEVOX ENGINE を模した最小サーバー。query の引数、synthesis の body、WAV の通過を確認する。
+VVPORT="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')"
+python3 - "$VVPORT" "$TMP/voicevox.jsonl" <<'PY' &
+import json, struct, sys
+from http.server import BaseHTTPRequestHandler, HTTPServer
+log = sys.argv[2]
+class Handler(BaseHTTPRequestHandler):
+  def do_POST(self):
+    body = self.rfile.read(int(self.headers.get("content-length", 0)))
+    with open(log, "a") as f: f.write(json.dumps({"path": self.path, "body": body.decode()}) + "\n")
+    if self.path.startswith("/audio_query?"):
+      self.send_response(200); self.send_header("content-type", "application/json"); self.end_headers(); self.wfile.write(b'{"accent_phrases":[]}')
+    elif self.path == "/synthesis?speaker=3" and body == b'{"accent_phrases":[]}':
+      wav = b"RIFF" + struct.pack("<I", 36) + b"WAVEfmt " + struct.pack("<IHHIIHH", 16, 1, 1, 24000, 48000, 2, 16) + b"data" + struct.pack("<I", 0)
+      self.send_response(200); self.send_header("content-type", "audio/wav"); self.end_headers(); self.wfile.write(wav)
+    else: self.send_error(400)
+  def log_message(self, *_): pass
+HTTPServer(("127.0.0.1", int(sys.argv[1])), Handler).serve_forever()
+PY
+VV=$!
+VP="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')"
+RMX_TTS_PROVIDER=voicevox RMX_VOICEVOX_URL="http://127.0.0.1:$VVPORT" RMX_PROJECTS_DIR="$TMP/projects" RMX_CC_SETTINGS="$TMP/cc-settings.json" RMX_MONO_FONT="$TMP/mono.ttf" RMX_STATE_DIR="$STATE" RMX_PORT="$VP" RMX_ORCA_BIN="$STUB" RMX_HERDR_BIN="$HERDRSTUB" RMX_OSASCRIPT_BIN="$OSASTUB" RMX_PBPASTE_BIN="$TMP/pbpaste-stub" RMX_PBCOPY_BIN="$TMP/pbcopy-stub" RMX_PS_BIN="$PSSTUB" RMX_OPEN_BIN="$TMP/open-stub" RMX_LIVE_TTL_MS=0 RMX_WT_TTL_MS=0 bun run "$SERVER" > "$TMP/voicevox-server.log" 2>&1 &
+VSRV=$!
+for _ in $(seq 50); do curl -s -o /dev/null "http://127.0.0.1:$VP/history" && break; sleep 0.1; done
+VBASE="http://127.0.0.1:$VP"
+spkv() { curl -s -D "$TMP/voicevox.headers" -o "$TMP/voicevox.wav" -w '%{http_code}' -X POST -H "Origin: $VBASE" -H 'content-type: application/json' --data "${1:-{\"text\":\"ずんだもんなのだ\"}}" "$VBASE/speak"; }
+check "speak: VOICEVOX でも別 Origin → 403" "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Origin: https://evil.example' -H 'content-type: application/json' --data '{"text":"こんにちは"}' "$VBASE/speak")" 403
+check "speak: VOICEVOX でも空 text → 400" "$(spkv '{"text":""}')" 400
+check "speak: VOICEVOX → 200" "$(spkv)" 200
+check "speak: VOICEVOX → WAV" "$(head -c 4 "$TMP/voicevox.wav") $(grep -ic '^content-type: audio/wav' "$TMP/voicevox.headers")" "RIFF 1"
+check "speak: VOICEVOX の query と synthesis の形" "$(python3 - "$TMP/voicevox.jsonl" <<'PY'
+import json, sys
+r = [json.loads(x) for x in open(sys.argv[1])]
+print(len(r), r[0]["path"] == "/audio_query?text=%E3%81%9A%E3%82%93%E3%81%A0%E3%82%82%E3%82%93%E3%81%AA%E3%81%AE%E3%81%A0&speaker=3", r[1]["path"], r[1]["body"])
+PY
+)" "2 True /synthesis?speaker=3 {\"accent_phrases\":[]}"
+kill "$VV" 2>/dev/null
+wait "$VV" 2>/dev/null || true
+check "speak: VOICEVOX 接続不能 → 502" "$(spkv)" 502
+kill "$VSRV" 2>/dev/null
+
+UP="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')"
+RMX_TTS_PROVIDER=unknown RMX_PROJECTS_DIR="$TMP/projects" RMX_CC_SETTINGS="$TMP/cc-settings.json" RMX_MONO_FONT="$TMP/mono.ttf" RMX_STATE_DIR="$STATE" RMX_PORT="$UP" RMX_ORCA_BIN="$STUB" RMX_HERDR_BIN="$HERDRSTUB" RMX_OSASCRIPT_BIN="$OSASTUB" RMX_PBPASTE_BIN="$TMP/pbpaste-stub" RMX_PBCOPY_BIN="$TMP/pbcopy-stub" RMX_PS_BIN="$PSSTUB" RMX_OPEN_BIN="$TMP/open-stub" RMX_LIVE_TTL_MS=0 RMX_WT_TTL_MS=0 bun run "$SERVER" > "$TMP/unknown-tts-server.log" 2>&1 &
+USRV=$!
+for _ in $(seq 50); do curl -s -o /dev/null "http://127.0.0.1:$UP/history" && break; sleep 0.1; done
+UBASE="http://127.0.0.1:$UP"
+check "speak: 未知 provider は Gemini に送らず 500" "$(curl -s -o "$TMP/unknown-tts-body" -w '%{http_code}' -X POST -H "Origin: $UBASE" -H 'content-type: application/json' --data '{"text":"こんにちは"}' "$UBASE/speak") $(cat "$TMP/unknown-tts-body")" "500 unknown TTS provider: unknown"
+kill "$USRV" 2>/dev/null
+
 # --- 許可待ち: /history の perm と POST /approve ---
 pev "$STATE" PermissionRequest Bash '{"command":"npm test"}' ORCA_TERMINAL_HANDLE=term_test CLAUDE_CODE_ENTRYPOINT=cli
 PID="$(field "$STATE/perm/term_test.json" id)"

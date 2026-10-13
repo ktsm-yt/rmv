@@ -713,14 +713,17 @@ async function approve(req: Request): Promise<Response> {
   }
 }
 
-// POST /speak {text}: 読み上げの声を Gemini の TTS で作り、WAV で返す (3.8 は WAV、3.1 / 2.5 は生の PCM が返るので WAV に包む)。
+// POST /speak {text}: 読み上げの声を Gemini またはローカル VOICEVOX で作り、WAV で返す (3.8 は WAV、3.1 / 2.5 は生の PCM が返るので WAV に包む)。
 // キーは env GEMINI_API_KEY → 無ければ macOS キーチェーンを毎回引く。キーはログにもレスポンスにも出さない。
 // Origin 必須は /send と同じ理由 (他サイトから有料 API を叩かせない)。
 // 既定を 3.1 にした理由: 3.8 の無料枠は 1 日 10 回で、1 返事 3〜5 回呼ぶと 2〜3 返事で尽きる (2026-09-30 実測の 429)
+const TTS_PROVIDER = process.env.RMX_TTS_PROVIDER || "gemini";
 const TTS_SERVICE = process.env.RMX_TTS_KEYCHAIN_SERVICE || "rmv-gemini";
 const TTS_MODEL = process.env.RMX_TTS_MODEL || "gemini-3.1-flash-tts-preview";
 const TTS_VOICE = process.env.RMX_TTS_VOICE || "Kore";
 const TTS_STYLE = process.env.RMX_TTS_STYLE || "落ち着いて、はっきりと";
+const VOICEVOX_URL = process.env.RMX_VOICEVOX_URL || "http://127.0.0.1:50021";
+const VOICEVOX_SPEAKER = Number(process.env.RMX_VOICEVOX_SPEAKER || 3);
 async function ttsKey(): Promise<string> {
   if (process.env.GEMINI_API_KEY) return process.env.GEMINI_API_KEY;
   try {
@@ -736,6 +739,8 @@ async function speak(req: Request): Promise<Response> {
   const body = await req.json().catch(() => null);
   const text = typeof body?.text === "string" ? body.text : "";
   if (!text.trim() || text.length > 4000) return new Response("text must be 1..4000 chars", { status: 400 });
+  if (TTS_PROVIDER === "voicevox") return speakVoicevox(text, req.signal);
+  if (TTS_PROVIDER !== "gemini") return new Response(`unknown TTS provider: ${TTS_PROVIDER}`, { status: 500 });
   const key = await ttsKey();
   if (!key) return new Response(`no Gemini API key: env GEMINI_API_KEY かキーチェーン (service ${TTS_SERVICE}) に入れる`, { status: 503 });
   let r: Response;
@@ -762,6 +767,30 @@ async function speak(req: Request): Promise<Response> {
   if (typeof audio?.data !== "string") return new Response("gemini returned no audio", { status: 502 });
   const raw = Buffer.from(audio.data, "base64");
   const wav = /l16/i.test(audio.mime_type ?? "") ? pcmToWav(raw, audio.sample_rate ?? 24000) : raw;
+  return new Response(wav, { headers: { "content-type": "audio/wav", "cache-control": "no-store" } });
+}
+async function speakVoicevox(text: string, requestSignal: AbortSignal): Promise<Response> {
+  if (!Number.isInteger(VOICEVOX_SPEAKER) || VOICEVOX_SPEAKER < 0) return new Response("VOICEVOX speaker must be a non-negative integer", { status: 500 });
+  const signal = AbortSignal.any([requestSignal, AbortSignal.timeout(120_000)]);
+  const endpoint = (path: string) => new URL(path, VOICEVOX_URL).toString();
+  let query: Response;
+  try {
+    query = await fetch(`${endpoint("/audio_query")}?${new URLSearchParams({ text, speaker: String(VOICEVOX_SPEAKER) })}`, { method: "POST", signal });
+  } catch (e) {
+    return new Response(`voicevox audio_query failed: ${e}`, { status: 502 });
+  }
+  if (!query.ok) return new Response(`voicevox audio_query ${query.status}: ${(await query.text().catch(() => "")).slice(0, 300)}`, { status: query.status });
+  const audioQuery = await query.json().catch(() => null);
+  if (!audioQuery || typeof audioQuery !== "object") return new Response("voicevox audio_query returned no JSON", { status: 502 });
+  let synthesis: Response;
+  try {
+    synthesis = await fetch(`${endpoint("/synthesis")}?speaker=${VOICEVOX_SPEAKER}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(audioQuery), signal });
+  } catch (e) {
+    return new Response(`voicevox synthesis failed: ${e}`, { status: 502 });
+  }
+  if (!synthesis.ok) return new Response(`voicevox synthesis ${synthesis.status}: ${(await synthesis.text().catch(() => "")).slice(0, 300)}`, { status: synthesis.status });
+  const wav = await synthesis.arrayBuffer().catch((e) => e);
+  if (wav instanceof Error) return new Response(`voicevox synthesis body failed: ${wav}`, { status: 502 });
   return new Response(wav, { headers: { "content-type": "audio/wav", "cache-control": "no-store" } });
 }
 // 16bit little-endian mono の PCM に 44 byte の WAV ヘッダを付ける

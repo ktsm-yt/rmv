@@ -111,7 +111,7 @@ launchd で常駐させている時は、`RMX_ORIGINS=…` の行を `state/env`
 
 ## 読み上げの声
 
-🔊 は Gemini の読み上げモデルで声を作ります。
+🔊 は既定で Gemini の読み上げモデルで声を作ります。
 キーは macOS のキーチェーンに入れます (値は対話で入力するので、シェルの履歴に残りません)。
 
 ```bash
@@ -136,6 +136,16 @@ Android の Chrome の内蔵の声は一時停止できません。
 - `RMX_TTS_MODEL`: 読み上げモデル (既定 `gemini-3.1-flash-tts-preview`。`gemini-3.8-flash-tts` は声が良いが無料枠が 1 日 10 回)
 - `RMX_TTS_VOICE`: 声 (既定 `Kore`)
 - `RMX_TTS_STYLE`: 話し方の指示 (既定 `落ち着いて、はっきりと`。3.8 のときだけ効く)
+
+ローカルの [VOICEVOX ENGINE](https://github.com/VOICEVOX/voicevox_engine) を使う時は、起動した ENGINE に合わせて次を設定します。Gemini のキーは不要です。
+
+```bash
+RMX_TTS_PROVIDER=voicevox
+RMX_VOICEVOX_URL=http://127.0.0.1:50021
+RMX_VOICEVOX_SPEAKER=3 # ずんだもん / ノーマル
+```
+
+`RMX_TTS_PROVIDER` を設定しなければ Gemini のままです。
 
 ## 返事に出てきたファイルの扱い
 
