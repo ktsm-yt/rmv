@@ -27,11 +27,14 @@ async function readPerm(session: string): Promise<Perm | null> {
   return p && typeof p.id === "string" && Date.now() - Date.parse(p.ts) < PERM_TTL ? p : null;
 }
 const PROMPT = `${STATE}/prompt`; // hooks/prompt-state.py が送った依頼文を <session>.json に置く。返事の保存時に stop hook が消す
-// 未返答の依頼。無い・壊れている・TTL 切れ (返事が来ずに取り残された分)・その端末の最新返事より古いなら null
-async function readAsking(session: string, lastReplyTs: number): Promise<{ prompt: string; ts: string } | null> {
+// hooks/session-wait.py は起動直後の依頼なし session を同じ場所に {prompt: "", waiting: true} で置く (依頼で上書き・返事で消える)。ファイルの掃除も同じ長さ (片方だけ直さない)
+const WAIT_TTL = 24 * 3600_000;
+// 未返答の依頼 (waiting: true は起動直後の待機中)。無い・壊れている・TTL 切れ (返事が来ずに取り残された分)・その端末の最新返事より古いなら null
+async function readAsking(session: string, lastReplyTs: number): Promise<{ prompt: string; ts: string; waiting?: true } | null> {
   const p = await Bun.file(`${PROMPT}/${session}.json`).json().catch(() => null);
   const t = p ? Date.parse(p.ts) : NaN;
-  return typeof p?.prompt === "string" && Date.now() - t < PERM_TTL && !(t < lastReplyTs) ? { prompt: p.prompt, ts: p.ts } : null;
+  const waiting = p?.waiting === true;
+  return typeof p?.prompt === "string" && Date.now() - t < (waiting ? WAIT_TTL : PERM_TTL) && !(t < lastReplyTs) ? { prompt: p.prompt, ts: p.ts, ...(waiting && { waiting: true as const }) } : null;
 }
 // 一覧のまとめ目印 (item.session) = state/perm・state/prompt のファイル名。hooks/stop-to-fragment.py の session_key と同じ式 (片方だけ直さない)。
 // herdr 配下の pane は Orca 端末 handle を共有するので、pane があれば `<handle>__<pane>` (":" は "-"、他の記号は捨てる) にして pane ごとに分ける。pane 無しは従来の handle || session_id
@@ -95,7 +98,7 @@ async function history(repo: string | null): Promise<Response> {
   // 状態行用: 端末ごとの最新の本体の返事より後に送られた依頼 (返事待ち) を、その端末の entry 全部に付ける (perm と同じ)
   const lastReply = new Map<string, number>();
   for (const e of items) if (!e.agent && !lastReply.has(e.session)) lastReply.set(e.session, Date.parse(e.ts ?? "") || 0);
-  const asking = new Map<string, { prompt: string; ts: string } | null>();
+  const asking = new Map<string, Awaited<ReturnType<typeof readAsking>>>();
   for (const s of new Set(items.map((e) => e.session))) asking.set(s, await readAsking(s, lastReply.get(s) ?? 0));
   // 返事がまだ 1 件も無い新しいセッション (起動直後の初回依頼) は history に entry が無く一覧から消える (2026-10-12 user 指摘)。
   // state/prompt/<session>.json (cwd 付き) だけを根拠に仮の entry を先頭に足す。name は asking-<session>.md で /history/<name> が依頼文を返す
@@ -522,7 +525,8 @@ async function send(req: Request): Promise<Response> {
   if (!NAME.test(name)) return new Response("bad name", { status: 400 });
   if (images.length > 10 || !images.every((p) => typeof p === "string" && p.startsWith(`${STATE}/paste/`) && PASTED.test(p.slice(STATE.length + 7)))) return new Response("bad images", { status: 400 });
   if ((!text.trim() && !images.length) || text.length > 100000) return new Response("text must be 1..100000 chars", { status: 400 }); // 10 万字 = markdown の長文を貼っても足りる長さ。orca terminal send で 10 万字 (23 万バイト) が欠けずに届くのを確かめた (2026-10-08)
-  const meta = await Bun.file(`${HIST}/${name.slice(0, -3)}.json`).json().catch(() => null);
+  // asking-<session>.md (返事ゼロの仮 entry、待機中の最初の依頼の送り先) は history に meta が無いので、state/prompt の記録 (terminal・herdr_pane・cwd 付き) を meta に使う
+  const meta = await Bun.file(name.startsWith("asking-") ? `${PROMPT}/${name.slice(7, -3)}.json` : `${HIST}/${name.slice(0, -3)}.json`).json().catch(() => null);
   if (!meta) return new Response("not found", { status: 404 });
   if (typeof meta.terminal !== "string" || !meta.terminal) return new Response("entry has no terminal", { status: 409 });
   const pane: string | null = typeof meta.herdr_pane === "string" && meta.herdr_pane ? meta.herdr_pane : null;
@@ -778,7 +782,7 @@ Bun.serve({
     if (m && NAME.test(m[1])) {
       if (m[1].startsWith("asking-")) { // 返事ゼロの仮 entry: 本文は依頼文そのもの
         const p = await Bun.file(`${PROMPT}/${m[1].slice(7, -3)}.json`).json().catch(() => null);
-        return typeof p?.prompt === "string" ? new Response(`(返事待ち)\n\n${p.prompt}`, { headers: TEXT }) : new Response("not found", { status: 404 });
+        return typeof p?.prompt === "string" ? new Response(p.waiting === true ? "(待機中: 最初の依頼を待っています)" : `(返事待ち)\n\n${p.prompt}`, { headers: TEXT }) : new Response("not found", { status: 404 });
       }
       const f = Bun.file(`${HIST}/${m[1]}`);
       return (await f.exists()) ? new Response(await f.text(), { headers: TEXT }) : new Response("not found", { status: 404 });

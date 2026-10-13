@@ -148,6 +148,37 @@ check "prompt hook: 貼り付けの目印タグ (pasted_content) は外す" "$(f
 upr "$TMP/pr9" "$(python3 -c 'print("a" * 100001)')" ORCA_TERMINAL_HANDLE=term_p CLAUDE_CODE_ENTRYPOINT=cli
 check "prompt hook: 依頼文は 10 万字まで残す (4000 字で切れていた、2026-10-08)" "$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["prompt"]))' "$TMP/pr9/prompt/term_p.json")" 100000
 
+# --- session-wait hook (SessionStart): 起動直後の依頼なし session を state/prompt/<key>.json に「待機中」で置く ---
+WAITHOOK="${RMX_WAIT_HOOK:-$A/hooks/session-wait.py}"
+# swt <state dir> <source> <env 引数...> → SessionStart を 1 回実行 (stdout は何も出さないことも確かめる)
+swt() { local d="$1" s="$2"; shift 2; printf '{"hook_event_name":"SessionStart","session_id":"sess-1","source":"%s","cwd":"%s"}' "$s" "$PWD" | env "$@" RMX_STATE_DIR="$d" python3 "$WAITHOOK"; }
+swt "$TMP/sw1" startup ORCA_TERMINAL_HANDLE=term_w CLAUDE_CODE_ENTRYPOINT=cli > "$TMP/sw1.out"
+check "session-wait hook: startup → prompt/term_w.json に待機中 (prompt 空・cwd・terminal 付き)" "$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d["waiting"], repr(d["prompt"]), d["cwd"] == sys.argv[2], d["terminal"])' "$TMP/sw1/prompt/term_w.json" "$PWD")" "True '' True term_w"
+check "session-wait hook: stdout は空" "$(wc -c < "$TMP/sw1.out" | tr -d ' ')" 0
+swt "$TMP/sw2" resume ORCA_TERMINAL_HANDLE=term_w CLAUDE_CODE_ENTRYPOINT=cli
+swt "$TMP/sw2" clear ORCA_TERMINAL_HANDLE=term_w CLAUDE_CODE_ENTRYPOINT=cli
+swt "$TMP/sw2" compact ORCA_TERMINAL_HANDLE=term_w CLAUDE_CODE_ENTRYPOINT=cli
+check "session-wait hook: resume / clear / compact では置かない" "$(pfile "$TMP/sw2/prompt/term_w.json")" none
+swt "$TMP/sw3" startup ORCA_TERMINAL_HANDLE=term_w CLAUDE_CODE_ENTRYPOINT=sdk-cli
+check "session-wait hook: 非対話 (entrypoint=sdk-cli) は置かない" "$(pfile "$TMP/sw3/prompt/term_w.json")" none
+swt "$TMP/sw4" startup -u ORCA_TERMINAL_HANDLE CLAUDE_CODE_ENTRYPOINT=cli
+check "session-wait hook: Orca 外 (端末 handle なし) は置かない" "$(ls "$TMP/sw4/prompt" 2>/dev/null | wc -l | tr -d ' ')" 0
+swt "$TMP/sw5" startup HERDR_ENV=1 HERDR_PANE_ID=w5:p1 ORCA_TERMINAL_HANDLE=term_w CLAUDE_CODE_ENTRYPOINT=cli
+check "session-wait hook: herdr 配下の key は prompt-state と同じ <handle>__<pane>" "$(ls "$TMP/sw5/prompt")" "term_w__w5-p1.json"
+upr "$TMP/sw1" '最初の依頼' ORCA_TERMINAL_HANDLE=term_w CLAUDE_CODE_ENTRYPOINT=cli
+check "session-wait hook: 依頼を送ると同じファイルが依頼で上書きされ、待機中が消える" "$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d.get("waiting"), d["prompt"])' "$TMP/sw1/prompt/term_w.json")" "None 最初の依頼"
+swt "$TMP/sw6" startup ORCA_TERMINAL_HANDLE=term_w CLAUDE_CODE_ENTRYPOINT=cli
+ORCA_TERMINAL_HANDLE=term_w CLAUDE_CODE_ENTRYPOINT=cli RMX_STATE_DIR="$TMP/sw6" python3 "$HOOK" < "$FIX"
+SWN="$(field "$TMP/sw6/latest.json" name)"
+check "session-wait hook: 依頼無しで返事が来ると待機中のファイルは消え、meta.prompt は載らない" "$(pfile "$TMP/sw6/prompt/term_w.json") $(field "$TMP/sw6/history/${SWN%.md}.json" prompt)" "none null"
+mkdir -p "$TMP/sw7/prompt"
+echo '{"prompt":"","waiting":true,"ts":"2020-01-01T00:00:00+09:00","cwd":"/x","terminal":"term_old"}' > "$TMP/sw7/prompt/term_old.json"
+touch -t 202001010000 "$TMP/sw7/prompt/term_old.json"
+echo '{"prompt":"取り残しの依頼","ts":"2020-01-01T00:00:00+09:00","cwd":"/x","terminal":"term_oldp"}' > "$TMP/sw7/prompt/term_oldp.json"
+touch -t 202001010000 "$TMP/sw7/prompt/term_oldp.json"
+swt "$TMP/sw7" startup ORCA_TERMINAL_HANDLE=term_w CLAUDE_CODE_ENTRYPOINT=cli
+check "session-wait hook: 古い待機中は起動時に掃除する (溜めない)。依頼ファイルには触れない" "$(pfile "$TMP/sw7/prompt/term_old.json") $(pfile "$TMP/sw7/prompt/term_oldp.json") $(pfile "$TMP/sw7/prompt/term_w.json")" "none written written"
+
 # --- bg session (daemon の fork): env の ORCA_TERMINAL_HANDLE は daemon を起こした端末。job を映している対話プロセスの env から取り直す ---
 # sessions/<pid>.json の fixture (2.1.288 の形) と ps stub (-Eww -o command= -p <pid> → $TMP/bgps-<pid>、無ければ exit 1 = 終了済み)
 BGPS="$TMP/bg-ps-stub"
@@ -822,6 +853,27 @@ check "/history/asking-…: 本文は依頼文" "$(curl -s "$BASE/history/asking
 python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d.pop("cwd",None); json.dump(d,open(p,"w"))' "$STATE/prompt/term_fresh.json"
 check "/history: cwd の無い古い形式の prompt は仮 entry にしない (対照)" "$(curl -s "$BASE/history" | python3 -c "import json,sys; print(sum(1 for e in json.load(sys.stdin) if e['name']=='asking-term_fresh.md'))")" 0
 rm -f "$STATE/prompt/term_fresh.json"
+# 待機中 (session-wait hook): 起動直後で依頼も返事も無い session を『待機中』で一覧に出し、その行へ最初の依頼を送れる
+list "$(term term_wait "$CWD" 1)"
+swt "$STATE" startup ORCA_TERMINAL_HANDLE=term_wait CLAUDE_CODE_ENTRYPOINT=cli
+waitof() { curl -s "$BASE/history" | python3 -c "import json,sys; r=[e for e in json.load(sys.stdin) if e['name']=='asking-term_wait.md']; print(r[0]['asking'].get('waiting') if r else 'absent', r[0]['live'] if r else '-')"; }
+check "/history: 待機中の session は仮 entry に asking.waiting=true で出る (live)" "$(waitof)" "True True"
+check "/history/asking-…: 待機中の本文は依頼文でなく待機中の説明" "$(curl -s "$BASE/history/asking-term_wait.md")" "(待機中: 最初の依頼を待っています)"
+check "page: 待機中の行を『待機中』と書く処理が index.html にある" "$(curl -s "$BASE/" | grep -c 'e.asking.waiting ? "待機中"')" 1
+rm -f "$TMP/calls" "$TMP/argv"
+check "/send: 待機中の仮 entry (asking-…) に最初の依頼が届く" "$(post "$GOOD" "$(body asking-term_wait.md 最初の依頼)") $(grep -c '^最初の依頼$' "$TMP/argv")" "200 1"
+list "$(term term_other "$CWD" 1)"
+check "/history: 端末が居なくなった待機中は live false (一覧から消える)" "$(waitof)" "True False"
+list "$(term term_wait "$CWD" 1)"
+upr "$STATE" '最初の依頼' ORCA_TERMINAL_HANDLE=term_wait CLAUDE_CODE_ENTRYPOINT=cli
+check "/history: 依頼を送ると待機中ではなくなる (依頼の仮 entry になる)" "$(waitof)" "None True"
+rm -f "$STATE/prompt/term_wait.json"
+python3 - "$STATE/prompt/term_wait.json" <<'PY'
+import json, sys
+json.dump({"prompt": "", "waiting": True, "ts": "2020-01-01T00:00:00+09:00", "cwd": "/x", "terminal": "term_wait"}, open(sys.argv[1], "w"))
+PY
+check "/history: 24 時間を過ぎた待機中は出ない (取り残しを溜めない)" "$(waitof)" "absent -"
+rm -f "$STATE/prompt/term_wait.json"
 
 # --- index.html: 読み上げボタンが本文ペインの操作列に描画される ---
 check "page: 読み上げボタン (#speak) が index.html にある" "$(curl -s "$BASE/" | grep -c '<button id="speak"')" 1

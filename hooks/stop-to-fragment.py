@@ -190,7 +190,9 @@ def main():
             pf = os.path.join(STATE, "prompt", session_key(terminal, herdr_pane, sid) + ".json")
             try:
                 with open(pf, encoding="utf-8") as f:
-                    meta["prompt"] = json.load(f).get("prompt")
+                    rec = json.load(f)
+                if not rec.get("waiting"):  # session-wait.py の待機中 (依頼なし) は prompt に載せず、ファイルだけ消す
+                    meta["prompt"] = rec.get("prompt")
                 os.remove(pf)
             except (OSError, ValueError, AttributeError):
                 pass  # 依頼文が無い返事 (自動通知が起こした turn 等) は prompt を載せない
