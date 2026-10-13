@@ -49,9 +49,10 @@ function herdrPaneOf(meta: { terminal?: unknown; herdr_pane?: unknown }): string
 }
 // pane 付き entry の見え方。title / lastOutputAt は Orca の端末 (herdr 全体で共有) でなく herdr の pane から取る。herdr に居ない pane は alive=false。
 // herdr の list が取れない時 (agents null) は従来どおり Orca の値・alive=true。herdr agent list に出力時刻は無いので lastOutputAt は null (共有端末の別 pane の時刻を出さない)
-function paneView(pane: string | null, agents: Map<string, { title: string }> | null, orca?: Term): { alive: boolean; title: string | null; lastOutputAt: number | null } {
-  if (pane && agents) { const a = agents.get(pane); return { alive: !!a, title: a?.title ?? null, lastOutputAt: null }; }
-  return { alive: true, title: orca?.title ?? null, lastOutputAt: orca?.lastOutputAt ?? null };
+// herdr: true = 生死を herdr だけで決める。pane の ORCA_TERMINAL_HANDLE は herdr server を起動した時の Orca 端末のもので、その端末を閉じると Orca の一覧から消える (herdr の client は別の Orca 端末で動き続ける、2026-10-13 実測)
+function paneView(pane: string | null, agents: Map<string, { title: string }> | null, orca?: Term): { alive: boolean; herdr: boolean; title: string | null; lastOutputAt: number | null } {
+  if (pane && agents) { const a = agents.get(pane); return { alive: !!a, herdr: true, title: a?.title ?? null, lastOutputAt: null }; }
+  return { alive: true, herdr: false, title: orca?.title ?? null, lastOutputAt: orca?.lastOutputAt ?? null };
 }
 
 // 一覧は新しい順。hook が 200 件に切り詰めるので毎回全件読む。
@@ -82,7 +83,7 @@ async function history(repo: string | null): Promise<Response> {
       const perm = perms.get(session);
       const pane = herdrPaneOf(meta);
       const shown = paneView(pane, agents, byHandle.get(meta.terminal));
-      return { name, prompt: typeof meta.prompt === "string" ? meta.prompt : null, ts: meta.ts ?? null, cwd, root, repo: root.split("/").filter(Boolean).pop() ?? "", head: body.replace(/\s+/g, " ").trim().slice(0, 40), terminal: Boolean(meta.terminal), live: (terms ? Boolean(meta.terminal) && handles.has(meta.terminal) : true) && shown.alive, session, perm: perm ? { id: perm.id, tool: perm.tool, detail: perm.detail, ts: perm.ts } : null, agent: meta.agent ?? null, title: shown.title, lastOutputAt: shown.lastOutputAt };
+      return { name, prompt: typeof meta.prompt === "string" ? meta.prompt : null, ts: meta.ts ?? null, cwd, root, repo: root.split("/").filter(Boolean).pop() ?? "", head: body.replace(/\s+/g, " ").trim().slice(0, 40), terminal: Boolean(meta.terminal), live: shown.herdr ? shown.alive : (terms ? Boolean(meta.terminal) && handles.has(meta.terminal) : true) && shown.alive, session, perm: perm ? { id: perm.id, tool: perm.tool, detail: perm.detail, ts: perm.ts } : null, agent: meta.agent ?? null, title: shown.title, lastOutputAt: shown.lastOutputAt };
     }),
   );
   // 1 つの端末で順に別の repo を開くと、端末が生きている限り昔の repo まで live になる (2026-09-29 実機: 1 端末で 4 repo)。
@@ -113,7 +114,7 @@ async function history(repo: string | null): Promise<Response> {
     const wt = isTerm ? byHandle.get(handle)?.worktreePath : undefined;
     const root = typeof wt === "string" && wt ? wt : cwd;
     asking.set(session, a);
-    items.unshift({ name: `asking-${session}.md`, prompt: null, ts: a.ts, cwd, root, repo: root.split("/").filter(Boolean).pop() ?? "", head: "", terminal: isTerm, live: (terms ? isTerm && handles.has(handle) : true) && shown.alive, session, perm: null, agent: null, title: shown.title, lastOutputAt: shown.lastOutputAt });
+    items.unshift({ name: `asking-${session}.md`, prompt: null, ts: a.ts, cwd, root, repo: root.split("/").filter(Boolean).pop() ?? "", head: "", terminal: isTerm, live: shown.herdr ? shown.alive : (terms ? isTerm && handles.has(handle) : true) && shown.alive, session, perm: null, agent: null, title: shown.title, lastOutputAt: shown.lastOutputAt });
   }
   const out = items.map(({ root, ...e }) => ({ ...e, asking: asking.get(e.session) ?? null }));
   const want = repo?.toLowerCase();

@@ -790,6 +790,9 @@ check "herdr title: herdr に出力時刻は無いので共有端末の lastOutp
 check "herdr live: herdr に居る pane は live" "$(fld "$PPA" live) $(fld "$PPB" live)" "True True"
 agentlist "$(ag w5:p1 '◑ 作業A')"
 check "herdr live: herdr に居なくなった pane は live=false (同じ端末の別 pane は live のまま)" "$(fld "$PPA" live) $(fld "$PPB" live)" "True False"
+list "$(term term_test "$CWD" 1)"  # herdr を起動した Orca 端末 (term_pp) を閉じた状態
+check "herdr live: 共有の Orca 端末が Orca から消えても、herdr に居る pane は live" "$(fld "$PPA" live) $(fld "$PPB" live)" "True False"
+list "$(term term_test "$CWD" 1)" "$(term term_pp "$CWD" 5)"
 rm -f "$TMP/hagents"
 check "herdr title: herdr の list が取れない時は従来どおり Orca の値・live" "$(fld "$PPA" live) $(fld "$PPA" lastOutputAt)" "True 5"
 rm -f "$STATE/history/$PPA" "$STATE/history/${PPA%.md}.json" "$STATE/history/$PPB" "$STATE/history/${PPB%.md}.json"
