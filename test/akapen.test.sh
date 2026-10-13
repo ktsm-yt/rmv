@@ -226,8 +226,11 @@ HERDRSTUB="$TMP/herdr-stub"
 cat > "$HERDRSTUB" <<EOF
 #!/usr/bin/env bash
 # agent list は一覧用の読み取り: $TMP/hagents の中身を返す (無ければ失敗 = herdr の list が取れない)。hcalls には記録しない
-if [ "\$1" = agent ]; then cat "$TMP/hagents" 2>/dev/null || exit 1; exit 0; fi
+if [ "\$1 \$2" = "agent list" ]; then cat "$TMP/hagents" 2>/dev/null || exit 1; exit 0; fi
+# status server: $TMP/hrunning があれば動作中 (無ければ停止中)。pane split は新 pane w9:p9 を返す (どちらも hcalls に記録する)
+if [ "\$1" = status ]; then echo "status" >> "$TMP/hcalls"; [ -e "$TMP/hrunning" ] && echo '{"status":"running","running":true}' || echo '{"status":"stopped","running":false}'; exit 0; fi
 echo "\$2 \$3 \${*:4}" >> "$TMP/hcalls"
+if [ "\$2" = split ]; then echo '{"result":{"pane":{"pane_id":"w9:p9"},"type":"pane_info"}}'; exit 0; fi
 [ -e "$TMP/hgone" ] && { echo '{"error":{"code":"pane_not_found","message":"pane not found"}}'; exit 1; }
 if [ "\$2" = get ]; then if [ -e "$TMP/hshell" ]; then echo '{"result":{"pane":{"pane_id":"x"}}}'; else echo '{"result":{"pane":{"pane_id":"x","agent":"claude"}}}'; fi; exit 0; fi
 if [ "\$2" = read ]; then n=\$(grep -c '^send-keys .*ctrl+v' "$TMP/hcalls"); [ -e "$TMP/hnoimg" ] && n=0; for ((i = 1; i <= n; i++)); do echo "> [Image #\$i]"; done; exit 0; fi
@@ -523,7 +526,7 @@ WTC="$TMP/wt-c" # 許可リストには載るが端末が 1 つも無いフォ�
 printf '{"ok":true,"result":{"worktrees":[{"path":"%s"},{"path":"%s"},{"path":"%s"}]}}' "$WTA" "$WTQ" "$WTC" > "$TMP/wt.json"
 list "$(term term_near "$WTA" 1)" "$(term term_ro "$WTA" 1 true false)" "$(term term_nearq "$WTQ" 1)"
 PORT2="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')"
-RMX_NEW_MODE=split RMX_STATE_DIR="$STATE" RMX_PORT="$PORT2" RMX_ORCA_BIN="$STUB" RMX_WT_TTL_MS=0 RMX_LIVE_TTL_MS=0 bun run "$SERVER" > "$TMP/server2.log" 2>&1 &
+RMX_NEW_MODE=split RMX_STATE_DIR="$STATE" RMX_PORT="$PORT2" RMX_ORCA_BIN="$STUB" RMX_HERDR_BIN="$HERDRSTUB" RMX_WT_TTL_MS=0 RMX_LIVE_TTL_MS=0 bun run "$SERVER" > "$TMP/server2.log" 2>&1 &
 SRV2=$!
 trap 'kill $SRV $SRV2 2>/dev/null' EXIT
 for _ in $(seq 50); do curl -s -o /dev/null "http://127.0.0.1:$PORT2/history" && break; sleep 0.1; done
@@ -867,6 +870,22 @@ const pin = (p: string) => new Function("chatPins", "REPO", "all", line + "\nret
 console.log(["dead", "alive", "gone"].map(pin).join(","));
 TS
 check "page: 終了した端末への送り先固定は外れ、生きている端末への固定は残る (,alive,gone)" "$(bun run "$TMP/chatpin.ts" "$A/index.html" 2>&1)" ",alive,gone"
+
+# --- /new は herdr が動いていれば pane を下に分割 (near の pane → focused の pane)。止まっていれば Orca (RMX_NEW_MODE 未設定 = tab) ---
+printf '{"result":{"agents":[{"agent":"claude","pane_id":"w3:p1","focused":false,"cwd":"/x","terminal_title":"a"},{"agent":"claude","pane_id":"w3:pB","focused":true,"cwd":"/x","terminal_title":"b"}]}}' > "$TMP/hagents"
+hnew() { rm -f "$TMP/hcalls" "$TMP/newargv"; echo "$(nw "$GOOD" "$1") $(sed -E 's/^(start) rmv-[0-9a-z]+/\1 rmv-N/' "$TMP/hcalls" 2>/dev/null | tr '\n' ',') $([ -e "$TMP/newargv" ] && echo orca-called || echo orca-none)"; }
+touch "$TMP/hrunning"
+check "new(herdr): near の pane (w3:p1) を下に分割し claude を起動、orca は呼ばない" "$(hnew "{\"cwd\":\"$WTA\",\"near\":\"term_x__w3-p1\"}")" "200 status,split w3:p1 --direction down --cwd $WTA --focus,start rmv-N --kind claude --pane w9:p9, orca-none"
+check "new(herdr): 戻りは新 pane と mode herdr" "$(cat "$TMP/body")" '{"handle":"w9:p9","mode":"herdr"}'
+check "new(herdr): near 無し → focused の pane (w3:pB) を分割" "$(hnew "{\"cwd\":\"$WTA\"}")" "200 status,split w3:pB --direction down --cwd $WTA --focus,start rmv-N --kind claude --pane w9:p9, orca-none"
+check "new(herdr): near の pane が agent list に居ない → focused の pane" "$(hnew "{\"cwd\":\"$WTA\",\"near\":\"term_x__w3-pZ\"}")" "200 status,split w3:pB --direction down --cwd $WTA --focus,start rmv-N --kind claude --pane w9:p9, orca-none"
+check "new(herdr): 許可リスト外の cwd → 403 で herdr を呼ばない" "$(hnew '{"cwd":"/Users/i/elsewhere"}')" "403  orca-none"
+printf '{"result":{"agents":[{"agent":"claude","pane_id":"w3:p1","focused":false}]}}' > "$TMP/hagents"
+check "new(herdr): near も focused も無い → Orca の tab に落とす (split は呼ばない)" "$(hnew "{\"cwd\":\"$WTA\"}")" "200 status, orca-called"
+printf '{"result":{"agents":[{"agent":"claude","pane_id":"w3:pB","focused":true}]}}' > "$TMP/hagents"
+rm -f "$TMP/hrunning"
+check "new(herdr): herdr server 停止 → Orca の tab に落とす (split は呼ばない)" "$(hnew "{\"cwd\":\"$WTA\",\"near\":\"term_x__w3-pB\"}")" "200 status, orca-called"
+check "new(herdr): 落ちた先の戻りは従来の handle と mode tab" "$(cat "$TMP/body")" '{"handle":"term_new","mode":"tab"}'
 
 echo "checked $N cases ($FAIL failed)"
 [ "$FAIL" -eq 0 ]

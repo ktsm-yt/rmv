@@ -35,9 +35,10 @@ async function readAsking(session: string, lastReplyTs: number): Promise<{ promp
 }
 // 一覧のまとめ目印 (item.session) = state/perm・state/prompt のファイル名。hooks/stop-to-fragment.py の session_key と同じ式 (片方だけ直さない)。
 // herdr 配下の pane は Orca 端末 handle を共有するので、pane があれば `<handle>__<pane>` (":" は "-"、他の記号は捨てる) にして pane ごとに分ける。pane 無しは従来の handle || session_id
+const paneKey = (pane: string) => pane.replace(/:/g, "-").replace(/[^A-Za-z0-9_-]/g, "");
 function sessionKey(meta: { terminal?: unknown; session_id?: unknown; herdr_pane?: unknown }): string {
   const handle = String(meta.terminal || meta.session_id || "");
-  const pane = meta.terminal && typeof meta.herdr_pane === "string" ? meta.herdr_pane.replace(/:/g, "-").replace(/[^A-Za-z0-9_-]/g, "") : "";
+  const pane = meta.terminal && typeof meta.herdr_pane === "string" ? paneKey(meta.herdr_pane) : "";
   return pane ? `${handle}__${pane}` : handle;
 }
 const NAME = /^[\w.-]+\.md$/; // [\w.-] のみ: "/" を含まないので state/history の外は読めない
@@ -202,16 +203,39 @@ async function worktrees(): Promise<Response> {
   return paths ? Response.json(paths, { headers: { "cache-control": "no-store" } }) : new Response("orca worktree list failed", { status: 502 });
 }
 
-// POST /new {cwd}: まっさらな Claude Code セッションを Orca の新しい端末タブで起動する。
+// POST /new {cwd}: まっさらな Claude Code セッションを起動する。herdr が動いていればその pane 分割 (newInHerdr)、でなければ Orca の新しい端末タブ。
 // cwd は orca worktree list に載っている path と完全一致する時だけ (任意の dir で任意の command を走らせない)。command は RMX_NEW_CMD (既定 claude)。shell は通さない
 const NEW_CMD = process.env.RMX_NEW_CMD || "claude";
 const NEW_MODE = process.env.RMX_NEW_MODE === "split" ? "split" : "tab"; // tab = 新しいタブ (既定) / split = 画面の送り先の端末を分割
+// herdr が動いていれば pane を下に分割して NEW_CMD を起動し、その pane id を返す。分割元 = near の pane (herdr agent list に居れば) → focused の pane。
+// 動いていない・分割元が無い・途中で失敗は null (呼び元が Orca に落とす)。near は `<handle>__<paneKey>` なので paneKey が一致する pane を探す
+async function newInHerdr(cwd: string, near: unknown): Promise<string | null> {
+  try {
+    const st = await herdrRun(["status", "server", "--json"]);
+    if (st.code !== 0 || JSON.parse(st.out)?.running !== true) return null;
+    const agents = await herdrAgents(0);
+    if (!agents) return null;
+    const nearKey = String(near).split("__")[1];
+    const from = [...agents].find(([id]) => nearKey && paneKey(id) === nearKey) ?? [...agents].find(([, a]) => a.focused);
+    if (!from) return null;
+    const sp = await herdrRun(["pane", "split", from[0], "--direction", "down", "--cwd", cwd, "--focus"]);
+    const pane = sp.code === 0 ? JSON.parse(sp.out)?.result?.pane?.pane_id : null; // pane split は新 pane を .result.pane に返す (herdr --skill)
+    if (typeof pane !== "string" || !HERDR_PANE.test(pane)) return null;
+    // 既定の claude は agent start (起動完了まで待ち、agent list に名前付きで載る)。他の command は shell にそのまま打つ
+    const r = await herdrRun(NEW_CMD === "claude" ? ["agent", "start", `rmv-${Date.now().toString(36)}`, "--kind", "claude", "--pane", pane] : ["pane", "run", pane, NEW_CMD]);
+    if (r.code === 0) return pane;
+    await herdrRun(["pane", "close", pane]); // 起動に失敗した空の pane を残さない (呼び元が Orca で開き直すので二重になる)
+    return null;
+  } catch { return null; }
+}
 async function newSession(req: Request): Promise<Response> {
   if (!ORIGINS.has(req.headers.get("origin") ?? "")) return new Response("forbidden origin", { status: 403 });
   const { cwd, near } = await req.json().catch(() => ({}));
   if (typeof cwd !== "string" || !cwd) return new Response("missing cwd", { status: 400 });
   const paths = await worktreePaths();
   if (!paths?.includes(cwd)) return new Response("forbidden cwd", { status: 403 });
+  const herdrPane = await newInHerdr(cwd, near);
+  if (herdrPane) return Response.json({ handle: herdrPane, mode: "herdr" }); // 画面は応答の handle を使わない (ok かどうかだけ見る)
   try {
     // split: 選んだ cwd と worktreePath が一致する生きた端末を下に分割する (cfork の「下に分割」と同じ形)。near (画面の送り先) が一致すればそれ、無ければ同じフォルダの別の端末。
     // 別フォルダの端末を split すると、Orca 上はその端末の worktree のタブに入り「新しいフォルダで開いた」と見えない (2026-10-04 実機)。一致する端末が無ければ tab と同じ create に落とす
@@ -270,15 +294,16 @@ async function liveTerminals(maxAge: number): Promise<Term[] | null> {
 }
 
 // herdr の Claude が居る pane: `herdr agent list` の pane_id → {title: terminal_title (先頭の ◑ / ✳ が作業中 / 入力待ち)}。取れない (herdr 無し / exit 非 0 / JSON 不正) 時は null。memo は liveTerminals と同じ
-let herdrCache: { at: number; agents: Map<string, { title: string }> | null } | null = null;
-async function herdrAgents(maxAge: number): Promise<Map<string, { title: string }> | null> {
+type HerdrAgent = { title: string; focused: boolean };
+let herdrCache: { at: number; agents: Map<string, HerdrAgent> | null } | null = null;
+async function herdrAgents(maxAge: number): Promise<Map<string, HerdrAgent> | null> {
   if (herdrCache && Date.now() - herdrCache.at < maxAge) return herdrCache.agents;
-  let agents: Map<string, { title: string }> | null = null;
+  let agents: Map<string, HerdrAgent> | null = null;
   try {
     const p = Bun.spawn([HERDR, "agent", "list"], { stdout: "pipe", stderr: "ignore" });
     const [out, code] = await Promise.all([new Response(p.stdout).text(), p.exited]);
     const list = code === 0 ? JSON.parse(out)?.result?.agents : null;
-    if (Array.isArray(list)) agents = new Map(list.filter((a) => a?.agent === "claude" && typeof a?.pane_id === "string").map((a) => [a.pane_id, { title: String(a.terminal_title ?? "") }]));
+    if (Array.isArray(list)) agents = new Map(list.filter((a) => a?.agent === "claude" && typeof a?.pane_id === "string").map((a) => [a.pane_id, { title: String(a.terminal_title ?? ""), focused: a.focused === true }]));
   } catch {}
   herdrCache = { at: Date.now(), agents };
   return agents;
