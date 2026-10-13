@@ -213,7 +213,19 @@ const NEW_MODE = process.env.RMX_NEW_MODE === "split" ? "split" : "tab"; // tab 
 // herdr が動いていれば選んだ cwd と同じフォルダの pane を下に分割して NEW_CMD を起動し、その pane id を返す。herdr は「フォルダごとに workspace」で使うので、
 // 別フォルダの pane を分割すると新 pane がそのフォルダの画面の中に入り、選んだフォルダで立ち上がったように見えない (2026-10-13 実機)。
 // 分割元 = pane list (素の shell も含む) のうち cwd 一致 → near の pane → focused → 先頭。一致する pane が無ければ workspace を新設してその root pane を使う。
-// 動いていない・途中で失敗は null (呼び元が Orca に落とす)。near は `<handle>__<paneKey>` なので paneKey が一致する pane を探す
+// ただし cwd 一致の pane のうち agent が居らず前面が素の shell の pane (paneIsIdleShell) があれば、分割せずその pane で起動する (開くたびに pane が増えない)。複数なら near → focused → 先頭。
+// 再利用した pane は user の物なので起動に失敗しても閉じない。動いていない・途中で失敗は null (呼び元が Orca に落とす)。near は `<handle>__<paneKey>` なので paneKey が一致する pane を探す
+// 前面が shell 自身だけの pane か: `herdr pane process-info` の foreground_processes が shell_pid の 1 プロセスだけ (dev server / vim / 実行中のコマンドは別 pid)。取れない・読めない時は false (誤って打ち込むより pane が増える方がまし)
+// ponytail: プロンプトに打ちかけの文字があるかは見えない。上限 = shell が前面なら空きとみなす
+async function paneIsIdleShell(pane: string): Promise<boolean> {
+  try {
+    const r = await herdrRun(["pane", "process-info", "--pane", pane]);
+    if (r.code !== 0) return false;
+    const info = JSON.parse(r.out)?.result?.process_info;
+    const fg = info?.foreground_processes;
+    return typeof info?.shell_pid === "number" && Array.isArray(fg) && fg.length === 1 && fg[0]?.pid === info.shell_pid;
+  } catch { return false; }
+}
 async function newInHerdr(cwd: string, near: unknown): Promise<string | null> {
   let workspace: string | null = null; // この呼びで作った workspace (起動に失敗したら閉じる)
   try {
@@ -223,9 +235,14 @@ async function newInHerdr(cwd: string, near: unknown): Promise<string | null> {
     if (ls.code !== 0) return null;
     const panes = (JSON.parse(ls.out)?.result?.panes ?? []).filter((p: any) => p?.cwd === cwd && typeof p?.pane_id === "string");
     const nearKey = String(near).split("__")[1];
-    const from = panes.find((p: any) => nearKey && paneKey(p.pane_id) === nearKey) ?? panes.find((p: any) => p.focused === true) ?? panes[0];
+    const order = (a: any[]) => [...a.filter((p) => nearKey && paneKey(p.pane_id) === nearKey), ...a.filter((p) => p.focused === true), ...a]; // near → focused → 先頭
+    let reuse: any = null; // 空き shell の pane (agent キーが無いものだけ前面を確かめる)
+    for (const p of order(panes.filter((p: any) => !p.agent))) if (await paneIsIdleShell(p.pane_id)) { reuse = p; break; }
+    const from = order(panes)[0];
     let pane: unknown;
-    if (from) {
+    if (reuse) {
+      pane = reuse.pane_id;
+    } else if (from) {
       const sp = await herdrRun(["pane", "split", from.pane_id, "--direction", "down", "--cwd", cwd, "--focus"]);
       pane = sp.code === 0 ? JSON.parse(sp.out)?.result?.pane?.pane_id : null; // pane split は新 pane を .result.pane に返す (herdr --skill)
     } else {
@@ -237,7 +254,13 @@ async function newInHerdr(cwd: string, near: unknown): Promise<string | null> {
     if (typeof pane !== "string" || !HERDR_PANE.test(pane)) { if (workspace) await herdrRun(["workspace", "close", workspace]); return null; }
     // 既定の claude は agent start (起動完了まで待ち、agent list に名前付きで載る)。他の command は shell にそのまま打つ
     const r = await herdrRun(NEW_CMD === "claude" ? ["agent", "start", `rmv-${Date.now().toString(36)}`, "--kind", "claude", "--pane", pane] : ["pane", "run", pane, NEW_CMD]);
-    if (r.code === 0) return pane;
+    if (r.code === 0) {
+      if (reuse) { // 再利用した pane を前に出す (best-effort、失敗しても起動は済んでいる)
+        for (const a of [["workspace", "focus", reuse.workspace_id], ["tab", "focus", reuse.tab_id]]) if (typeof a[2] === "string") await herdrRun(a);
+      }
+      return pane;
+    }
+    if (reuse) return null; // user の既存 pane は閉じない
     await herdrRun(workspace ? ["workspace", "close", workspace] : ["pane", "close", pane]); // 起動に失敗した空の pane / workspace を残さない (呼び元が Orca で開き直すので二重になる)
     return null;
   } catch { return null; }

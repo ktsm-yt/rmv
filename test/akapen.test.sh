@@ -260,6 +260,10 @@ cat > "$HERDRSTUB" <<EOF
 if [ "\$1 \$2" = "agent list" ]; then cat "$TMP/hagents" 2>/dev/null || exit 1; exit 0; fi
 # pane list も同じ読み取り: $TMP/hpanes の中身 (cwd 付きの pane 一覧、/new の分割元選びに使う)
 if [ "\$1 \$2" = "pane list" ]; then cat "$TMP/hpanes" 2>/dev/null || exit 1; exit 0; fi
+# pane process-info --pane <id>: id が $TMP/hidle に書かれていれば前面は shell 自身だけ (空き pane)、無ければ vim が前面 (既定 = 使えない pane)。hcalls には記録しない
+if [ "\$1 \$2" = "pane process-info" ]; then
+  if grep -qx "\$4" "$TMP/hidle" 2>/dev/null; then echo '{"result":{"process_info":{"shell_pid":10,"foreground_processes":[{"pid":10,"name":"zsh"}]}}}'; else echo '{"result":{"process_info":{"shell_pid":10,"foreground_processes":[{"pid":77,"name":"vim"}]}}}'; fi; exit 0
+fi
 # status server: $TMP/hrunning があれば動作中 (無ければ停止中)。pane split は新 pane w9:p9 を返す (どちらも hcalls に記録する)
 if [ "\$1" = status ]; then echo "status" >> "$TMP/hcalls"; [ -e "$TMP/hrunning" ] && echo '{"status":"running","running":true}' || echo '{"status":"stopped","running":false}'; exit 0; fi
 echo "\$2 \$3 \${*:4}" >> "$TMP/hcalls"
@@ -942,6 +946,22 @@ check "new(herdr): 同じフォルダの pane に near も focused も無い →
 mkpanes "$(hp w1:p1 "$OTHER" true)"
 check "new(herdr): 同じフォルダの pane が無い → workspace を新設 (フォルダ名の label) してその root pane で claude を起動" "$(hnew "{\"cwd\":\"$WTA\",\"near\":\"term_x__w1-p1\"}")" "200 status,create --cwd $WTA --label $(basename "$WTA") --focus,start rmv-N --kind claude --pane w8:p1, orca-none"
 check "new(herdr): workspace 新設時の戻りは root pane と mode herdr" "$(cat "$TMP/body")" '{"handle":"w8:p1","mode":"herdr"}'
+# 空き pane の再利用: agent が居ず前面が shell 自身だけの pane があれば分割せずそこで起動 (hidle に書いた pane が空き shell、書かない pane は vim が前面)
+mkpanes "$(hp w3:p1 "$WTA" false '"claude"'),$(hp w3:p2 "$WTA" false),$(hp w3:p3 "$WTA" true)"
+printf 'w3:p1\nw3:p2\nw3:p3\n' > "$TMP/hidle"
+check "new(herdr): 空き shell の pane (w3:p3 focused) があれば分割せず agent start (agent の居る w3:p1 は対象外)" "$(hnew "{\"cwd\":\"$WTA\"}")" "200 status,start rmv-N --kind claude --pane w3:p3, orca-none"
+check "new(herdr): 再利用の戻りはその pane と mode herdr" "$(cat "$TMP/body")" '{"handle":"w3:p3","mode":"herdr"}'
+check "new(herdr): 空き pane が複数なら near を優先" "$(hnew "{\"cwd\":\"$WTA\",\"near\":\"term_x__w3-p2\"}")" "200 status,start rmv-N --kind claude --pane w3:p2, orca-none"
+printf 'w3:p1\n' > "$TMP/hidle"
+check "new(herdr): agent の居る pane (w3:p1) しか空きに見えない → 従来どおり分割" "$(hnew "{\"cwd\":\"$WTA\"}")" "200 status,split w3:p3 --direction down --cwd $WTA --focus,start rmv-N --kind claude --pane w9:p9, orca-none"
+rm -f "$TMP/hidle"
+check "new(herdr): 前面が shell でない (vim 等) pane には打たず分割" "$(hnew "{\"cwd\":\"$WTA\"}")" "200 status,split w3:p3 --direction down --cwd $WTA --focus,start rmv-N --kind claude --pane w9:p9, orca-none"
+mkpanes "$(hp w3:p3 "$WTA" true)"
+printf 'w3:p3\n' > "$TMP/hidle"
+touch "$TMP/hfail"
+check "new(herdr): 再利用した pane で起動が失敗 → pane は閉じず Orca の tab に落とす" "$(hnew "{\"cwd\":\"$WTA\"}")" "200 status,start rmv-N --kind claude --pane w3:p3, orca-called"
+rm -f "$TMP/hidle"
+mkpanes "$(hp w1:p1 "$OTHER" true)"
 touch "$TMP/hfail"
 check "new(herdr): workspace 新設後に起動が失敗 → その workspace を閉じて Orca の tab に落とす" "$(hnew "{\"cwd\":\"$WTA\"}")" "200 status,create --cwd $WTA --label $(basename "$WTA") --focus,start rmv-N --kind claude --pane w8:p1,close w8 , orca-called"
 mkpanes "$(hp w3:p1 "$WTA" true)"
