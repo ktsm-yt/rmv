@@ -466,11 +466,11 @@ async function checkHerdrPane(pane: string): Promise<Response | null> {
   }
 }
 // orca の terminal send に流している制御文字 (Enter / Ctrl+V / 入力欄クリア) は herdr では send-keys のキー名で送る。それ以外は literal text。send-text に `--` は付けない: herdr は `--` も本文として送り、`-h` 始まりの文も flag にせず届く (2026-10-13 実測)。
-// 複数行は bracketed paste の印で囲む: send-text は印を付けずに生で流すので、Claude の入力欄に貼り付けとして 1 メッセージで入れる (herdr の agent prompt と同じ送り方、ESC は素通しを実測)
+// 複数行も印を付けず生で送る: Claude の入力欄に複数行のまま入り途中で送信されない。bracketed paste で囲むと『貼り付けた文』扱いになり指示として読まれにくい (2026-10-13 実 Claude で確認)
 const HERDR_KEYS: Record<string, string[]> = { "\r": ["enter"], "\x16": ["ctrl+v"], "\x15\x7f": ["ctrl+u", "backspace"] };
 function herdrSend(pane: string, t: string): ReturnType<typeof herdrRun> {
   const keys = HERDR_KEYS[t];
-  return herdrRun(keys ? ["pane", "send-keys", pane, ...keys] : ["pane", "send-text", pane, t.includes("\n") ? `\x1b[200~${t}\x1b[201~` : t]);
+  return herdrRun(keys ? ["pane", "send-keys", pane, ...keys] : ["pane", "send-text", pane, t]);
 }
 
 // Origin 必須 + 一致: 無いと任意の web ページが fetch POST で端末にキー入力を流し込める (CSRF)。

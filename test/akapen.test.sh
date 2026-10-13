@@ -687,9 +687,6 @@ check "herdr send: focus=false → switch も呼ばない" "$(post "$GOOD" "{\"n
 rm -f "$TMP/hcalls"
 post "$GOOD" "{\"name\":\"$HNAME\",\"text\":\"1\",\"reset\":true,\"focus\":false}" > /dev/null
 check "herdr send: reset → ctrl+u backspace を先に送る" "$(grep -v '^get ' "$TMP/hcalls" | tr '\n' ',')" "send-keys w3:p2 ctrl+u backspace,send-text w3:p2 1,send-keys w3:p2 enter,"
-rm -f "$TMP/hcalls"
-post "$GOOD" "{\"name\":\"$HNAME\",\"text\":\"L1\\nL2\",\"focus\":false}" > /dev/null
-check "herdr send: 複数行は bracketed paste の印で囲む (1 行は囲まない)" "$(grep -c $'\x1b\\[200~L1' "$TMP/hcalls") $(grep -c $'L2\x1b\\[201~' "$TMP/hcalls") $(grep -c $'\x1b' <(grep -v L "$TMP/hcalls"))" "1 1 0"
 # 画像: ctrl+v で貼り、pane read の [Image #N] が増えるのを待つ
 mkdir -p "$STATE/paste"; printf '\x89PNG' > "$STATE/paste/1700000000000-deadbeef.png"
 rm -f "$TMP/hcalls" "$TMP/calls"
