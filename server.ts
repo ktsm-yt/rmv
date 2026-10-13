@@ -133,9 +133,11 @@ async function history(repo: string | null): Promise<Response> {
     const shown = paneView(pane, await agentsOf(herdrSockOf(p)), byHandle.get(handle));
     const wt = isTerm ? byHandle.get(handle)?.worktreePath : undefined;
     const root = typeof wt === "string" && wt ? wt : cwd;
+    const live = shown.herdr ? shown.alive : (pane !== null && !isTerm ? true : terms ? isTerm && handles.has(handle) : true) && shown.alive;
     asking.set(session, a);
-    items.unshift({ name: `asking-${session}.md`, prompt: null, ts: a.ts, cwd, root, repo: root.split("/").filter(Boolean).pop() ?? "", head: "", terminal: isTerm || pane !== null, live: shown.herdr ? shown.alive : (pane !== null && !isTerm ? true : terms ? isTerm && handles.has(handle) : true) && shown.alive, session, perm: null, agent: null, title: shown.title, lastOutputAt: shown.lastOutputAt });
+    items.push({ name: `asking-${session}.md`, prompt: null, ts: a.ts, cwd, root, repo: root.split("/").filter(Boolean).pop() ?? "", head: "", terminal: isTerm || pane !== null, live, session, perm: null, agent: null, title: shown.title, lastOutputAt: shown.lastOutputAt });
   }
+  items.sort((x, y) => (Date.parse(y.ts ?? "") || 0) - (Date.parse(x.ts ?? "") || 0)); // 仮の entry も時刻順。先頭固定だと端末が閉じた後も残る state/prompt の待機中が「最新」に居座り、追従が止まる (2026-10-13 実害: 19:57 の Crewforce が 2 時間先頭に残った)
   const out = items.map(({ root, ...e }) => ({ ...e, asking: asking.get(e.session) ?? null }));
   const want = repo?.toLowerCase();
   return Response.json(want ? out.filter((e) => e.repo.toLowerCase() === want) : out, { headers: { "cache-control": "no-store", "x-rmx-live": terms || agents || named ? "ok" : "unknown" } });

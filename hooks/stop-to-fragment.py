@@ -175,6 +175,8 @@ def main():
         # Stop の stdin は last_assistant_message / cwd / session_id を直接持つ (2026-09-28 実測)。
         # transcript は Stop 時点で最終行が未 flush のことがあるので、stdin を正、transcript を予備にする
         sub = data.get("hook_event_name") == "SubagentStop"
+        if sub and not data.get("agent_type"):
+            return  # agent_type 空の SubagentStop は Claude Code 内部の裏作業 (要約・候補文)。transcript に無い文を subagent の返事として積んでいた (2026-10-13 実測 121 件 / 日)
         text = data.get("last_assistant_message")
         if not (isinstance(text, str) and text.strip()):
             tp = data.get("agent_transcript_path" if sub else "transcript_path")  # subagent の transcript_path は親の会話
