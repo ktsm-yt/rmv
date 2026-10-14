@@ -255,7 +255,7 @@ chmod +x "$OSASTUB"
 printf '#!/usr/bin/env bash\ncat "%s/clip"\n' "$TMP" > "$TMP/pbpaste-stub"
 printf '#!/usr/bin/env bash\ncat > "%s/clip"; : > "%s/pbcopied"\n' "$TMP" "$TMP" > "$TMP/pbcopy-stub"
 chmod +x "$TMP/pbpaste-stub" "$TMP/pbcopy-stub"
-# herdr stub: 1 回の呼び出しを "<サブコマンド> <pane> <残り>" の 1 行で $TMP/hcalls に追記。$TMP/hgone があれば pane_not_found で exit 1、$TMP/hshell があれば Claude の居ない pane (agent 無し)、
+# herdr stub: 1 回の呼び出しを "<サブコマンド> <pane> <残り>" の 1 行で $TMP/hcalls に追記。$TMP/hgone があれば pane_not_found で exit 1、$TMP/hshell があれば Claude の居ない pane (agent 無し。中身に pane id が書いてあればその pane だけ)、
 #   $TMP/hfail があれば send 系だけ exit 1。pane read は ctrl+v の数だけ [Image #N] を画面に出す ($TMP/hnoimg があれば出さない)
 HERDRSTUB="$TMP/herdr-stub"
 cat > "$HERDRSTUB" <<EOF
@@ -278,7 +278,7 @@ echo "\${HERDR_SOCKET_PATH:-default}" >> "$TMP/hsocks"
 if [ "\$2" = split ]; then echo '{"result":{"pane":{"pane_id":"w9:p9"},"type":"pane_info"}}'; exit 0; fi
 if [ "\$1 \$2" = "workspace create" ]; then echo '{"result":{"workspace":{"workspace_id":"w8"},"root_pane":{"pane_id":"w8:p1"}}}'; exit 0; fi
 [ -e "$TMP/hgone" ] && { echo '{"error":{"code":"pane_not_found","message":"pane not found"}}'; exit 1; }
-if [ "\$2" = get ]; then if [ -e "$TMP/hshell" ]; then echo '{"result":{"pane":{"pane_id":"x"}}}'; else echo '{"result":{"pane":{"pane_id":"x","agent":"claude"}}}'; fi; exit 0; fi
+if [ "\$2" = get ]; then if [ -e "$TMP/hshell" ] && { [ ! -s "$TMP/hshell" ] || grep -qx "\$3" "$TMP/hshell"; }; then echo '{"result":{"pane":{"pane_id":"x"}}}'; else echo '{"result":{"pane":{"pane_id":"x","agent":"claude"}}}'; fi; exit 0; fi
 if [ "\$2" = read ]; then n=\$(grep -c '^send-keys .*ctrl+v' "$TMP/hcalls"); [ -e "$TMP/hnoimg" ] && n=0; for ((i = 1; i <= n; i++)); do echo "> [Image #\$i]"; done; exit 0; fi
 [ -e "$TMP/hfail" ] && { echo "herdr boom" >&2; exit 1; }
 echo '{"result":{"type":"ok"}}'
@@ -773,6 +773,19 @@ touch "$TMP/hgone"; rm -f "$TMP/hcalls"
 check "herdr send: pane が閉じている → 409、何も送らず orca にも fallback しない" "$(post "$GOOD" "$(body "$HNAME" x)") $(grep -c 'send-' "$TMP/hcalls") [$(calls)]" "409 0 []"
 rm -f "$TMP/hgone"; touch "$TMP/hshell"; rm -f "$TMP/hcalls"
 check "herdr send: pane に Claude が居ない (素のシェル) → 409、何も送らない" "$(post "$GOOD" "$(body "$HNAME" x)") $(grep -c 'send-' "$TMP/hcalls") [$(calls)]" "409 0 []"
+# 会話を別の pane で再開した (claude --resume): 古い記録の pane に Claude が居なければ、同じ会話の最新の記録の pane へ送る
+HSID="$(field "$STATE/history/${HNAME%.md}.json" session_id)"
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); d.update(herdr_pane="w3:p7", ts="2999-01-02T00:00:00+09:00", name="x"); json.dump(d,open(sys.argv[2],"w"))' "$STATE/history/${HNAME%.md}.json" "$STATE/history/29990102T000000000-moved.json"
+echo w3:p2 > "$TMP/hshell"; rm -f "$TMP/hcalls"
+check "herdr send: 会話が別 pane に移った → 移った先へ送る" "$(post "$GOOD" "$(body "$HNAME" x)") $(tr '\n' ',' < "$TMP/hcalls")" "200 get w3:p2 ,get w3:p7 ,send-text w3:p7 x,send-keys w3:p7 enter,"
+# 移った先の pane で後から別の会話が開かれた (起動の記録が別 session_id) → 送らない
+mkdir -p "$STATE/prompt"
+printf '{"prompt":"","waiting":true,"ts":"2999-01-03T00:00:00+09:00","session_id":"other","cwd":"/x","terminal":"term_hd","herdr_pane":"w3:p7"}' > "$STATE/prompt/term_hd__w3-p7.json"
+rm -f "$TMP/hcalls"
+check "herdr send: 移った先で別の会話が開かれている → 409、何も送らない" "$(post "$GOOD" "$(body "$HNAME" x)") $(grep -c 'send-' "$TMP/hcalls")" "409 0"
+rm -f "$STATE/prompt/term_hd__w3-p7.json"; echo w3:p2 > "$TMP/hshell"; echo w3:p7 >> "$TMP/hshell"; rm -f "$TMP/hcalls"
+check "herdr send: 移った先にも Claude が居ない → 409、何も送らない" "$(post "$GOOD" "$(body "$HNAME" x)") $(grep -c 'send-' "$TMP/hcalls")" "409 0"
+rm -f "$STATE/history/29990102T000000000-moved.json" "$TMP/calls"
 rm -f "$TMP/hshell"; touch "$TMP/hfail"
 check "herdr send: herdr の送信失敗 → 502、orca にも fallback しない" "$(post "$GOOD" "$(body "$HNAME" x)") [$(calls)]" "502 []"
 rm -f "$TMP/hfail"

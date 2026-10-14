@@ -593,6 +593,29 @@ function herdrSend(pane: string, t: string, sock: string | null): ReturnType<typ
   return herdrRun(keys ? ["pane", "send-keys", pane, ...keys] : ["pane", "send-text", pane, t], sock);
 }
 
+// 会話を別の pane で再開すると (claude --resume)、前の pane で書いた記録は前の pane を向いたまま残る
+// (2026-10-14 実害: 3709da0b が wF:p9 → wF:p1 に移り、p9 時代の記録から送ると「Claude が居ない」で止まった)。
+// 同じ session_id の記録がある pane のうち、その pane の最新の記録 (返事 / 依頼・起動の記録) も同じ会話のものだけを候補にし、一番新しい記録を返す。
+// pane の最新の記録が別の会話 = その後に別の Claude が開かれた pane なので送らない (誤送信防止)。
+// ponytail: 送信が止まった時だけ history と prompt の json を全部読む (hook が 200 件に切り詰めるので軽い)
+async function movedPane(meta: { session_id?: unknown; herdr_pane?: unknown; herdr_socket?: unknown }): Promise<Record<string, unknown> | null> {
+  const sid = meta.session_id;
+  if (typeof sid !== "string" || !sid) return null;
+  const newest = new Map<string, { t: number; r: Record<string, unknown> }>(); // key = socket と pane
+  for (const dir of [HIST, PROMPT]) {
+    for (const n of (await readdir(dir).catch(() => [] as string[])).filter((n) => n.endsWith(".json"))) {
+      const r = await Bun.file(`${dir}/${n}`).json().catch(() => null);
+      const pane = r && herdrPaneOf(r);
+      if (!pane || !HERDR_PANE.test(pane)) continue;
+      const k = `${herdrSockOf(r) ?? ""}|${pane}`;
+      const t = Date.parse(String(r.ts ?? "")) || 0;
+      if (t > (newest.get(k)?.t ?? -1)) newest.set(k, { t, r });
+    }
+  }
+  const from = `${herdrSockOf(meta) ?? ""}|${herdrPaneOf(meta)}`;
+  const hits = [...newest].filter(([k, v]) => k !== from && v.r.session_id === sid).sort((a, b) => b[1].t - a[1].t);
+  return hits[0]?.[1].r ?? null;
+}
 // Origin 必須 + 一致: 無いと任意の web ページが fetch POST で端末にキー入力を流し込める (CSRF)。
 async function send(req: Request): Promise<Response> {
   if (!ORIGINS.has(req.headers.get("origin") ?? "")) return new Response("forbidden origin", { status: 403 });
@@ -608,12 +631,18 @@ async function send(req: Request): Promise<Response> {
   if (images.length > 10 || !images.every((p) => typeof p === "string" && p.startsWith(`${STATE}/paste/`) && PASTED.test(p.slice(STATE.length + 7)))) return new Response("bad images", { status: 400 });
   if ((!text.trim() && !images.length) || text.length > 100000) return new Response("text must be 1..100000 chars", { status: 400 }); // 10 万字 = markdown の長文を貼っても足りる長さ。orca terminal send で 10 万字 (23 万バイト) が欠けずに届くのを確かめた (2026-10-08)
   // asking-<session>.md (返事ゼロの仮 entry、待機中の最初の依頼の送り先) は history に meta が無いので、state/prompt の記録 (terminal・herdr_pane・cwd 付き) を meta に使う
-  const meta = await Bun.file(name.startsWith("asking-") ? `${PROMPT}/${name.slice(7, -3)}.json` : `${HIST}/${name.slice(0, -3)}.json`).json().catch(() => null);
+  let meta = await Bun.file(name.startsWith("asking-") ? `${PROMPT}/${name.slice(7, -3)}.json` : `${HIST}/${name.slice(0, -3)}.json`).json().catch(() => null);
   if (!meta) return new Response("not found", { status: 404 });
-  const pane = herdrPaneOf(meta);
-  const sock = herdrSockOf(meta);
+  let pane = herdrPaneOf(meta);
+  let sock = herdrSockOf(meta);
   if (!pane && (typeof meta.terminal !== "string" || !meta.terminal)) return new Response("entry has no terminal", { status: 409 });
-  if (pane) { const bad = await checkHerdrPane(pane, sock); if (bad) return bad; }
+  if (pane) {
+    const bad = await checkHerdrPane(pane, sock);
+    // 元の pane が閉じた / Claude が居ない時だけ、同じ会話が移った先の pane を探す。そこも送れなければ元の理由で止める
+    const moved = bad?.status === 409 ? await movedPane(meta) : null;
+    if (bad && (!moved || (await checkHerdrPane(herdrPaneOf(moved)!, herdrSockOf(moved))))) return bad;
+    if (moved) { meta = moved; pane = herdrPaneOf(moved); sock = herdrSockOf(moved); }
+  }
   // herdr pane がある時、orca の端末は焦点を戻す先 (herdr を載せている Orca タブ) としてだけ使う。Orca 無しの herdr だけの entry は handle なし (焦点は動かさない)
   const handle = pane ? meta.terminal || null : await resolveTerminal(meta);
   if (!pane && !handle) return new Response(`terminal closed: 元の端末は閉じられ、同じフォルダ (${meta.cwd ?? ""}) の端末も無い`, { status: 409 });
