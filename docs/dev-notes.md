@@ -28,10 +28,10 @@
      - 送り先 chip (入力欄の直上に直近 5 セッションを縦に、各行は時刻 + 最新返事の冒頭): 「追従」= 表示中の返事の端末 / 他 = そのセッションに固定 (送るのは一覧でそのセッションの最新返事、表示を切り替えても変わらない。見出しに 📌)。押すと表示もそのセッションに切り替わる (上の chip を押したのと同じ、追従 = 最新)。固定は repo ごとに localStorage `rmx.chat.pin` (`{repo: session key}`)、「追従」で解除
      - 置き場は CSS だけで決める: 幅 900px 以上は右の列 (300px)、未満は返事の上の帯。✎ で開閉、localStorage `rmx.chat.open` に覚える (既定は開)
    - 描画: 返事中の絶対パス (png/svg/動画/音声) はその場に表示、クリックで新タブ。http(s) リンクは新タブ
-5. 常駐 (launchd、log は `~/Library/Logs/harness-rmx.log`):
-   - load: `bash launchd/install.sh` (plist の `__RMV_DIR__` / `__HOME__` を埋めて ~/Library/LaunchAgents に置き bootstrap。起動は job 名 wrapper `launchd/harness-rmx`、repo の場所は wrapper が自分で解決)
-   - unload: `launchctl bootout gui/$(id -u)/com.ktsm.harness-rmx`
-   - 再起動: `launchctl kickstart -k gui/$(id -u)/com.ktsm.harness-rmx`
+5. 常駐 (launchd、log は `~/Library/Logs/harness-rmv.log`):
+   - load: `bash launchd/install.sh` (plist の `__RMV_DIR__` / `__HOME__` を埋めて ~/Library/LaunchAgents に置き bootstrap。起動は job 名 wrapper `launchd/harness-rmv`、repo の場所は wrapper が自分で解決)
+   - unload: `launchctl bootout gui/$(id -u)/com.ktsm.harness-rmv`
+   - 再起動: `launchctl kickstart -k gui/$(id -u)/com.ktsm.harness-rmv`
 6. 確認 (hook): `python3 hooks/stop-to-fragment.py < test/fixture-lowload.jsonl && ls state state/history`
 7. 確認 (server): `curl -s localhost:4310/history | head -c 200` / `curl -s localhost:4310/fragment | head -3`
 8. 送り先の状態: `GET /now` がモデル・エフォート・`ctx` を返す。モデルとエフォートは transcript の最後の `/model` `/effort` と assistant 行から、モデルが無ければ `~/.claude/settings.json` の `"model"` (`RMX_CC_SETTINGS` で場所を変更)。画面は送り先が変わった時と新しい返事が来た時に取り直す。`ctx` の上限は model が `[1m]` で終われば 100 万、それ以外は 20 万の推定

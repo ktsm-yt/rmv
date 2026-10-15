@@ -3,10 +3,10 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.ktsm.harness-rmx</string>
+  <string>com.ktsm.harness-rmv</string>
   <key>ProgramArguments</key>
   <array>
-    <string>__RMV_DIR__/launchd/harness-rmx</string>
+    <string>__RMV_DIR__/launchd/harness-rmv</string>
   </array>
   <key>WorkingDirectory</key>
   <string>__RMV_DIR__</string>
@@ -23,8 +23,8 @@
   <key>KeepAlive</key>
   <true/>
   <key>StandardOutPath</key>
-  <string>__HOME__/Library/Logs/harness-rmx.log</string>
+  <string>__HOME__/Library/Logs/harness-rmv.log</string>
   <key>StandardErrorPath</key>
-  <string>__HOME__/Library/Logs/harness-rmx.log</string>
+  <string>__HOME__/Library/Logs/harness-rmv.log</string>
 </dict>
 </plist>
