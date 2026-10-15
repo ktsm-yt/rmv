@@ -18,17 +18,17 @@ enum Zoom {
         return clamped(CGFloat(value))
     }
 
-    static var restoredPageZoom: CGFloat {
-        restoredValue(UserDefaults.standard.object(forKey: pageZoomKey) as? Double)
+    static func restoredPageZoom(defaults: UserDefaults = .standard) -> CGFloat {
+        restoredValue(defaults.object(forKey: pageZoomKey) as? Double)
     }
 
-    static var restoredMagnification: CGFloat {
-        restoredValue(UserDefaults.standard.object(forKey: magnificationKey) as? Double)
+    static func restoredMagnification(defaults: UserDefaults = .standard) -> CGFloat {
+        restoredValue(defaults.object(forKey: magnificationKey) as? Double)
     }
 
-    static func save(pageZoom: CGFloat, magnification: CGFloat) {
-        UserDefaults.standard.set(Double(clamped(pageZoom)), forKey: pageZoomKey)
-        UserDefaults.standard.set(Double(clamped(magnification)), forKey: magnificationKey)
+    static func save(pageZoom: CGFloat, magnification: CGFloat, defaults: UserDefaults = .standard) {
+        defaults.set(Double(clamped(pageZoom)), forKey: pageZoomKey)
+        defaults.set(Double(clamped(magnification)), forKey: magnificationKey)
     }
 
 }

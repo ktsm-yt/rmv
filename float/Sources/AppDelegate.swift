@@ -6,11 +6,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     private var webView: WKWebView!
     private let statusLabel = NSTextField(labelWithString: "")
     private weak var alwaysOnTopButton: NSButton?
+    private weak var opacitySlider: NSSlider?
+    private var settingsWindowController: SettingsWindowController?
+    private var shortcutMenuItems: [ShortcutAction: [NSMenuItem]] = [:]
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.mainMenu = makeMainMenu()
         makeWindow()
-        load(HomepageStore.homepage)
+        applyMenuShortcuts()
+        load(HomepageStore.homepage())
         window.makeKeyAndOrderFront(nil)
     }
 
@@ -28,7 +32,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         )
         window.title = "RMV Float"
         window.isReleasedWhenClosed = false
-        window.level = .floating
+        window.level = FloatSettings.alwaysOnTop() ? .floating : .normal
+        window.alphaValue = FloatSettings.opacity()
         window.delegate = self
         window.center()
 
@@ -36,8 +41,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         configuration.websiteDataStore = .default()
         webView = WKWebView(frame: .zero, configuration: configuration)
         webView.allowsMagnification = true
-        webView.pageZoom = Zoom.restoredPageZoom
-        webView.magnification = Zoom.restoredMagnification
+        webView.pageZoom = Zoom.restoredPageZoom()
+        webView.magnification = Zoom.restoredMagnification()
         webView.navigationDelegate = self
         webView.uiDelegate = self
         webView.translatesAutoresizingMaskIntoConstraints = false
@@ -66,6 +71,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         let mainMenu = NSMenu()
         let appItem = NSMenuItem()
         let appMenu = NSMenu()
+        let settings = appMenu.addItem(withTitle: "Settings…", action: #selector(showSettings(_:)), keyEquivalent: ",")
+        settings.target = self
+        settings.keyEquivalentModifierMask = .command
+        appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Hide RMV Float", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         appMenu.addItem(withTitle: "Quit RMV Float", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
@@ -83,30 +92,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         editItem.submenu = editMenu
         mainMenu.addItem(editItem)
 
+        let navigateItem = NSMenuItem()
+        navigateItem.title = "Navigate"
+        let navigateMenu = NSMenu(title: "Navigate")
+        addShortcutMenuItem(to: navigateMenu, action: .reload, selector: #selector(reload(_:)))
+        addShortcutMenuItem(to: navigateMenu, action: .home, selector: #selector(goHome(_:)))
+        navigateItem.submenu = navigateMenu
+        mainMenu.addItem(navigateItem)
+
         let viewItem = NSMenuItem()
         viewItem.title = "View"
         let viewMenu = NSMenu(title: "View")
-        let zoomIn = viewMenu.addItem(withTitle: "Zoom In", action: #selector(zoomIn(_:)), keyEquivalent: "+")
-        zoomIn.target = self
-        zoomIn.keyEquivalentModifierMask = .command
-        let zoomInAlias = NSMenuItem(title: "Zoom In", action: #selector(zoomIn(_:)), keyEquivalent: "=")
-        zoomInAlias.target = self
-        zoomInAlias.keyEquivalentModifierMask = .command
-        zoomInAlias.isHidden = true
-        zoomInAlias.allowsKeyEquivalentWhenHidden = true
-        zoomInAlias.allowsAutomaticKeyEquivalentLocalization = false
-        viewMenu.addItem(zoomInAlias)
-        let zoomOut = viewMenu.addItem(withTitle: "Zoom Out", action: #selector(zoomOut(_:)), keyEquivalent: "-")
-        zoomOut.target = self
-        zoomOut.keyEquivalentModifierMask = .command
-        let actualSize = viewMenu.addItem(withTitle: "Actual Size", action: #selector(resetZoom(_:)), keyEquivalent: "0")
-        actualSize.target = self
-        actualSize.keyEquivalentModifierMask = .command
+        addShortcutMenuItem(to: viewMenu, action: .zoomIn, selector: #selector(zoomIn(_:)))
+        addShortcutMenuItem(to: viewMenu, action: .zoomOut, selector: #selector(zoomOut(_:)))
+        addShortcutMenuItem(to: viewMenu, action: .resetZoom, selector: #selector(resetZoom(_:)))
         viewItem.submenu = viewMenu
         mainMenu.addItem(viewItem)
         let windowItem = NSMenuItem(title: "Window", action: nil, keyEquivalent: "")
         let windowMenu = NSMenu(title: "Window")
         windowMenu.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        addShortcutMenuItem(to: windowMenu, action: .alwaysOnTop, selector: #selector(toggleAlwaysOnTop(_:)))
         windowItem.submenu = windowMenu
         mainMenu.addItem(windowItem)
         NSApp.windowsMenu = windowMenu
@@ -121,10 +126,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     }
 
     @objc private func reload(_ sender: Any?) { webView.reload() }
-    @objc private func goHome(_ sender: Any?) { load(HomepageStore.homepage) }
-    @objc private func setOpacity(_ sender: NSSlider) { window.alphaValue = CGFloat(sender.doubleValue) }
-    @objc private func toggleAlwaysOnTop(_ sender: NSButton) {
-        window.level = sender.state == .on ? .floating : .normal
+    @objc private func goHome(_ sender: Any?) { load(HomepageStore.homepage()) }
+    @objc private func setOpacity(_ sender: NSSlider) {
+        let opacity = FloatSettings.clampedOpacity(sender.doubleValue)
+        window.alphaValue = opacity
+        FloatSettings.save(alwaysOnTop: window.level == .floating, opacity: opacity)
+    }
+    @objc private func toggleAlwaysOnTop(_ sender: Any?) {
+        window.level = window.level == .floating ? .normal : .floating
+        FloatSettings.save(alwaysOnTop: window.level == .floating, opacity: window.alphaValue)
         updateAlwaysOnTopButton()
     }
     @objc private func zoomIn(_ sender: Any?) { setPageZoom(webView.pageZoom * webView.magnification * Zoom.step, action: "Zoom") }
@@ -133,22 +143,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         webView.magnification = 1
         setPageZoom(1, action: "Actual Size")
     }
-    @objc private func configureHomepage(_ sender: Any?) {
-        let alert = NSAlert()
-        alert.messageText = "Homepage"
-        alert.informativeText = "Use an http:// or https:// URL."
-        let field = NSTextField(string: HomepageStore.homepage.absoluteString)
-        field.frame.size.width = 360
-        alert.accessoryView = field
-        alert.addButton(withTitle: "Save")
-        alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        guard let url = HomepageStore.validatedURL(field.stringValue) else {
-            showError("Homepage must be a valid http:// or https:// address.")
+    @objc private func showSettings(_ sender: Any?) {
+        if let settingsWindowController, settingsWindowController.window?.isVisible == true {
+            settingsWindowController.showWindow(nil)
+            settingsWindowController.window?.makeKeyAndOrderFront(nil)
             return
         }
-        HomepageStore.save(url)
-        load(url)
+        settingsWindowController = nil
+        let controller = SettingsWindowController(
+            homepage: HomepageStore.homepage(),
+            alwaysOnTop: window.level == .floating,
+            opacity: window.alphaValue,
+            shortcuts: ShortcutStore.shortcuts()
+        ) { [weak self] draft in
+            self?.applySettings(draft)
+        }
+        controller.onClose = { [weak self] in self?.settingsWindowController = nil }
+        settingsWindowController = controller
+        controller.window?.level = window.level
+        controller.window?.center()
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
     }
 
     private func load(_ url: URL) {
@@ -174,6 +189,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         alwaysOnTopButton?.image = NSImage(systemSymbolName: isAlwaysOnTop ? "pin.fill" : "pin", accessibilityDescription: nil)
         alwaysOnTopButton?.setAccessibilityLabel("Always on Top: \(isAlwaysOnTop ? "On" : "Off")")
         alwaysOnTopButton?.toolTip = "Always on Top: \(isAlwaysOnTop ? "On" : "Off")"
+        shortcutMenuItems[.alwaysOnTop]?.forEach { $0.state = isAlwaysOnTop ? .on : .off }
+    }
+
+    private func applySettings(_ draft: SettingsDraft) {
+        let previousHomepage = HomepageStore.homepage()
+        HomepageStore.save(draft.homepage)
+        FloatSettings.save(alwaysOnTop: draft.alwaysOnTop, opacity: draft.opacity)
+        ShortcutStore.save(draft.shortcuts)
+        window.level = draft.alwaysOnTop ? .floating : .normal
+        window.alphaValue = draft.opacity
+        opacitySlider?.doubleValue = Double(draft.opacity)
+        updateAlwaysOnTopButton()
+        applyMenuShortcuts()
+        if previousHomepage != draft.homepage { load(draft.homepage) }
+    }
+
+    private func addShortcutMenuItem(to menu: NSMenu, action: ShortcutAction, selector: Selector) {
+        let item = menu.addItem(withTitle: action.title, action: selector, keyEquivalent: "")
+        item.target = self
+        shortcutMenuItems[action, default: []].append(item)
+    }
+
+    private func applyMenuShortcuts() {
+        let shortcuts = ShortcutStore.shortcuts()
+        for action in ShortcutAction.allCases {
+            guard let existingItems = shortcutMenuItems[action], let item = existingItems.first else { continue }
+            existingItems.dropFirst().forEach { $0.menu?.removeItem($0) }
+            let shortcut = shortcuts[action]
+            item.keyEquivalent = shortcut?.key ?? ""
+            item.keyEquivalentModifierMask = modifierMask(for: shortcut)
+            shortcutMenuItems[action] = [item]
+            if shortcut?.key == "+" {
+                let alias = NSMenuItem(title: action.title, action: item.action, keyEquivalent: "=")
+                alias.target = self
+                alias.keyEquivalentModifierMask = modifierMask(for: shortcut)
+                alias.isHidden = true
+                alias.allowsKeyEquivalentWhenHidden = true
+                alias.allowsAutomaticKeyEquivalentLocalization = false
+                item.menu?.addItem(alias)
+                shortcutMenuItems[action]?.append(alias)
+            }
+        }
+    }
+
+    private func modifierMask(for shortcut: AppShortcut?) -> NSEvent.ModifierFlags {
+        guard let shortcut else { return [] }
+        var mask: NSEvent.ModifierFlags = []
+        if shortcut.modifiers & AppShortcut.command != 0 { mask.insert(.command) }
+        if shortcut.modifiers & AppShortcut.option != 0 { mask.insert(.option) }
+        if shortcut.modifiers & AppShortcut.control != 0 { mask.insert(.control) }
+        if shortcut.modifiers & AppShortcut.shift != 0 { mask.insert(.shift) }
+        return mask
     }
 
     func windowWillClose(_ notification: Notification) { NSApp.hide(nil) }
@@ -277,6 +344,8 @@ extension AppDelegate: NSToolbarDelegate {
             let item = NSToolbarItem(itemIdentifier: identifier)
             item.label = "Opacity"
             item.view = slider
+            opacitySlider = slider
+            slider.doubleValue = Double(window.alphaValue)
             return item
         case "alwaysOnTop":
             let button = NSButton()
@@ -294,7 +363,7 @@ extension AppDelegate: NSToolbarDelegate {
             item.visibilityPriority = .high
             return item
         case "settings":
-            let item = toolbarItem(identifier, "Homepage", #selector(configureHomepage(_:)), image: "gearshape")
+            let item = toolbarItem(identifier, "Settings", #selector(showSettings(_:)), image: "gearshape")
             item.visibilityPriority = .high
             return item
         default: return nil

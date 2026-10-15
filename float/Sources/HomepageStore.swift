@@ -15,11 +15,11 @@ enum HomepageStore {
         return url
     }
 
-    static var homepage: URL {
-        UserDefaults.standard.string(forKey: key).flatMap(validatedURL) ?? defaultURL
+    static func homepage(defaults: UserDefaults = .standard) -> URL {
+        defaults.string(forKey: key).flatMap(validatedURL) ?? defaultURL
     }
 
-    static func save(_ url: URL) {
-        UserDefaults.standard.set(url.absoluteString, forKey: key)
+    static func save(_ url: URL, defaults: UserDefaults = .standard) {
+        defaults.set(url.absoluteString, forKey: key)
     }
 }
