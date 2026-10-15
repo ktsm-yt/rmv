@@ -1,0 +1,38 @@
+import CoreGraphics
+import Foundation
+
+enum Zoom {
+    static let minimum: CGFloat = 0.25
+    static let maximum: CGFloat = 4
+    static let step: CGFloat = 1.2
+    private static let pageZoomKey = "pageZoom"
+    private static let magnificationKey = "magnification"
+
+    static func clamped(_ magnification: CGFloat) -> CGFloat {
+        guard magnification.isFinite else { return 1 }
+        return min(max(magnification, minimum), maximum)
+    }
+
+    static func restoredValue(_ value: Double?) -> CGFloat {
+        guard let value, value.isFinite else { return 1 }
+        return clamped(CGFloat(value))
+    }
+
+    static var restoredPageZoom: CGFloat {
+        restoredValue(UserDefaults.standard.object(forKey: pageZoomKey) as? Double)
+    }
+
+    static var restoredMagnification: CGFloat {
+        restoredValue(UserDefaults.standard.object(forKey: magnificationKey) as? Double)
+    }
+
+    static func save(pageZoom: CGFloat, magnification: CGFloat) {
+        UserDefaults.standard.set(Double(clamped(pageZoom)), forKey: pageZoomKey)
+        UserDefaults.standard.set(Double(clamped(magnification)), forKey: magnificationKey)
+    }
+
+    static func clearSavedValues() {
+        UserDefaults.standard.removeObject(forKey: pageZoomKey)
+        UserDefaults.standard.removeObject(forKey: magnificationKey)
+    }
+}

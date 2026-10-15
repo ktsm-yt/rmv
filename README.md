@@ -3,6 +3,8 @@
 Claude Code の返事を、[Orca](https://github.com/stablyai/orca) のフローティングブラウザで「見て分かる」形に描き、赤ペンでそのセッションへ返すビューアです。
 （chrome等でも見れますが、vimium等ショートカットの競合注意）
 
+macOS ネイティブの [RMV Float](float/README.md) も同梱しています。
+
 ![rmv のデモ](docs/demo.gif)
 
 [高画質の動画 (mp4)](docs/demo.mp4)
