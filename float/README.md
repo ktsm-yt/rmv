@@ -19,9 +19,11 @@ RMV Float は Glaso を参考にした独立ブラウザです。ウィンドウ
 
 ## Build and run
 
+以下のコマンドは RMV リポジトリのルートから実行します。
+
 ```zsh
-./scripts/build.sh
-open "build/RMV Float.app"
+./float/scripts/build.sh
+open "float/build/RMV Float.app"
 ```
 
 The app uses the standard persistent WebKit data store. Use the toolbar for Reload, Home, window opacity, and Homepage settings. Page zoom and trackpad magnification restore after the next launch. Homepage settings accept only HTTP or HTTPS URLs and persist in `UserDefaults` for the next cold launch.
@@ -29,7 +31,7 @@ The app uses the standard persistent WebKit data store. Use the toolbar for Relo
 ## Test
 
 ```zsh
-./scripts/test.sh
+./float/scripts/test.sh
 ```
 
 The test covers accepted/rejected URL schemes, persisted homepage retrieval, and link routing. The app deliberately has no tabs, account, payment, or OCR. Clicked web links open in the macOS default app; anchors within the current page stay in RMV Float.
@@ -37,5 +39,5 @@ The test covers accepted/rejected URL schemes, persisted homepage retrieval, and
 For a running app, confirm that macOS has created a real window without driving its UI:
 
 ```zsh
-./scripts/assert-window.sh <pid>
+./float/scripts/assert-window.sh <pid>
 ```
