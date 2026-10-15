@@ -274,8 +274,8 @@
   .pin { display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(0, 1.2fr) auto; gap: 8px; align-items: center; }
   .pin b { color: var(--red); white-space: nowrap; }
   .pin .q { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  #tray input, #tray textarea { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; width: 100%; }
-  #tray textarea { resize: vertical; max-height: 40vh; line-height: 1.3; field-sizing: content; } /* 高さは中身の行数 (改行も折り返しも) に合わせて伸びる。折り返しを伸ばさないと 1 行の高さに 2 行目が隠れた (2026-10-08 user) */
+  #tray input, #tray textarea, #margin input, #margin textarea { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; width: 100%; }
+  #tray textarea, #margin textarea { resize: vertical; max-height: 40vh; line-height: 1.3; field-sizing: content; } /* 高さは中身の行数 (改行も折り返しも) に合わせて伸びる。折り返しを伸ばさないと 1 行の高さに 2 行目が隠れた (2026-10-08 user) */
   #free { min-height: calc(2lh + 8px); } /* 全体へのひとことは空でも 2 行ぶん */
   #tray .row { display: flex; gap: 8px; align-items: center; }
   #akmsg { flex: 1; color: var(--muted); }
@@ -284,6 +284,22 @@
   #tray button:disabled { opacity: .35; cursor: default; }
   #sent { color: var(--green); }
   .pin > span:empty { display: none; }
+  @media (min-width: 900px) {
+    html:not(.narrow) main { position: relative; scrollbar-gutter: stable; }
+    html:not(.narrow) #margin { position: absolute; top: 0; left: calc(56px + var(--measure) + 20px); right: 16px; pointer-events: none; }
+    html:not(.narrow) #margin .pin { position: absolute; left: 0; right: 0; pointer-events: auto; grid-template-columns: auto minmax(0, 1fr) auto; gap: 4px; padding: 2px 6px; font-size: 13px; line-height: 1.3; background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--red); border-radius: 8px; box-shadow: 0 2px 8px rgb(0 0 0 / .08); }
+    html:not(.narrow) #margin .pin b { max-width: 7em; overflow: hidden; text-overflow: ellipsis; }
+    html:not(.narrow) #margin .pin::before { content: ""; position: absolute; left: -20px; top: 14px; width: 18px; border-top: 1px dashed color-mix(in srgb, var(--red) 60%, transparent); }
+    html:not(.narrow) #margin .pin[data-k] .q, html:not(.narrow) #margin .pin > span:empty { display: none; }
+    html:not(.narrow) #margin .pin textarea { min-height: 0; padding: 2px 6px; }
+    html:not(.narrow) #margin .pin button { font: inherit; border: 0; background: none; color: var(--muted); cursor: pointer; padding: 0 2px; }
+    html:not(.narrow) body.rp-margin #tray { grid-template-columns: minmax(0, 1fr) auto; align-items: center; padding: 6px 10px; }
+    html:not(.narrow) body.rp-margin #pins:empty { display: none; }
+    html:not(.narrow) body.rp-margin #free { min-height: calc(1lh + 8px); }
+    html:not(.narrow) body.rp-margin #tray .row { grid-column: 2; grid-row: 1; }
+    html:not(.narrow) body.rp-margin #tray #akmsg:empty { display: none; }
+    html:not(.narrow) body.rp-margin #fimgs { grid-column: 1 / -1; }
+  }
   @media (max-width: 599px) {
     main { padding: 10px 10px 0; }
     #bar { gap: 6px; font-size: 12px; margin-bottom: 12px; }
@@ -337,6 +353,7 @@ if (isMobileUA && window.visualViewport) {
   <nav id="chips"></nav>
   <details id="ask" hidden><summary></summary><div></div></details>
   <article id="reply"></article>
+  <div id="margin" hidden></div>
   <div id="tray" hidden>
     <div id="pins"></div>
     <textarea id="free" rows="2" placeholder="全体へのひとこと (任意)"></textarea>
@@ -523,7 +540,7 @@ async function show(md, entry) {
   decorate(el);
   refresh();
   try { await mermaid.run({ nodes: el.querySelectorAll("pre.mermaid") }); }
-  finally { decorateDiagrams(el); applyMarks(); } // 図のノードは描画後にしか無い。同じ返事の描き直しでもピンの赤枠を戻す
+  finally { decorateDiagrams(el); refresh(); scheduleMargin(); } // 図のノードは描画後にしか無い。同じ返事の描き直しでもピンの赤枠を戻す
 }
 
 // 履歴: list[0] が最新。following = 最新を見ている間は新着で自動的に差し替える。
@@ -710,7 +727,7 @@ document.getElementById("next").onclick = newer;
 // スマホ: 返事の上で左右にスワイプ = ◀ / ▶ (指を左へ = ▶ 次、右へ = ◀ 前。全画面の画像送りと同じ向き)。縦スクロール・横スクロールする要素・入力欄・赤ペン・拡大中は触らない
 let swipe = null;
 const swipeSkip = (t) => {
-  if (t.closest("input, textarea, button, select, #tray, #mmzoom, #chat, #chips")) return true;
+  if (t.closest("input, textarea, button, select, #tray, #margin, #mmzoom, #chat, #chips")) return true;
   for (let n = t; n && n !== document.body; n = n.parentElement) if (n.scrollWidth > n.clientWidth && /auto|scroll/.test(getComputedStyle(n).overflowX)) return true;
   return false;
 };
@@ -977,18 +994,88 @@ function applyMarks() {
   });
 }
 
+function stackNotes(items, gap) {
+  let floor = 0;
+  return items.map(({ top, h }) => {
+    const placed = top == null ? floor : Math.max(top, floor);
+    floor = placed + h + gap;
+    return placed;
+  });
+}
+
+const pinNodes = new WeakMap();
+let marginFrame = 0, composingPin = false;
+const margin = document.getElementById("margin"), pinsEl = document.getElementById("pins"), mainEl = document.querySelector("main");
+const marginMedia = matchMedia("(min-width: 900px)");
+const marginResize = new ResizeObserver(() => scheduleMargin());
+const pinNode = (p, k, choice) => {
+  let node = pinNodes.get(p);
+  if (node) return node;
+  node = document.createElement("div"); node.className = "pin";
+  if (!choice) node.dataset.k = k;
+  const b = document.createElement("b"), q = document.createElement("span"), field = choice ? document.createElement("span") : document.createElement("textarea"), x = document.createElement("button");
+  b.textContent = choice ? "採用" : p.anchor; b.title = b.textContent;
+  q.className = "q"; q.textContent = choice ? pickText([[+k, p]], pickMulti()) : `「${p.quote}」`;
+  if (!choice) { field.rows = 1; field.placeholder = "ひとこと"; field.value = p.comment; }
+  x.dataset.x = choice ? `pick:${k}` : k; x.title = "外す"; x.textContent = "×";
+  node.append(b, q, field, x); pinNodes.set(p, node);
+  return node;
+};
+const movePin = (node, parent, before) => {
+  if (node.parentElement === parent) return;
+  const active = node.contains(document.activeElement) && document.activeElement instanceof HTMLTextAreaElement ? document.activeElement : null;
+  const start = active?.selectionStart, end = active?.selectionEnd, direction = active?.selectionDirection;
+  parent.insertBefore(node, before ?? null);
+  if (active) { active.focus({ preventScroll: true }); active.setSelectionRange(start, end, direction); }
+};
+const marginAnchor = (entry) => entry.choice
+  ? document.querySelector(`#reply table[data-ptbl="${entry.k}"] tr.chosen`)
+  : document.querySelector(`#reply [data-pin="${CSS.escape(entry.k)}"]`);
+const scheduleMargin = () => { if (!marginFrame) marginFrame = requestAnimationFrame(() => { marginFrame = 0; layoutMargin(); }); };
+function layoutMargin() {
+  if (composingPin) return;
+  const d = drafts.get(curName()), desktop = marginMedia.matches && !document.documentElement.classList.contains("narrow");
+  if (margin.hidden === desktop) margin.hidden = !desktop;
+  const available = desktop && margin.getBoundingClientRect().width >= 160;
+  const entries = d ? [...d.choices].sort((a, b) => a[0] - b[0]).map(([k, p]) => ({ k: String(k), p, choice: true })).concat([...d.pins].map(([k, p]) => ({ k, p, choice: false }))) : [];
+  const mainRect = mainEl.getBoundingClientRect(), placed = [], fallback = [];
+  entries.forEach((entry) => {
+    entry.node = pinNode(entry.p, entry.k, entry.choice);
+    const anchor = available && marginAnchor(entry);
+    if (anchor && anchor.getBoundingClientRect().height > 0) {
+      entry.anchor = anchor; entry.top = anchor.getBoundingClientRect().top - mainRect.top + mainEl.scrollTop;
+      placed.push(entry);
+    } else fallback.push(entry);
+  });
+  const live = new Set(entries.map((entry) => entry.node));
+  [...margin.children, ...pinsEl.children].forEach((node) => { if (!live.has(node)) { marginResize.unobserve(node); node.remove(); } });
+  document.body.classList.toggle("rp-margin", !!entries.length && !fallback.length);
+  // ponytail: 既存カードを並べ替えず、新規カードだけ文書順の位置へ差し込む。採用行は表番号順を保つ。
+  placed.sort((a, b) => a.anchor === b.anchor ? 0 : (a.anchor.compareDocumentPosition(b.anchor) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1)).forEach((entry) => { movePin(entry.node, margin, [...margin.children].find((n) => (+n.style.top || 0) > entry.top)); marginResize.observe(entry.node); });
+  fallback.forEach((entry) => {
+    const before = entry.choice ? [...pinsEl.children].find((node) => {
+      const x = node.querySelector("[data-x]")?.dataset.x;
+      return node.matches("[data-k]") || (x?.startsWith("pick:") && +x.slice(5) > +entry.k);
+    }) : null;
+    movePin(entry.node, pinsEl, before); marginResize.observe(entry.node);
+  });
+  const tops = stackNotes(placed.map((entry) => ({ top: entry.top, h: entry.node.getBoundingClientRect().height })), 4);
+  tops.forEach((top, i) => { const v = `${top}px`; if (placed[i].node.style.top !== v) placed[i].node.style.top = v; });
+  const height = placed.length ? `${tops[tops.length - 1] + placed[placed.length - 1].node.getBoundingClientRect().height + 32}px` : "0px";
+  if (margin.style.height !== height) margin.style.height = height;
+  margin.hidden = !placed.length;
+}
+
 function renderTray() {
   const d = drafts.get(curName());
   const tray = document.getElementById("tray");
   tray.hidden = !d || (!d.pins.size && !d.choices.size);
-  if (tray.hidden) return;
-  document.getElementById("pins").innerHTML =
-    [...d.choices].sort((x, y) => x[0] - y[0]).map(([t, c]) => `<div class="pin"><b>採用</b><span class="q">${esc(pickText([[t, c]], pickMulti()))}</span><span></span><button data-x="pick:${t}" title="外す">×</button></div>`).join("") +
-    [...d.pins].map(([k, p]) => `<div class="pin" data-k="${esc(k)}"><b>${esc(p.anchor)}</b><span class="q">「${esc(p.quote)}」</span><textarea rows="1" placeholder="ひとこと">${esc(p.comment)}</textarea><button data-x="${esc(k)}" title="外す">×</button></div>`).join("");
-  document.getElementById("free").value = d.free;
+  scheduleMargin();
+  const free = document.getElementById("free");
+  if (free.value !== (d?.free ?? "")) free.value = d?.free ?? "";
   const fimgs = document.getElementById("fimgs");
-  fimgs.hidden = !d.imgs.length;
-  fimgs.innerHTML = d.imgs.map((p, i) => `<span class="cimg"><img src="${p.url}" alt=""><button data-i="${i}" title="外す">×</button></span>`).join("");
+  fimgs.hidden = !(d?.imgs.length);
+  fimgs.innerHTML = d?.imgs.map((p, i) => `<span class="cimg"><img src="${p.url}" alt=""><button data-i="${i}" title="外す">×</button></span>`).join("") ?? "";
   const send = document.getElementById("send");
   send.disabled = !cur?.terminal;
   send.title = cur?.terminal ? "返事を出した端末へ打ち込む" : "この返事は Orca / herdr の外で出たので送れません。コピーして貼ってください";
@@ -1033,29 +1120,43 @@ document.getElementById("reply").addEventListener("click", (ev) => {
   if (d.pins.has(k)) d.pins.delete(k);
   else d.pins.set(k, { anchor: t.dataset.anchor, quote: cut(textOf(t), 30), comment: "" });
   refresh();
-  document.querySelector(`#pins [data-k="${CSS.escape(k)}"] textarea`)?.focus();
+  const p = d.pins.get(k);
+  if (p) requestAnimationFrame(() => { if (drafts.get(curName())?.pins.get(k) === p) pinNode(p, k, false).querySelector("textarea")?.focus(); });
 });
-document.getElementById("pins").addEventListener("input", (ev) => {
+const pinInput = (ev) => {
   const k = ev.target.closest("[data-k]")?.dataset.k;
   const p = k != null && drafts.get(curName())?.pins.get(k);
-  if (p) p.comment = ev.target.value;
-});
+  if (p) { p.comment = ev.target.value; scheduleMargin(); }
+};
 // Esc (ひとこと欄): 空ならそのピンを外す / 書きかけなら欄を抜けるだけ (打った文字は消さない)。Enter だけでは改行しない (1 行欄だった頃と同じ)、Shift+Enter で改行
-document.getElementById("pins").addEventListener("keydown", (ev) => {
+const pinKeydown = (ev) => {
   if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing && ev.target.tagName === "TEXTAREA") return ev.preventDefault();
   if (ev.key !== "Escape" || ev.target.tagName !== "TEXTAREA") return;
   ev.preventDefault();
   if (ev.target.value.trim()) return ev.target.blur();
   draftOf(curName()).pins.delete(ev.target.closest("[data-k]").dataset.k);
   refresh();
-});
-document.getElementById("pins").addEventListener("click", (ev) => {
+};
+const pinClick = (ev) => {
   const x = ev.target.closest("[data-x]");
   if (!x) return;
   const d = draftOf(curName());
   if (x.dataset.x.startsWith("pick:")) d.choices.delete(+x.dataset.x.slice(5)); else d.pins.delete(x.dataset.x);
   refresh();
+};
+[pinsEl, margin].forEach((el) => {
+  el.addEventListener("input", pinInput); el.addEventListener("keydown", pinKeydown); el.addEventListener("click", pinClick);
+  el.addEventListener("compositionstart", () => { composingPin = true; });
+  el.addEventListener("compositionend", () => { composingPin = false; scheduleMargin(); });
 });
+marginResize.observe(mainEl);
+["bar", "chips", "ask", "reply"].forEach((id) => marginResize.observe(document.getElementById(id)));
+document.getElementById("ask").addEventListener("toggle", scheduleMargin);
+marginMedia.addEventListener("change", scheduleMargin);
+document.fonts?.ready.then(scheduleMargin);
+document.fonts?.addEventListener("loadingdone", scheduleMargin);
+document.getElementById("reply").addEventListener("load", scheduleMargin, true);
+document.getElementById("reply").addEventListener("loadedmetadata", scheduleMargin, true);
 document.getElementById("free").addEventListener("input", (ev) => { draftOf(curName()).free = ev.target.value; });
 document.getElementById("fimgs").addEventListener("click", (ev) => {
   const b = ev.target.closest("button[data-i]");
