@@ -30,6 +30,14 @@ async function readPerm(session: string): Promise<Perm | null> {
 const PROMPT = `${STATE}/prompt`; // hooks/prompt-state.py が送った依頼文を <session>.json に置く。返事の保存時に stop hook が消す
 // hooks/session-wait.py は起動直後の依頼なし session を同じ場所に {prompt: "", waiting: true} で置く (依頼で上書き・返事で消える)。ファイルの掃除も同じ長さ (片方だけ直さない)
 const WAIT_TTL = 24 * 3600_000;
+const BG = `${STATE}/bg`; // hooks/stop-to-fragment.py が Stop の background_tasks (裏で走る shell / monitor / subagent) を <session>.json に置く。全部終わると消す
+type BgTask = { type: string; description: string };
+// 裏で走っている物の一覧。無い・壊れている・別の session_id (pane の使い回し) ・TTL 切れ (hook が走らず取り残された分) は null
+async function readBg(session: string, sid: string | null): Promise<BgTask[] | null> {
+  const b = await Bun.file(`${BG}/${session}.json`).json().catch(() => null);
+  if (!Array.isArray(b?.tasks) || !b.tasks.length || Date.now() - Date.parse(b.ts) > WAIT_TTL || (sid && b.session_id && b.session_id !== sid)) return null;
+  return b.tasks.map((t: { type?: unknown; description?: unknown }) => ({ type: String(t.type ?? "shell"), description: String(t.description ?? "") }));
+}
 // 未返答の依頼 (waiting: true は起動直後の待機中)。無い・壊れている・TTL 切れ (返事が来ずに取り残された分)・その端末の最新返事より古いなら null
 async function readAsking(session: string, lastReplyTs: number): Promise<{ prompt: string; ts: string; waiting?: true } | null> {
   const p = await Bun.file(`${PROMPT}/${session}.json`).json().catch(() => null);
@@ -112,7 +120,7 @@ async function history(repo: string | null): Promise<Response> {
       if (isSubPane(meta) && !perm) return null;
       const pane = herdrPaneOf(meta);
       const shown = paneView(pane, await agentsOf(herdrSockOf(meta)), byHandle.get(meta.terminal));
-      return { name, prompt: typeof meta.prompt === "string" ? meta.prompt : null, ts: meta.ts ?? null, cwd, root, repo: root.split("/").filter(Boolean).pop() ?? "", head: body.replace(/\s+/g, " ").trim().slice(0, 40), sid: typeof meta.session_id === "string" && meta.session_id ? meta.session_id : null, terminal: Boolean(meta.terminal) || pane !== null, live: shown.herdr ? shown.alive : (pane !== null && !meta.terminal ? true : terms ? Boolean(meta.terminal) && handles.has(meta.terminal) : claude ? Boolean(meta.terminal) && claude.has(meta.terminal) : true) && shown.alive, session, perm: perm ? { id: perm.id, tool: perm.tool, detail: perm.detail, ts: perm.ts } : null, agent: meta.agent ?? null, title: shown.title, status: shown.status, lastOutputAt: shown.lastOutputAt };
+      return { name, prompt: typeof meta.prompt === "string" ? meta.prompt : null, ts: meta.ts ?? null, cwd, root, repo: root.split("/").filter(Boolean).pop() ?? "", head: body.replace(/\s+/g, " ").trim().slice(0, 40), sid: typeof meta.session_id === "string" && meta.session_id ? meta.session_id : null, terminal: Boolean(meta.terminal) || pane !== null, live: shown.herdr ? shown.alive : (pane !== null && !meta.terminal ? true : terms ? Boolean(meta.terminal) && handles.has(meta.terminal) : claude ? Boolean(meta.terminal) && claude.has(meta.terminal) : true) && shown.alive, session, perm: perm ? { id: perm.id, tool: perm.tool, detail: perm.detail, ts: perm.ts } : null, agent: meta.agent ?? null, title: shown.title, status: shown.status, lastOutputAt: shown.lastOutputAt, bg: await readBg(session, typeof meta.session_id === "string" ? meta.session_id : null) };
     }),
   )).filter((e): e is NonNullable<typeof e> => e !== null);
   // 1 つの端末で順に別の repo を開くと、端末が生きている限り昔の repo まで live になる (2026-09-29 実機: 1 端末で 4 repo)。
@@ -159,7 +167,7 @@ async function history(repo: string | null): Promise<Response> {
     // 最初の返事より前の許可待ち (foyer の依頼はほぼこれ) もこの行に載せる。null 固定だと rmv に出なかった (2026-10-15)
     const perm = perms.get(session);
     if (isSubPane(p) && !perm) continue;
-    items.push({ name: `asking-${session}.md`, prompt: null, ts: a.ts, cwd, root, repo: root.split("/").filter(Boolean).pop() ?? "", head: "", terminal: isTerm || pane !== null, live, session, perm: perm ? { id: perm.id, tool: perm.tool, detail: perm.detail, ts: perm.ts } : null, agent: null, title: shown.title, status: shown.status, lastOutputAt: shown.lastOutputAt });
+    items.push({ name: `asking-${session}.md`, prompt: null, ts: a.ts, cwd, root, repo: root.split("/").filter(Boolean).pop() ?? "", head: "", terminal: isTerm || pane !== null, live, session, perm: perm ? { id: perm.id, tool: perm.tool, detail: perm.detail, ts: perm.ts } : null, agent: null, title: shown.title, status: shown.status, lastOutputAt: shown.lastOutputAt, bg: await readBg(session, typeof p?.session_id === "string" ? p.session_id : null) });
   }
   items.sort((x, y) => (Date.parse(y.ts ?? "") || 0) - (Date.parse(x.ts ?? "") || 0)); // 仮の entry も時刻順。先頭固定だと端末が閉じた後も残る state/prompt の待機中が「最新」に居座り、追従が止まる (2026-10-13 実害: 19:57 の Crewforce が 2 時間先頭に残った)
   const out = items.map(({ root, ...e }) => ({ ...e, asking: (e.name.startsWith("asking-") || curSid.get(e.session) === replySid.get(e.session) ? asking.get(e.session) : null) ?? null })); // 次のセッションの依頼は前のセッションの返事に付けない

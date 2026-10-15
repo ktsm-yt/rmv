@@ -16,6 +16,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from datetime import datetime
 
 # RMX_STATE_DIR はテストが本物の rmv/state を触らないための上書き口
@@ -182,6 +183,36 @@ def session_key(handle, pane, session_id, sock=None):
     return key
 
 
+def bg_state(data):
+    """Stop の stdin の background_tasks (裏で走る shell / monitor / subagent) を state/bg/<key>.json に置く ({tasks: [{id, type, description}], ts, session_id})。
+    形は 2026-10-15 実測: [{id, type, status, description, command}]。status が running の物だけ残し、無ければファイルを消す。
+    server の /history が『裏で待ち』として一覧に出す (herdr は Monitor で寝ている画面を idle と返し、画面の文字 "1 monitor" は hook に来ないので、ここが唯一の出所)。
+    hook が走らなかった分 (強制終了) は 24 時間で掃除する。pane の使い回しは server が session_id で見分ける。"""
+    sid = str(data.get("session_id") or "")
+    terminal, pane, sock = terminal_ids(sid)
+    key = session_key(terminal, pane, sid, sock)
+    if not key:
+        return
+    tasks = [{"id": t.get("id"), "type": t.get("type"), "description": str(t.get("description") or t.get("command") or "")[:120]}
+             for t in (data.get("background_tasks") or []) if isinstance(t, dict) and t.get("status") == "running"]
+    bg = os.path.join(STATE, "bg")
+    path = os.path.join(bg, key + ".json")
+    if not tasks:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        return
+    os.makedirs(bg, exist_ok=True)
+    write(path, json.dumps({"tasks": tasks, "ts": datetime.now().astimezone().isoformat(timespec="seconds"), "session_id": sid}, ensure_ascii=False))
+    for n in os.listdir(bg):
+        try:
+            if n.endswith(".json") and time.time() - os.path.getmtime(os.path.join(bg, n)) > 24 * 3600:
+                os.remove(os.path.join(bg, n))
+        except OSError:
+            pass
+
+
 def main():
     if not is_interactive():
         return  # 他の hook / script が起動した claude -p の返事は viewer に載せない
@@ -190,6 +221,11 @@ def main():
         # Stop の stdin は last_assistant_message / cwd / session_id を直接持つ (2026-09-28 実測)。
         # transcript は Stop 時点で最終行が未 flush のことがあるので、stdin を正、transcript を予備にする
         sub = data.get("hook_event_name") == "SubagentStop"
+        if not sub:
+            try:
+                bg_state(data)  # 返事の有無に関わらず裏タスクの状態は更新する
+            except Exception:
+                pass
         if sub and not data.get("agent_type"):
             return  # agent_type 空の SubagentStop は Claude Code 内部の裏作業 (要約・候補文)。transcript に無い文を subagent の返事として積んでいた (2026-10-13 実測 121 件 / 日)
         text = data.get("last_assistant_message")
