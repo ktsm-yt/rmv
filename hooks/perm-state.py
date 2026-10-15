@@ -7,12 +7,14 @@
                             (毎ツール呼び出しで走るので is_interactive は呼ばない。ps は bg session の key 解決だけ)
 key = stop-to-fragment.py の session_key (端末 handle、herdr 配下なら handle + pane。無ければ session_id。server の item.session と同じ集合)。
 server の /history が perm を各 entry に付け、/approve が id を照合して端末へ "1" を送る。
+許可待ちを書いた時、state/perm-notify があれば外へ知らせる (notify、foyer の画面だけ)。
 stdout には何も出さない (hook 出力は user 画面に出る)。exit 0 固定。
 """
 import importlib.util
 import json
 import os
 import re
+import subprocess
 import sys
 import uuid
 from datetime import datetime
@@ -75,6 +77,31 @@ def main():
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(rec, f, ensure_ascii=False)
     os.replace(tmp, path)
+    notify(rec)
+
+
+def notify(rec):
+    """state/perm-notify (1 行目 = シェルのコマンド) があれば、foyer の画面 (herdr の label が foyer) の許可待ちだけ、
+    文面を stdin で渡して送る。例: `ssh <Air> hermes send -t slack:<宛先> -q`。送り終わりは待たない (hook の timeout 5 秒)。"""
+    try:
+        with open(os.path.join(STATE, "perm-notify"), encoding="utf-8") as f:
+            cmd = f.readline().strip()
+    except FileNotFoundError:
+        return
+    if not cmd or not rec["herdr_pane"]:
+        return
+    env = dict(os.environ, HERDR_SOCKET_PATH=rec["herdr_socket"]) if rec["herdr_socket"] else None
+    out = subprocess.run([os.environ.get("RMX_HERDR_BIN") or "/opt/homebrew/bin/herdr", "pane", "get", rec["herdr_pane"]],
+                         capture_output=True, text=True, timeout=3, env=env).stdout
+    # ponytail: foyer の画面 (Hermes などから頼まれた作業) だけ。手元の画面は目の前で見えるので送らない。全部送りたくなったら label の条件を外す
+    if (json.loads(out).get("result") or {}).get("pane", {}).get("label") != "foyer":
+        return
+    repo = os.path.basename(re.sub(r"/\.worktrees/.*", "", rec["cwd"] or ""))
+    msg = f"🔴 許可待ち: {repo} · {rec['tool']} · {rec['detail']}\nrmv か herdr の画面 {rec['herdr_pane']} で許可してください\n"
+    p = subprocess.Popen(cmd, shell=True, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True)
+    p.stdin.write(msg.encode())
+    p.stdin.close()
 
 
 if __name__ == "__main__":
