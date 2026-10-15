@@ -21,7 +21,7 @@ cat > "$TMP/herdr" <<'STUB'
 #!/bin/sh
 case "$1 $2" in
   "pane get") echo "{\"result\":{\"pane\":{\"pane_id\":\"$3\",\"label\":${HERDR_STUB_LABEL:-null}}}}" ;;
-  "agent list") echo '{"result":{"agents":[]}}' ;;
+  "agent list") echo '{"result":{"agents":[{"pane_id":"wS:p1","agent":"claude","agent_status":"working","terminal_title":"記号なしの題名"}]}}' ;;
   *) echo '{"result":{"panes":[]}}' ;;
 esac
 STUB
@@ -53,6 +53,8 @@ check "/history: Lead の返事は出る" "$(echo "$GOT" | grep -c "$LEAD")" 1
 check "/history: 許可待ちの sub は出る" "$(echo "$GOT" | grep -c "$SUBPERM")" 1
 check "/history: 許可待ちの無い sub は出ない" "$(echo "$GOT" | grep -c "$SUB")" 0
 check "/history: 記録は残っている (foyer runner が読む)" "$([ -f "$STATE/history/$SUB" ] && echo yes)" yes
+# herdr の agent_status を持ち回る (題名に ◑ が無くても作業中と分かる)
+check "/history: herdr の agent_status を status に載せる" "$(curl -s "$BASE/history" | python3 -c "import json,sys; print([e.get('status') for e in json.load(sys.stdin) if e['name']=='$LEAD'][0])")" working
 kill $SPID 2>/dev/null; wait $SPID 2>/dev/null
 rm -rf "$TMP"
 [ "$FAIL" = 0 ]
