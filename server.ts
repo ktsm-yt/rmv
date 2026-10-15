@@ -148,7 +148,9 @@ async function history(repo: string | null): Promise<Response> {
     const root = typeof wt === "string" && wt ? wt : cwd;
     const live = shown.herdr ? shown.alive : (pane !== null && !isTerm ? true : terms ? isTerm && handles.has(handle) : claude ? isTerm && claude.has(handle) : true) && shown.alive;
     asking.set(session, a);
-    items.push({ name: `asking-${session}.md`, prompt: null, ts: a.ts, cwd, root, repo: root.split("/").filter(Boolean).pop() ?? "", head: "", terminal: isTerm || pane !== null, live, session, perm: null, agent: null, title: shown.title, lastOutputAt: shown.lastOutputAt });
+    // 最初の返事より前の許可待ち (foyer の依頼はほぼこれ) もこの行に載せる。null 固定だと rmv に出なかった (2026-10-15)
+    const perm = perms.get(session);
+    items.push({ name: `asking-${session}.md`, prompt: null, ts: a.ts, cwd, root, repo: root.split("/").filter(Boolean).pop() ?? "", head: "", terminal: isTerm || pane !== null, live, session, perm: perm ? { id: perm.id, tool: perm.tool, detail: perm.detail, ts: perm.ts } : null, agent: null, title: shown.title, lastOutputAt: shown.lastOutputAt });
   }
   items.sort((x, y) => (Date.parse(y.ts ?? "") || 0) - (Date.parse(x.ts ?? "") || 0)); // 仮の entry も時刻順。先頭固定だと端末が閉じた後も残る state/prompt の待機中が「最新」に居座り、追従が止まる (2026-10-13 実害: 19:57 の Crewforce が 2 時間先頭に残った)
   const out = items.map(({ root, ...e }) => ({ ...e, asking: (e.name.startsWith("asking-") || curSid.get(e.session) === replySid.get(e.session) ? asking.get(e.session) : null) ?? null })); // 次のセッションの依頼は前のセッションの返事に付けない
