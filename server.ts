@@ -53,6 +53,12 @@ function herdrSessionName(sock: unknown): string {
 const NAME = /^[\w.-]+\.md$/; // [\w.-] のみ: "/" を含まないので state/history の外は読めない
 const TEXT = { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" };
 
+// foyer runner が立てた sub (herdr の pane 名 "foyer"、hook が herdr_label に記録) か。sub の返事は一覧に出さない (user は Lead とだけ話す、2026-10-15)。
+// 記録自体は残す (foyer runner が history を読んで返事にする)。許可待ちの行は sub でも出す。
+// ponytail: 判定は pane 名だけ。sub を別 tab に置いて tab で分ける案に移す時はここを差し替える
+function isSubPane(meta: { herdr_label?: unknown } | null | undefined): boolean {
+  return meta?.herdr_label === "foyer";
+}
 // herdr 配下の pane (hook が記録した herdr_pane)。Orca 無し (terminal 無し) の herdr だけの環境でも pane は持つ
 function herdrPaneOf(meta: { herdr_pane?: unknown }): string | null {
   return typeof meta.herdr_pane === "string" && meta.herdr_pane ? meta.herdr_pane : null;
@@ -92,7 +98,7 @@ async function history(repo: string | null): Promise<Response> {
     if (p) perms.set(n.slice(0, -5), p);
   }
   const names = (await readdir(HIST).catch(() => [] as string[])).filter((n) => n.endsWith(".md")).sort().reverse();
-  const items = await Promise.all(
+  const items = (await Promise.all(
     names.map(async (name) => {
       const meta = await Bun.file(`${HIST}/${name.slice(0, -3)}.json`).json().catch(() => ({}));
       const body = await Bun.file(`${HIST}/${name}`).text().catch(() => "");
@@ -102,11 +108,12 @@ async function history(repo: string | null): Promise<Response> {
       const root = typeof wt === "string" && wt ? wt : cwd;
       const session = sessionKey(meta);
       const perm = perms.get(session);
+      if (isSubPane(meta) && !perm) return null;
       const pane = herdrPaneOf(meta);
       const shown = paneView(pane, await agentsOf(herdrSockOf(meta)), byHandle.get(meta.terminal));
       return { name, prompt: typeof meta.prompt === "string" ? meta.prompt : null, ts: meta.ts ?? null, cwd, root, repo: root.split("/").filter(Boolean).pop() ?? "", head: body.replace(/\s+/g, " ").trim().slice(0, 40), sid: typeof meta.session_id === "string" && meta.session_id ? meta.session_id : null, terminal: Boolean(meta.terminal) || pane !== null, live: shown.herdr ? shown.alive : (pane !== null && !meta.terminal ? true : terms ? Boolean(meta.terminal) && handles.has(meta.terminal) : claude ? Boolean(meta.terminal) && claude.has(meta.terminal) : true) && shown.alive, session, perm: perm ? { id: perm.id, tool: perm.tool, detail: perm.detail, ts: perm.ts } : null, agent: meta.agent ?? null, title: shown.title, lastOutputAt: shown.lastOutputAt };
     }),
-  );
+  )).filter((e): e is NonNullable<typeof e> => e !== null);
   // 1 つの端末で順に別の repo を開くと、端末が生きている限り昔の repo まで live になる (2026-09-29 実機: 1 端末で 4 repo)。
   // 端末ごとに最新の本体の返事の cwd だけを live に残す (subagent は親と同じ cwd なので一緒に残る)
   const nowCwd = new Map<string, string>();
@@ -150,6 +157,7 @@ async function history(repo: string | null): Promise<Response> {
     asking.set(session, a);
     // 最初の返事より前の許可待ち (foyer の依頼はほぼこれ) もこの行に載せる。null 固定だと rmv に出なかった (2026-10-15)
     const perm = perms.get(session);
+    if (isSubPane(p) && !perm) continue;
     items.push({ name: `asking-${session}.md`, prompt: null, ts: a.ts, cwd, root, repo: root.split("/").filter(Boolean).pop() ?? "", head: "", terminal: isTerm || pane !== null, live, session, perm: perm ? { id: perm.id, tool: perm.tool, detail: perm.detail, ts: perm.ts } : null, agent: null, title: shown.title, lastOutputAt: shown.lastOutputAt });
   }
   items.sort((x, y) => (Date.parse(y.ts ?? "") || 0) - (Date.parse(x.ts ?? "") || 0)); // 仮の entry も時刻順。先頭固定だと端末が閉じた後も残る state/prompt の待機中が「最新」に居座り、追従が止まる (2026-10-13 実害: 19:57 の Crewforce が 2 時間先頭に残った)

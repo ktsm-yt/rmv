@@ -97,6 +97,21 @@ def is_interactive():
     return not os.environ.get("CLAUDE_CODE_ENTRYPOINT", "").startswith("sdk")
 
 
+def pane_label(pane, sock):
+    """herdr の pane の名前 (foyer runner が立てた sub は "foyer")。herdr 配下でない・取れない時は None。
+    server が /history で sub の返事を一覧から外す印。記録自体は残す (foyer runner がこの記録を読んで返事にする)"""
+    if not pane:
+        return None
+    try:
+        env = dict(os.environ, HERDR_SOCKET_PATH=sock) if sock else None
+        out = subprocess.run([os.environ.get("RMX_HERDR_BIN") or "/opt/homebrew/bin/herdr", "pane", "get", pane],
+                             capture_output=True, text=True, timeout=3, env=env).stdout
+        label = (json.loads(out).get("result") or {}).get("pane", {}).get("label")
+        return label if isinstance(label, str) and label else None
+    except Exception:
+        return None
+
+
 def terminal_ids(session_id):
     """(ORCA_TERMINAL_HANDLE, HERDR_PANE_ID, HERDR_SOCKET_PATH) の組。pane と socket は herdr 配下 (HERDR_ENV=1) の時だけ、無ければ None。
     socket は herdr の session (名前付きは session ごとに別) の見分け: pane id は session ごとに w1:p1 から振られて重なる。"""
@@ -198,7 +213,7 @@ def main():
         if terminal is None and not herdr_pane:
             return  # Orca 外かつ herdr 外 (返信先の端末が無い) セッションは記録しない
         meta = {"cwd": cwd, "session_id": sid, "ts": now.isoformat(timespec="seconds"), "name": name,
-                "terminal": terminal, "herdr_pane": herdr_pane, "herdr_socket": herdr_socket}
+                "terminal": terminal, "herdr_pane": herdr_pane, "herdr_socket": herdr_socket, "herdr_label": pane_label(herdr_pane, herdr_socket)}
         if sub:
             meta["agent"] = {"type": data.get("agent_type"), "id": data.get("agent_id")}
         else:  # 本体の返事には prompt-state.py が置いた依頼文を載せて、ファイルは消す
