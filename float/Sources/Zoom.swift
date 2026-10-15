@@ -31,8 +31,4 @@ enum Zoom {
         UserDefaults.standard.set(Double(clamped(magnification)), forKey: magnificationKey)
     }
 
-    static func clearSavedValues() {
-        UserDefaults.standard.removeObject(forKey: pageZoomKey)
-        UserDefaults.standard.removeObject(forKey: magnificationKey)
-    }
 }

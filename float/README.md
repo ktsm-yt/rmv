@@ -1,6 +1,8 @@
 # RMV Float
 
-RMV Float is a small independent macOS browser built with AppKit and WebKit. It starts as a floating window and opens `http://127.0.0.1:4310/` by default.
+RMV Float は RMV 専用の macOS アプリです。フローティングウィンドウで `http://127.0.0.1:4310/` を既定で開きます。
+
+実装は RMV Float の `a419b9b` から取り込みました。
 
 ## 初めて使うとき
 
