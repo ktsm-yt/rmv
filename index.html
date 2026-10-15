@@ -284,11 +284,12 @@
   #tray button:disabled { opacity: .35; cursor: default; }
   #sent { color: var(--green); }
   .pin > span:empty { display: none; }
-  /* スクロールバーは細く薄く (2026-10-15 user: 主張が強すぎ、もっともっと薄く)。Chromium / Firefox は scrollbar-color、WebKit (RMV Float) は ::-webkit-scrollbar */
-  * { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--fg) 10%, transparent) transparent; }
-  ::-webkit-scrollbar { width: 6px; height: 6px; background: transparent; }
-  ::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--fg) 10%, transparent); border-radius: 3px; }
-  ::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--fg) 25%, transparent); }
+  /* スクロールバーは細く (2026-10-15 user: 厚みの主張が強すぎ、もっと細く)。Chromium (Orca) と WebKit (RMV Float) は ::-webkit-scrollbar で 3px。
+     scrollbar-width / scrollbar-color を書くと Chromium が ::-webkit-scrollbar を無視して thin (約 11px) 止まりになるので、それは Firefox だけに当てる */
+  ::-webkit-scrollbar { width: 3px; height: 3px; background: transparent; }
+  ::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--fg) 30%, transparent); border-radius: 2px; }
+  ::-webkit-scrollbar-corner { background: transparent; }
+  @supports not selector(::-webkit-scrollbar) { * { scrollbar-width: thin; } }
   @media (min-width: 900px) {
     html:not(.narrow) main { position: relative; scrollbar-gutter: stable; }
     html:not(.narrow) #margin { position: absolute; top: 0; left: calc(56px + var(--measure) + 20px); right: 16px; pointer-events: none; }
