@@ -55,7 +55,7 @@ const TEXT = { "content-type": "text/plain; charset=utf-8", "cache-control": "no
 
 // foyer runner が立てた sub (herdr の pane 名 "foyer"、hook が herdr_label に記録) か。sub の返事は一覧に出さない (user は Lead とだけ話す、2026-10-15)。
 // 記録自体は残す (foyer runner が history を読んで返事にする)。許可待ちの行は sub でも出す。
-// ponytail: 判定は pane 名だけ。sub を別 tab に置いて tab で分ける案に移す時はここを差し替える
+// 判定は pane 名だけ。sub は herdr の 2 枚目以降の tab に置かれるが、tab 番号では落とさない (user 自身の画面も tab 2 以降にある: w1:t2 / w5:t2、2026-10-15 実測)
 function isSubPane(meta: { herdr_label?: unknown } | null | undefined): boolean {
   return meta?.herdr_label === "foyer";
 }
