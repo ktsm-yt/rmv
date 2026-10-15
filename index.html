@@ -275,7 +275,7 @@
   .pin b { color: var(--red); white-space: nowrap; }
   .pin .q { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #tray input, #tray textarea, #margin input, #margin textarea { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; width: 100%; }
-  #tray textarea, #margin textarea { resize: vertical; max-height: 40vh; line-height: 1.3; field-sizing: content; } /* 高さは中身の行数 (改行も折り返しも) に合わせて伸びる。折り返しを伸ばさないと 1 行の高さに 2 行目が隠れた (2026-10-08 user) */
+  #tray textarea, #margin textarea { resize: vertical; max-height: 40vh; line-height: 1.3; field-sizing: content; overflow-x: hidden; } /* 折り返して下に伸びるので横のバーは要らない (2026-10-16 user: RMV Float で空の欄にも横のバーが出ていた) */ /* 高さは中身の行数 (改行も折り返しも) に合わせて伸びる。折り返しを伸ばさないと 1 行の高さに 2 行目が隠れた (2026-10-08 user) */
   #free { min-height: calc(2lh + 8px); } /* 全体へのひとことは空でも 2 行ぶん */
   #tray .row { display: flex; gap: 8px; align-items: center; }
   #akmsg { flex: 1; color: var(--muted); }
@@ -284,12 +284,6 @@
   #tray button:disabled { opacity: .35; cursor: default; }
   #sent { color: var(--green); }
   .pin > span:empty { display: none; }
-  /* スクロールバーは細く (2026-10-15 user: 厚みの主張が強すぎ、もっと細く)。Chromium (Orca) と WebKit (RMV Float) は ::-webkit-scrollbar で 3px。
-     scrollbar-width / scrollbar-color を書くと Chromium が ::-webkit-scrollbar を無視して thin (約 11px) 止まりになるので、それは Firefox だけに当てる */
-  ::-webkit-scrollbar { width: 3px; height: 3px; background: transparent; }
-  ::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--fg) 30%, transparent); border-radius: 2px; }
-  ::-webkit-scrollbar-corner { background: transparent; }
-  @supports not selector(::-webkit-scrollbar) { * { scrollbar-width: thin; } }
   @media (min-width: 900px) {
     html:not(.narrow) main { position: relative; scrollbar-gutter: stable; }
     html:not(.narrow) #margin { position: absolute; top: 0; left: calc(56px + var(--measure) + 20px); right: 16px; pointer-events: none; }
