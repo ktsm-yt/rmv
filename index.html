@@ -1157,7 +1157,9 @@ function renderChat() {
   // 各行 = 時刻 + 最新返事の冒頭。同じ repo の chip は時刻だけでは見分けられない (2026-09-29 user)
   const row = (e) => `<time>${esc(hhmm(new Date(e.ts)))}</time><span>${esc(agentTag(e) + (e.head || ""))}</span>`;
   const shown = [...chipEntries.values()].filter((e) => e.live || showDead || e.session === pin).slice(0, 5);
-  renderTstat(shown.filter((e) => e.live));
+  // 許可待ちはプロジェクトの絞り込みと 5 件の枠に関係なく先頭に出す (別 repo の foyer の画面の許可待ちが見えなかった、2026-10-15)
+  const perms = [...new Map(all.filter((e) => e.session && e.live && e.perm).map((e) => [e.session, e])).values()];
+  renderTstat([...perms, ...shown.filter((e) => e.live && !perms.some((p) => p.session === e.session))]);
   let html = chipBtn("", !pin, "追従", "表示中の返事の端末へ送る") + shown.map((e) => chipBtn(e.session, e.session === pin, row(e), `送り先をここに固定: ${chipLabels.get(e.session)}`, true, e.repo)).join("");
   if (pin && !chipLabels.has(pin)) html += chipBtn(pin, true, "固定中 (返事なし)", pin);
   if (html === cchipsHtml) return; // 毎 poll 描き直すと横スクロール位置が飛ぶ
