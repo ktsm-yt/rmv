@@ -6,25 +6,25 @@
   <string>com.ktsm.harness-rmx</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/Users/i/Dev/rmv/launchd/harness-rmx</string>
+    <string>__RMV_DIR__/launchd/harness-rmx</string>
   </array>
   <key>WorkingDirectory</key>
-  <string>/Users/i/Dev/rmv</string>
+  <string>__RMV_DIR__</string>
   <key>EnvironmentVariables</key>
   <dict>
     <key>LANG</key>
     <string>ja_JP.UTF-8</string>
-    <!-- server が spawn する orca (/opt/homebrew/bin) を launchd の最小 PATH でも見つけるため -->
+    <!-- __RMV_DIR__ / __HOME__ は launchd/install.sh が埋める。server が spawn する herdr / orca (/opt/homebrew/bin) を launchd の最小 PATH でも見つけるため -->
     <key>PATH</key>
-    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <string>__HOME__/.bun/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
   </dict>
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>
   <true/>
   <key>StandardOutPath</key>
-  <string>/Users/i/Library/Logs/harness-rmx.log</string>
+  <string>__HOME__/Library/Logs/harness-rmx.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/i/Library/Logs/harness-rmx.log</string>
+  <string>__HOME__/Library/Logs/harness-rmx.log</string>
 </dict>
 </plist>

@@ -144,7 +144,7 @@ AI には HTML を書かせません。
 
 3. Orca のフローティングブラウザで `http://127.0.0.1:4310` を開きます。
 
-常駐させたい時は、launchd などで `bun run server.ts` を起動しっぱなしにしてください。
+常駐させたい時は `bash launchd/install.sh` を実行してください (launchd に登録し、ログイン時に自動で起動します。ログは `~/Library/Logs/harness-rmx.log`)。
 
 許可ボタン、依頼文の表示、スマホから開く、読み上げの声などの任意の機能は、[docs/config.md](docs/config.md) に入れ方があります。
 

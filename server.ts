@@ -2,6 +2,7 @@
 // ponytail: 127.0.0.1 固定・認証なし。上限 = 単一ユーザのローカル実験。他の端末からは tailscale serve 等の中継 + RMX_ORIGINS で開く (docs/config.md)。他人に見せる段階で認証を足す。
 import { appendFile, readdir, stat } from "node:fs/promises";
 import { extname, normalize } from "node:path";
+import { homedir } from "node:os";
 
 const DIR = import.meta.dir;
 const STATE = process.env.RMX_STATE_DIR || `${DIR}/state`; // RMX_STATE_DIR はテスト用の上書き口
@@ -852,7 +853,7 @@ const skillMemo = new Map<string, { at: number; v: { name: string; desc: string 
 async function skills(cwd: string | null): Promise<Response> {
   const hit = skillMemo.get(cwd ?? "");
   if (hit && Date.now() - hit.at < 60_000) return Response.json(hit.v);
-  const home = process.env.HOME ?? "/Users/i";
+  const home = process.env.HOME ?? homedir();
   let top = "";
   if (cwd?.startsWith("/")) {
     const p = Bun.spawn(["git", "-C", cwd, "rev-parse", "--show-toplevel"], { stdout: "pipe", stderr: "ignore" });
