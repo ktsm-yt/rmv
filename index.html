@@ -105,7 +105,7 @@
   #sug div { padding: 3px 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
   #sug div.on { background: var(--bg); box-shadow: inset 2px 0 var(--red); }
   #sug b { color: var(--fg); } #sug span { color: var(--muted); margin-left: 8px; }
-  #ctext { font: inherit; color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; width: 100%; resize: none; field-sizing: content; min-height: 10em; max-height: 60vh; } /* 文字量で上へ伸びる (欄は列の下に貼り付き)。掴んで伸ばす角は無し (2026-09-29 user: 右下からの操作が効かない) */
+  #ctext { font: inherit; color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; width: 100%; resize: none; field-sizing: content; overflow-x: hidden; min-height: 10em; max-height: 60vh; } /* 文字量で上へ伸びる (欄は列の下に貼り付き)。掴んで伸ばす角は無し (2026-09-29 user: 右下からの操作が効かない) */
   #cact { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; justify-content: flex-end; }
   #cact .q { font: inherit; font-size: 12px; line-height: 1.6; padding: 1px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); cursor: pointer; }
   #cact .q sup { color: var(--muted); font-size: 9px; margin-left: 2px; }
