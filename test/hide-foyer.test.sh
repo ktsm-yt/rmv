@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# sub (foyer runner の pane、herdr の pane 名 "foyer") の返事は /history に出さない。許可待ちがあれば出す。Lead (pane 名なし) は出す。
+# sub (foyer runner の pane、herdr の pane 名 "foyer") の返事はワーカー側 (agent.type=foyer) に出し、メイン (agent null) には出さない。Lead (pane 名なし) はメイン。
 # hook は herdr_label を記録に残す (記録は消さない: foyer runner が読む)。RMX_HOOK / RMX_SERVER で旧実装に当てる negative control 用
 set -u
 A="$(cd "$(dirname "$0")/.." && pwd)"
@@ -50,8 +50,12 @@ for _ in $(seq 50); do curl -s -o /dev/null "$BASE/history" && break; sleep 0.1;
 names() { curl -s "$BASE/history" | python3 -c 'import json,sys; print(" ".join(sorted(e["name"] for e in json.load(sys.stdin))))'; }
 GOT="$(names)"
 check "/history: Lead の返事は出る" "$(echo "$GOT" | grep -c "$LEAD")" 1
+agentType() { curl -s "$BASE/history" | python3 -c "import json,sys; print([(e.get('agent') or {}).get('type') for e in json.load(sys.stdin) if e['name']=='$1'][0])"; }
 check "/history: 許可待ちの sub は出る" "$(echo "$GOT" | grep -c "$SUBPERM")" 1
-check "/history: 許可待ちの無い sub は出ない" "$(echo "$GOT" | grep -c "$SUB")" 0
+check "/history: 許可待ちの無い sub も出る" "$(echo "$GOT" | grep -c "$SUB")" 1
+check "/history: sub はワーカー側 (agent.type=foyer)" "$(agentType "$SUB")" foyer
+check "/history: 許可待ちの sub もワーカー側" "$(agentType "$SUBPERM")" foyer
+check "/history: Lead はメイン (agent null)" "$(agentType "$LEAD")" None
 check "/history: 記録は残っている (foyer runner が読む)" "$([ -f "$STATE/history/$SUB" ] && echo yes)" yes
 # herdr の agent_status を持ち回る (題名に ◑ が無くても作業中と分かる)
 check "/history: herdr の agent_status を status に載せる" "$(curl -s "$BASE/history" | python3 -c "import json,sys; print([e.get('status') for e in json.load(sys.stdin) if e['name']=='$LEAD'][0])")" working
