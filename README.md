@@ -1,5 +1,7 @@
 # rmv (Red Marker Viewer)
 
+<img src="docs/rmv-icon.png" alt="RMV" width="112">
+
 Claude Code の返事を、[Orca](https://github.com/stablyai/orca) のフローティングブラウザで「見て分かる」形に描き、赤ペンでそのセッションへ返すビューアです。
 （chrome等でも見れますが、vimium等ショートカットの競合注意）
 
