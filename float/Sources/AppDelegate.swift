@@ -32,10 +32,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         )
         window.title = "RMV Float"
         window.isReleasedWhenClosed = false
+        window.setFrameAutosaveName("RMV Float Main Window")
+        if !window.setFrameUsingName("RMV Float Main Window") { window.center() }
         window.level = FloatSettings.alwaysOnTop() ? .floating : .normal
         window.alphaValue = FloatSettings.opacity()
         window.delegate = self
-        window.center()
 
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .default()
@@ -244,6 +245,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     }
 
     func windowWillClose(_ notification: Notification) { NSApp.hide(nil) }
+
+    func windowWillUseStandardFrame(_ window: NSWindow, defaultFrame newFrame: NSRect) -> NSRect {
+        window.screen?.visibleFrame ?? newFrame
+    }
 
     func applicationWillTerminate(_ notification: Notification) {
         Zoom.save(pageZoom: webView.pageZoom, magnification: webView.magnification)
