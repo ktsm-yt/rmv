@@ -61,11 +61,18 @@ function herdrSessionName(sock: unknown): string {
 const NAME = /^[\w.-]+\.md$/; // [\w.-] のみ: "/" を含まないので state/history の外は読めない
 const TEXT = { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" };
 
-// foyer runner が立てた sub (herdr の pane 名 "foyer"、hook が herdr_label に記録) か。sub の返事はメインに出さず「🤖 ワーカー」側に出す (agent = {type: "foyer"}、2026-10-16 user)。
+// sub (ワーカー) なら一覧に出す名前 (pane 名 "foyer" / herdr の pane 名 / "worker")、メインなら null。sub の返事はメインに出さず「🤖 ワーカー」側に出す (2026-10-16 user)。
+// sub = herdr の pane 名が "foyer" (foyer runner が立てた) か、その workspace の最初の tab 以外に居る (2026-10-17 user「tab 1 のメイン会話以外はワーカー tab に」。
+// 10-15 は user の画面が w1:t2 / w5:t2 にもあったので tab では落とさなかったが、今は最初の tab = メインで統一。Crewforce は tab 1 を閉じて t2 だけなので「t1」でなく「最初の tab」)。
+// tab は hook が記録した herdr_tab、無い古い記録は今の herdr agent list の tab。どちらも無ければ pane 名だけで決める。最初の tab は herdr tab list (取れない時は ":t1")。
 // 記録自体は残す (foyer runner が history を読んで返事にする)。許可待ちの状態行は従来どおりメインにも出る (index.html の perms は全モードから拾う)。
-// 判定は pane 名だけ。sub は herdr の 2 枚目以降の tab に置かれるが、tab 番号では落とさない (user 自身の画面も tab 2 以降にある: w1:t2 / w5:t2、2026-10-15 実測)
-function isSubPane(meta: { herdr_label?: unknown } | null | undefined): boolean {
-  return meta?.herdr_label === "foyer";
+function subType(meta: { herdr_label?: unknown; herdr_tab?: unknown } | null | undefined, liveTab: string | null, firstTabs: Map<string, string> | null): string | null {
+  const label = typeof meta?.herdr_label === "string" && meta.herdr_label ? meta.herdr_label : null;
+  if (label === "foyer") return "foyer";
+  const tab = typeof meta?.herdr_tab === "string" && meta.herdr_tab ? meta.herdr_tab : liveTab;
+  if (tab === null) return null;
+  const ws = tab.split(":")[0];
+  return tab === (firstTabs?.get(ws) ?? `${ws}:t1`) ? null : label ?? "worker";
 }
 // herdr 配下の pane (hook が記録した herdr_pane)。Orca 無し (terminal 無し) の herdr だけの環境でも pane は持つ
 function herdrPaneOf(meta: { herdr_pane?: unknown }): string | null {
@@ -79,9 +86,9 @@ function herdrSockOf(meta: { herdr_socket?: unknown } | null | undefined): strin
 // herdr の list が取れない時 (agents null) は従来どおり Orca の値・alive=true。herdr agent list に出力時刻は無いので lastOutputAt は null (共有端末の別 pane の時刻を出さない)
 // herdr: true = 生死を herdr だけで決める。pane の ORCA_TERMINAL_HANDLE は herdr server を起動した時の Orca 端末のもので、その端末を閉じると Orca の一覧から消える (herdr の client は別の Orca 端末で動き続ける、2026-10-13 実測)
 // status = herdr の agent_status (working / blocked / idle / done)。題名の記号より確か: 裏で foyer の返事を待つ間に題名の ◑ が落ちると『静か』に見えた (2026-10-15)。Orca 端末・取れない時は null
-function paneView(pane: string | null, agents: Map<string, { title: string; status: string | null }> | null, orca?: Term): { alive: boolean; herdr: boolean; title: string | null; status: string | null; lastOutputAt: number | null } {
-  if (pane && agents) { const a = agents.get(pane); return { alive: !!a, herdr: true, title: a?.title ?? null, status: a?.status ?? null, lastOutputAt: null }; }
-  return { alive: true, herdr: false, title: orca?.title ?? null, status: null, lastOutputAt: orca?.lastOutputAt ?? null };
+function paneView(pane: string | null, agents: Map<string, { title: string; status: string | null; tab: string | null }> | null, orca?: Term): { alive: boolean; herdr: boolean; title: string | null; status: string | null; lastOutputAt: number | null; tab: string | null } {
+  if (pane && agents) { const a = agents.get(pane); return { alive: !!a, herdr: true, title: a?.title ?? null, status: a?.status ?? null, lastOutputAt: null, tab: a?.tab ?? null }; }
+  return { alive: true, herdr: false, title: orca?.title ?? null, status: null, lastOutputAt: orca?.lastOutputAt ?? null, tab: null };
 }
 
 // 一覧は新しい順。hook が 200 件に切り詰めるので毎回全件読む。
@@ -93,6 +100,7 @@ function paneView(pane: string | null, agents: Map<string, { title: string; stat
 async function history(repo: string | null): Promise<Response> {
   const [terms, claude, agents] = await Promise.all([liveTerminals(LIVE_TTL), claudeTerminals(LIVE_TTL), herdrAgents(null, LIVE_TTL)]);
   let named = false; // 名前付き session の list が 1 つでも取れたか (x-rmx-live 用)
+  const firstTabsOf = (sock: string | null) => herdrFirstTabs(sock, LIVE_TTL);
   const agentsOf = async (sock: string | null) => {
     if (!sock) return agents;
     const a = await herdrAgents(sock, LIVE_TTL);
@@ -119,7 +127,7 @@ async function history(repo: string | null): Promise<Response> {
       const perm = perms.get(session);
       const pane = herdrPaneOf(meta);
       const shown = paneView(pane, await agentsOf(herdrSockOf(meta)), byHandle.get(meta.terminal));
-      return { name, prompt: typeof meta.prompt === "string" ? meta.prompt : null, ts: meta.ts ?? null, cwd, root, repo: root.split("/").filter(Boolean).pop() ?? "", head: body.replace(/\s+/g, " ").trim().slice(0, 40), sid: typeof meta.session_id === "string" && meta.session_id ? meta.session_id : null, terminal: Boolean(meta.terminal) || pane !== null, live: shown.herdr ? shown.alive : (pane !== null && !meta.terminal ? true : terms ? Boolean(meta.terminal) && handles.has(meta.terminal) : claude ? Boolean(meta.terminal) && claude.has(meta.terminal) : true) && shown.alive, session, perm: perm ? { id: perm.id, tool: perm.tool, detail: perm.detail, ts: perm.ts } : null, agent: meta.agent ?? null, sub: isSubPane(meta), title: shown.title, status: shown.status, lastOutputAt: shown.lastOutputAt, bg: await readBg(session, typeof meta.session_id === "string" ? meta.session_id : null) };
+      return { name, prompt: typeof meta.prompt === "string" ? meta.prompt : null, ts: meta.ts ?? null, cwd, root, repo: root.split("/").filter(Boolean).pop() ?? "", head: body.replace(/\s+/g, " ").trim().slice(0, 40), sid: typeof meta.session_id === "string" && meta.session_id ? meta.session_id : null, terminal: Boolean(meta.terminal) || pane !== null, live: shown.herdr ? shown.alive : (pane !== null && !meta.terminal ? true : terms ? Boolean(meta.terminal) && handles.has(meta.terminal) : claude ? Boolean(meta.terminal) && claude.has(meta.terminal) : true) && shown.alive, session, perm: perm ? { id: perm.id, tool: perm.tool, detail: perm.detail, ts: perm.ts } : null, agent: meta.agent ?? null, sub: subType(meta, shown.tab, await firstTabsOf(herdrSockOf(meta))), title: shown.title, status: shown.status, lastOutputAt: shown.lastOutputAt, bg: await readBg(session, typeof meta.session_id === "string" ? meta.session_id : null) };
     }),
   )).filter((e): e is NonNullable<typeof e> => e !== null);
   // 1 つの端末で順に別の repo を開くと、端末が生きている限り昔の repo まで live になる (2026-09-29 実機: 1 端末で 4 repo)。
@@ -165,11 +173,11 @@ async function history(repo: string | null): Promise<Response> {
     asking.set(session, a);
     // 最初の返事より前の許可待ち (foyer の依頼はほぼこれ) もこの行に載せる。null 固定だと rmv に出なかった (2026-10-15)
     const perm = perms.get(session);
-    items.push({ name: `asking-${session}.md`, prompt: null, ts: a.ts, cwd, root, repo: root.split("/").filter(Boolean).pop() ?? "", head: "", terminal: isTerm || pane !== null, live, session, perm: perm ? { id: perm.id, tool: perm.tool, detail: perm.detail, ts: perm.ts } : null, agent: null, sub: isSubPane(p), title: shown.title, status: shown.status, lastOutputAt: shown.lastOutputAt, bg: await readBg(session, typeof p?.session_id === "string" ? p.session_id : null) });
+    items.push({ name: `asking-${session}.md`, prompt: null, ts: a.ts, cwd, root, repo: root.split("/").filter(Boolean).pop() ?? "", head: "", terminal: isTerm || pane !== null, live, session, perm: perm ? { id: perm.id, tool: perm.tool, detail: perm.detail, ts: perm.ts } : null, agent: null, sub: subType(p, shown.tab, await firstTabsOf(herdrSockOf(p))), title: shown.title, status: shown.status, lastOutputAt: shown.lastOutputAt, bg: await readBg(session, typeof p?.session_id === "string" ? p.session_id : null) });
   }
   items.sort((x, y) => (Date.parse(y.ts ?? "") || 0) - (Date.parse(x.ts ?? "") || 0)); // 仮の entry も時刻順。先頭固定だと端末が閉じた後も残る state/prompt の待機中が「最新」に居座り、追従が止まる (2026-10-13 実害: 19:57 の Crewforce が 2 時間先頭に残った)
   // sub は出口でだけ agent にする (上の集計は sub を本体の返事として数える: 端末ごとの最新の返事・今のセッションの判定が pane ごとに要る)
-  const out = items.map(({ root, sub, ...e }) => ({ ...e, agent: sub ? { type: "foyer", id: e.session } : e.agent, asking: (e.name.startsWith("asking-") || curSid.get(e.session) === replySid.get(e.session) ? asking.get(e.session) : null) ?? null })); // 次のセッションの依頼は前のセッションの返事に付けない
+  const out = items.map(({ root, sub, ...e }) => ({ ...e, agent: sub ? { type: sub, id: e.session } : e.agent, asking: (e.name.startsWith("asking-") || curSid.get(e.session) === replySid.get(e.session) ? asking.get(e.session) : null) ?? null })); // 次のセッションの依頼は前のセッションの返事に付けない
   const want = repo?.toLowerCase();
   return Response.json(want ? out.filter((e) => e.repo.toLowerCase() === want) : out, { headers: { "cache-control": "no-store", "x-rmx-live": terms || agents || named ? "ok" : "unknown" } });
 }
@@ -407,19 +415,42 @@ async function liveTerminals(maxAge: number): Promise<Term[] | null> {
 
 // herdr の Claude が居る pane: `herdr agent list` の pane_id → {title: terminal_title (先頭の ◑ / ✳ が作業中 / 入力待ち)}。取れない (herdr 無し / exit 非 0 / JSON 不正) 時は null。memo は liveTerminals と同じ
 // socket ごと (null = 既定 session) に memo する: pane id は herdr の session ごとに w1:p1 から振られて重なる。並走する呼びが同じ list を二重に叩かないよう promise を持つ
-const herdrCache = new Map<string, { at: number; agents: Promise<Map<string, { title: string; status: string | null }> | null> }>();
-function herdrAgents(sock: string | null, maxAge: number): Promise<Map<string, { title: string; status: string | null }> | null> {
+const herdrCache = new Map<string, { at: number; agents: Promise<Map<string, { title: string; status: string | null; tab: string | null }> | null> }>();
+function herdrAgents(sock: string | null, maxAge: number): Promise<Map<string, { title: string; status: string | null; tab: string | null }> | null> {
   const hit = herdrCache.get(sock ?? "");
   if (hit && Date.now() - hit.at < maxAge) return hit.agents;
   const agents = (async () => {
     try {
       const r = await herdrRun(["agent", "list"], sock);
       const list = r.code === 0 ? JSON.parse(r.out)?.result?.agents : null;
-      return Array.isArray(list) ? new Map<string, { title: string; status: string | null }>(list.filter((a) => a?.agent === "claude" && typeof a?.pane_id === "string").map((a) => [a.pane_id, { title: String(a.terminal_title ?? ""), status: typeof a.agent_status === "string" ? a.agent_status : null }])) : null;
+      return Array.isArray(list) ? new Map<string, { title: string; status: string | null; tab: string | null }>(list.filter((a) => a?.agent === "claude" && typeof a?.pane_id === "string").map((a) => [a.pane_id, { title: String(a.terminal_title ?? ""), status: typeof a.agent_status === "string" ? a.agent_status : null, tab: typeof a.tab_id === "string" ? a.tab_id : null }])) : null;
     } catch { return null; }
   })();
   herdrCache.set(sock ?? "", { at: Date.now(), agents });
   return agents;
+}
+
+// workspace ごとの最初の tab (herdr tab list の number 最小)。メイン判定用。取れない時は null (":t1" に倒す)
+const tabsCache = new Map<string, { at: number; tabs: Promise<Map<string, string> | null> }>();
+function herdrFirstTabs(sock: string | null, maxAge: number): Promise<Map<string, string> | null> {
+  const hit = tabsCache.get(sock ?? "");
+  if (hit && Date.now() - hit.at < maxAge) return hit.tabs;
+  const tabs = (async () => {
+    try {
+      const r = await herdrRun(["tab", "list"], sock);
+      const list = r.code === 0 ? JSON.parse(r.out)?.result?.tabs : null;
+      if (!Array.isArray(list)) return null;
+      const first = new Map<string, { n: number; id: string }>();
+      for (const t of list) {
+        if (typeof t?.tab_id !== "string" || typeof t?.workspace_id !== "string" || typeof t?.number !== "number") continue;
+        const cur = first.get(t.workspace_id);
+        if (!cur || t.number < cur.n) first.set(t.workspace_id, { n: t.number, id: t.tab_id });
+      }
+      return new Map([...first].map(([ws, v]) => [ws, v.id]));
+    } catch { return null; }
+  })();
+  tabsCache.set(sock ?? "", { at: Date.now(), tabs });
+  return tabs;
 }
 
 // (a) 今走っている対話 Claude の端末 handle: claude プロセスの環境変数 ORCA_TERMINAL_HANDLE の集合 (2026-09-29 実測、macOS の ps)。

@@ -98,19 +98,20 @@ def is_interactive():
     return not os.environ.get("CLAUDE_CODE_ENTRYPOINT", "").startswith("sdk")
 
 
-def pane_label(pane, sock):
-    """herdr の pane の名前 (foyer runner が立てた sub は "foyer")。herdr 配下でない・取れない時は None。
-    server が /history で sub の返事を一覧から外す印。記録自体は残す (foyer runner がこの記録を読んで返事にする)"""
+def pane_info(pane, sock):
+    """herdr の pane の名前と tab ({label, tab})。名前は foyer runner が立てた sub なら "foyer"、tab は "wF:t1" の形。herdr 配下でない・取れない時はどちらも None。
+    server が /history で sub (名前 foyer か tab 1 以外) の返事をメインから外す印。記録自体は残す (foyer runner がこの記録を読んで返事にする)"""
     if not pane:
-        return None
+        return {"label": None, "tab": None}
     try:
         env = dict(os.environ, HERDR_SOCKET_PATH=sock) if sock else None
         out = subprocess.run([os.environ.get("RMX_HERDR_BIN") or "/opt/homebrew/bin/herdr", "pane", "get", pane],
                              capture_output=True, text=True, timeout=3, env=env).stdout
-        label = (json.loads(out).get("result") or {}).get("pane", {}).get("label")
-        return label if isinstance(label, str) and label else None
+        info = (json.loads(out).get("result") or {}).get("pane", {})
+        pick = lambda k: info.get(k) if isinstance(info.get(k), str) and info.get(k) else None
+        return {"label": pick("label"), "tab": pick("tab_id")}
     except Exception:
-        return None
+        return {"label": None, "tab": None}
 
 
 def terminal_ids(session_id):
@@ -248,8 +249,9 @@ def main():
         terminal, herdr_pane, herdr_socket = terminal_ids(sid)
         if terminal is None and not herdr_pane:
             return  # Orca 外かつ herdr 外 (返信先の端末が無い) セッションは記録しない
+        pane = pane_info(herdr_pane, herdr_socket)
         meta = {"cwd": cwd, "session_id": sid, "ts": now.isoformat(timespec="seconds"), "name": name,
-                "terminal": terminal, "herdr_pane": herdr_pane, "herdr_socket": herdr_socket, "herdr_label": pane_label(herdr_pane, herdr_socket)}
+                "terminal": terminal, "herdr_pane": herdr_pane, "herdr_socket": herdr_socket, "herdr_label": pane["label"], "herdr_tab": pane["tab"]}
         if sub:
             meta["agent"] = {"type": data.get("agent_type"), "id": data.get("agent_id")}
         else:  # 本体の返事には prompt-state.py が置いた依頼文を載せて、ファイルは消す
