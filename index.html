@@ -1490,7 +1490,9 @@ function renderChips() {
   chipsHtml = html;
   const box = document.getElementById("chips");
   box.innerHTML = html;
-  box.querySelector(".on")?.scrollIntoView({ inline: "nearest", block: "nearest" });
+  // 選択中の chip が見えるよう帯だけを横に動かす。scrollIntoView は本文 (main) まで縦に動かし、新着で chip が描き直されるたびに読んでいた位置が上へ飛んだ (2026-10-18 user)
+  const on = box.querySelector(".on")?.getBoundingClientRect(), bb = box.getBoundingClientRect();
+  if (on) box.scrollLeft += Math.min(0, on.left - bb.left) || Math.max(0, on.right - bb.right);
 }
 document.getElementById("chips").addEventListener("click", async (ev) => {
   const b = ev.target.closest("[data-s]");
