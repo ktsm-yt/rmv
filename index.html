@@ -1634,12 +1634,14 @@ document.addEventListener("keydown", (ev) => { if (ev.code === "Escape" && !newp
 let fragMod = null;
 // 入力中 = 右の欄か、カーソルのある入力欄に文字がある。この間は画面を差し替えない (送信後も右の欄にカーソルが残るので、空なら追従を止めない)
 const typing = () => { const a = document.activeElement; return !!ctext.value.trim() || (!!a?.matches?.("textarea, input") && !!a.value.trim()); };
+// 読んでいる途中 = 本文を下へスクロールしている。入力中と同じく差し替え・読み直しを止め、一番上に戻ったら追従を再開する (2026-10-18 user: 新着が来るたびに読んでいた返事が新着に替わり、一番上に戻されたように見えた)
+const busy = () => typing() || mainEl.scrollTop > 0;
 async function poll() {
   try {
     const hr = await fetch("/history", { cache: "no-store" });
     // index.html が更新されたら読み直す (サーバー再起動では開いたままの画面は変わらない、2026-09-29 実害)。赤ペンの下書き中は消さない
     const page = hr.headers.get("x-rmx-page");
-    if (page) { if (pageVer && page !== pageVer && !drafts.size && !typing()) return location.reload(); pageVer = page; }
+    if (page) { if (pageVer && page !== pageVer && !drafts.size && !busy()) return location.reload(); pageVer = page; }
     liveState = hr.headers.get("x-rmx-live");
     all = await hr.json();
     // 選んでいた repo が履歴から消えたら (repo の決め方が変わった・古い URL 等) すべてに戻す。空の画面で止めない
@@ -1654,7 +1656,7 @@ async function poll() {
       if (mod !== fragMod) { fragMod = mod; await show(await r.text(), null); }
       list = []; renderBar(); return;
     }
-    const keep = following && !hasDraft(shownName) && !typing() ? null : list[idx]?.name; // 書きかけの赤ペン・入力中は新着で差し替えない (2026-10-16 user: 右の欄で返事を書いている最中に別の返事へ切り替わり、一番上に戻されたように見えた)
+    const keep = following && !hasDraft(shownName) && !busy() ? null : list[idx]?.name; // 書きかけの赤ペン・入力中・読んでいる途中は新着で差し替えない (2026-10-16 user: 右の欄で返事を書いている最中に別の返事へ切り替わり、一番上に戻されたように見えた)
     list = next;
     if (keep) { const j = list.findIndex((e) => e.name === keep); idx = j < 0 ? list.length - 1 : j; renderBar(); return; }
     await showIdx(0);
