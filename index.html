@@ -815,7 +815,11 @@ function zoomBy(k, clientX, clientY) {
 }
 zoom.addEventListener("wheel", (ev) => {
   ev.preventDefault(); // trackpad のピンチは ctrl+wheel として届く
-  zoomBy(Math.exp(-ev.deltaY * (ev.ctrlKey ? 0.01 : 0.0015)), ev.clientX, ev.clientY);
+  if (ev.ctrlKey) return zoomBy(Math.exp(-ev.deltaY * 0.01), ev.clientX, ev.clientY);
+  // 2 本指スクロール (上下左右) = 移動 (2026-10-18 user)。マウスのホイールも上下の移動になる
+  const s = vb.w / zoom.clientWidth;
+  vb.x += ev.deltaX * s; vb.y += ev.deltaY * s;
+  setVB();
 }, { passive: false });
 // 指・マウスは pointer で扱う: 1 本 = ドラッグ移動、2 本 = ピンチ (間隔の比で拡大縮小、中点の移動で移動)。
 // タッチで全体表示のまま 1 本ドラッグ = 左右スワイプで前後の画像 (拡大中は移動のまま)。ダブルタップ = 全体表示
