@@ -9,7 +9,8 @@ if echo "$refs" | grep -Eq ' refs/tags/v[0-9]+\.[0-9]+\.0 ' && [ -z "$RMV_MINOR_
   grep -E '^11\. ' CHANGELOG.md >&2
   exit 1
 fi
-echo "$refs" | while read -r _ lsha rref _; do
+# パイプで回すと while がサブシェルで走り、中の exit 1 が hook を止めない (2026-10-20 d9e2e28 が警告を出したまま main に入った)。here-doc で本体のシェルに回す
+while read -r _ lsha rref _; do
   [ "$rref" = refs/heads/main ] || continue
   tag=$(git describe --tags --abbrev=0 --match 'v*' "$lsha" 2>/dev/null) || continue
   bad=$(git log --format='%h %s' "$tag..$lsha" | grep -E '^[0-9a-f]+ (feat|fix)[(:!]')
@@ -21,6 +22,8 @@ echo "$refs" | while read -r _ lsha rref _; do
   [ -n "$(git ls-remote --tags "$1" "refs/tags/$tag")" ] && continue
   printf 'pre-push: タグ %s がまだ remote にありません。git push %s main %s で一緒に送ってください\n' "$tag" "$1" "$tag" >&2
   exit 1
-done
+done <<EOF
+$refs
+EOF
 # 読んでいる途中に新着で返事が差し替わる回帰 (10-15 / 10-16 / 10-18 に 3 回) は push 前に headless で再現テストを通す (約 15 秒、bun + uv + chromium が要る)
 bash "$(dirname "$0")/../test/viewer-scroll.test.sh" >/dev/null 2>&1 || { printf 'pre-push: test/viewer-scroll.test.sh が落ちました。bash test/viewer-scroll.test.sh で確認してください\n' >&2; exit 1; }
