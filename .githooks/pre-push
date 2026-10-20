@@ -22,3 +22,5 @@ echo "$refs" | while read -r _ lsha rref _; do
   printf 'pre-push: タグ %s がまだ remote にありません。git push %s main %s で一緒に送ってください\n' "$tag" "$1" "$tag" >&2
   exit 1
 done
+# 読んでいる途中に新着で返事が差し替わる回帰 (10-15 / 10-16 / 10-18 に 3 回) は push 前に headless で再現テストを通す (約 15 秒、bun + uv + chromium が要る)
+bash "$(dirname "$0")/../test/viewer-scroll.test.sh" >/dev/null 2>&1 || { printf 'pre-push: test/viewer-scroll.test.sh が落ちました。bash test/viewer-scroll.test.sh で確認してください\n' >&2; exit 1; }
