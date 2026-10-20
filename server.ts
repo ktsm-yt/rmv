@@ -176,6 +176,16 @@ async function history(repo: string | null): Promise<Response> {
     items.push({ name: `asking-${session}.md`, prompt: null, ts: a.ts, cwd, root, repo: root.split("/").filter(Boolean).pop() ?? "", head: "", terminal: isTerm || pane !== null, live, session, perm: perm ? { id: perm.id, tool: perm.tool, detail: perm.detail, ts: perm.ts } : null, agent: null, sub: subType(p, shown.tab, await firstTabsOf(herdrSockOf(p))), title: shown.title, status: shown.status, lastOutputAt: shown.lastOutputAt, bg: await readBg(session, typeof p?.session_id === "string" ? p.session_id : null) });
   }
   items.sort((x, y) => (Date.parse(y.ts ?? "") || 0) - (Date.parse(x.ts ?? "") || 0)); // 仮の entry も時刻順。先頭固定だと端末が閉じた後も残る state/prompt の待機中が「最新」に居座り、追従が止まる (2026-10-13 実害: 19:57 の Crewforce が 2 時間先頭に残った)
+  // 同じ herdr pane が別の Orca 端末 handle で記録されていると (herdr を別の端末から起こし直した)、pane だけで生死を見るので古い handle の分まで live になる
+  // (2026-10-20 実害: term_5ad77d1c と term_b9164a9a の wF:pC / wF:pE / wT:p1 で 3 pane が 6 セッションに見えた)。pane ごとに最新の記録の session だけ live に残す。
+  // pane 付きの session は `<handle>__<pane>[__<named>]`、pane 無しは "__" を含まない (sessionKey)
+  const paneNow = new Map<string, string>();
+  for (const e of items) {
+    if (!e.live || !e.session.includes("__")) continue;
+    const p = e.session.slice(e.session.indexOf("__"));
+    if (!paneNow.has(p)) paneNow.set(p, e.session);
+    else if (paneNow.get(p) !== e.session) e.live = false;
+  }
   // sub は出口でだけ agent にする (上の集計は sub を本体の返事として数える: 端末ごとの最新の返事・今のセッションの判定が pane ごとに要る)
   const out = items.map(({ root, sub, ...e }) => ({ ...e, agent: sub ? { type: sub, id: e.session } : e.agent, asking: (e.name.startsWith("asking-") || curSid.get(e.session) === replySid.get(e.session) ? asking.get(e.session) : null) ?? null })); // 次のセッションの依頼は前のセッションの返事に付けない
   const want = repo?.toLowerCase();
@@ -470,7 +480,9 @@ async function claudeTerminals(maxAge: number): Promise<Set<string> | null> {
     if (out !== null) {
       const pids = out.split("\n").map((l) => l.trim().match(/^(\d+)\s+(.*)$/)).filter((m) => m && m[2].startsWith("claude") && !/daemon|bg-pty-host|bg-spare| -p |--print/.test(m[2])).map((m) => m![1]);
       const envs = await Promise.all(pids.map((pid) => run(["-Eww", "-o", "command=", "-p", pid]).catch(() => null))); // 間に終了した pid は null で落とす
-      handles = new Set(envs.map((e) => e?.match(/(?:^|\s)ORCA_TERMINAL_HANDLE=(\S+)/)?.[1]).filter((h): h is string => !!h));
+      // herdr pane の Claude は herdr を起こした Orca 端末の handle を継ぐので数えない (pane の生死は herdr agent list で決める)。
+      // 数えると同じ端末で直に起動して終わった Claude の記録が live に残る (2026-10-20 実害: 18:21 の Usher が herdr の 3 pane のせいで稼働中)
+      handles = new Set(envs.filter((e) => !/(?:^|\s)HERDR_PANE_ID=/.test(e ?? "")).map((e) => e?.match(/(?:^|\s)ORCA_TERMINAL_HANDLE=(\S+)/)?.[1]).filter((h): h is string => !!h));
     }
   } catch {}
   claudeCache = { at: Date.now(), handles };
