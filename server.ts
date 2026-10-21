@@ -552,6 +552,7 @@ async function media(name: string | null): Promise<Response> {
 // ctx = {used, limit}: used = 最後の本体 assistant 行 (isSidechain 除く) の usage の input + cache_creation + cache_read + output、limit = model が "[1m]" で終わるなら 1,000,000、それ以外 200,000
 // ponytail: limit は model 名からの推定。上限が変わったら CTX_LIMIT を直す。model が取れない時は 200,000 扱い (1M セッションで割合が過大に出うる)
 const CTX_LIMIT = { plain: 200_000, long: 1_000_000 };
+const GHOSTEX_STATUS = process.env.RMX_GHOSTEX_STATUS_DIR || `${process.env.HOME}/.local/state/ghostex/agent-hooks/claude-statusline`; // テストの差し替え口
 const NOW_TAIL = 512 * 1024;
 const MODEL_ALIAS = ["opus", "sonnet", "haiku", "fable"];
 async function now(name: string | null): Promise<Response> {
@@ -591,8 +592,10 @@ async function now(name: string | null): Promise<Response> {
   const cfg = await Bun.file(CC_SETTINGS).json().catch(() => null);
   const s = typeof cfg?.model === "string" && cfg.model ? cfg.model : null;
   if (s && (!model || (MODEL_ALIAS.includes(model) && s.startsWith(model)))) model = s;
-  // 上限は state/ctx/<session_id>.json の {size} (statusline が Claude Code の context_window_size を置く) を優先。無ければ model 名から推定
-  const size = Number((await Bun.file(`${STATE}/ctx/${sid}.json`).json().catch(() => null))?.size);
+  // 上限は state/ctx/<session_id>.json の {size} (statusline が Claude Code の context_window_size を置く) を優先し、次に Ghostex が statusline の入力を丸ごと置く <sid>.json。無ければ model 名から推定
+  // (2026-10-20 に statusLine が Ghostex 経由の Pulse に替わり state/ctx が書かれなくなった。fable の 148k が 200k 扱いで赤くなり、204k / 1M の灰と色が逆転した)
+  const size = Number((await Bun.file(`${STATE}/ctx/${sid}.json`).json().catch(() => null))?.size)
+    || Number((await Bun.file(`${GHOSTEX_STATUS}/${sid}.json`).json().catch(() => null))?.payload?.context_window?.context_window_size);
   const ctx = used === null ? null : { used, limit: size > 0 ? size : model?.endsWith("[1m]") ? CTX_LIMIT.long : CTX_LIMIT.plain };
   return Response.json({ model, effort, ctx }, { headers: { "cache-control": "no-store" } });
 }

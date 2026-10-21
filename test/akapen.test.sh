@@ -284,7 +284,7 @@ if [ "\$2" = read ]; then n=\$(grep -c '^send-keys .*ctrl+v' "$TMP/hcalls"); [ -
 echo '{"result":{"type":"ok"}}'
 EOF
 chmod +x "$HERDRSTUB"
-GEMINI_API_KEY= RMX_TTS_KEYCHAIN_SERVICE="rmv-test-nonexistent-$$" RMX_PROJECTS_DIR="$TMP/projects" RMX_CC_SETTINGS="$TMP/cc-settings.json" RMX_MONO_FONT="$TMP/mono.ttf" RMX_STATE_DIR="$STATE" RMX_PORT="$PORT" RMX_ORCA_BIN="$STUB" RMX_HERDR_BIN="$HERDRSTUB" RMX_OSASCRIPT_BIN="$OSASTUB" RMX_PBPASTE_BIN="$TMP/pbpaste-stub" RMX_PBCOPY_BIN="$TMP/pbcopy-stub" RMX_PS_BIN="$PSSTUB" RMX_OPEN_BIN="$TMP/open-stub" RMX_LIVE_TTL_MS=0 RMX_WT_TTL_MS=0 RMX_ORIGINS="https://mac.tailtest.ts.net" bun run "$SERVER" > "$TMP/server.log" 2>&1 &
+GEMINI_API_KEY= RMX_TTS_KEYCHAIN_SERVICE="rmv-test-nonexistent-$$" RMX_PROJECTS_DIR="$TMP/projects" RMX_CC_SETTINGS="$TMP/cc-settings.json" RMX_GHOSTEX_STATUS_DIR="$TMP/ghostex" RMX_MONO_FONT="$TMP/mono.ttf" RMX_STATE_DIR="$STATE" RMX_PORT="$PORT" RMX_ORCA_BIN="$STUB" RMX_HERDR_BIN="$HERDRSTUB" RMX_OSASCRIPT_BIN="$OSASTUB" RMX_PBPASTE_BIN="$TMP/pbpaste-stub" RMX_PBCOPY_BIN="$TMP/pbcopy-stub" RMX_PS_BIN="$PSSTUB" RMX_OPEN_BIN="$TMP/open-stub" RMX_LIVE_TTL_MS=0 RMX_WT_TTL_MS=0 RMX_ORIGINS="https://mac.tailtest.ts.net" bun run "$SERVER" > "$TMP/server.log" 2>&1 &
 SRV=$!
 trap 'kill $SRV 2>/dev/null' EXIT
 for _ in $(seq 50); do curl -s -o /dev/null "$BASE/history" && break; sleep 0.1; done
@@ -643,6 +643,9 @@ check "now ctx: model が [1m] なら limit 1000000" "$(ctxq "$WITH")" "(267845,
 mkdir -p "$STATE/ctx"; printf '{"size":1000000}' > "$STATE/ctx/$SID.json"
 check "now ctx: state/ctx/<sid>.json の size があれば model 名より優先 (無印 opus でも 1000000)" "$(ctxq "$WITH")" "(267845, 1000000)"
 rm -f "$STATE/ctx/$SID.json"
+mkdir -p "$TMP/ghostex"; printf '{"payload":{"context_window":{"context_window_size":1000000}}}' > "$TMP/ghostex/$SID.json"
+check "now ctx: state/ctx が無くても Ghostex の statusline 記録の context_window_size を使う (2026-10-21 fable 148k が 200k 扱いで赤)" "$(ctxq "$WITH")" "(267845, 1000000)"
+rm -f "$TMP/ghostex/$SID.json"
 { cmd model 'opus'; } > "$TMP/projects/-x-repo/$SID.jsonl"
 check "now ctx: usage 行が無ければ null" "$(ctxq "$WITH")" "None"
 check "now: 不正な name → 400" "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/now?name=../x.md")" 400
