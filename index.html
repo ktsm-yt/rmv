@@ -199,6 +199,7 @@
   .blk.pri-yellow { border-left-color: var(--yellow); }
   .blk.pri-green { border-left-color: var(--green); }
   .num { width: 2.2em; height: 2.2em; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 17px; background: var(--fg); color: var(--bg); }
+  .blk.alpha > .num { background: var(--link); color: var(--bg); } /* 案の段 (A: / B:) は番号段落と色で分ける。pinned の赤は下で上書き */
   .blk.nonum { grid-template-columns: 1fr; }
   .blk.nonum .num { display: none; }
   .body { min-width: 0; }
@@ -518,7 +519,7 @@ function renderLowLoad(md) {
   }
   const body = blocks.map((b) => {
     const pri = PRI.map(([, c]) => c).find((c) => b.pri.has(c)); // 赤 > 黄 > 緑
-    return `<section class="blk${b.num ? "" : " nonum"}${pri ? " pri-" + pri : ""}"${b.label ? ` data-label="${esc(b.label)}"` : ""}><div class="num">${esc(b.num ?? "")}</div><div class="body">${b.html.join("")}</div></section>`;
+    return `<section class="blk${b.num ? "" : " nonum"}${/^[A-Z]$/.test(b.num ?? "") ? " alpha" : ""}${pri ? " pri-" + pri : ""}"${b.label ? ` data-label="${esc(b.label)}"` : ""}><div class="num">${esc(b.num ?? "")}</div><div class="body">${b.html.join("")}</div></section>`;
   }).join("");
   return body + (foot.length ? `<div class="foot">${foot.join("")}</div>` : "");
 }
