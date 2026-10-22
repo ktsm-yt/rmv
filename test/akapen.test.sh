@@ -44,7 +44,7 @@ check "hook: ORCA_TERMINAL_HANDLE なし → latest.json も変えない" "$(cat
 # 以降の server 試験は「terminal なし entry」(過去に記録済みの履歴) を前提にするので、hook を通さず手で置く
 WITHOUT="${WITH%.md}-noterm.md"
 cp "$STATE/history/$WITH" "$STATE/history/$WITHOUT"
-python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); d["terminal"]=None; d["name"]=sys.argv[3]; json.dump(d,open(sys.argv[2],"w"),ensure_ascii=False)' "$STATE/history/${WITH%.md}.json" "$STATE/history/${WITHOUT%.md}.json" "$WITHOUT"
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); d["terminal"]=None; d["name"]=sys.argv[3]; d["session_id"]="noterm-0000"; json.dump(d,open(sys.argv[2],"w"),ensure_ascii=False)' "$STATE/history/${WITH%.md}.json" "$STATE/history/${WITHOUT%.md}.json" "$WITHOUT"
 cp "$STATE/history/$WITHOUT" "$STATE/latest.html"; cp "$STATE/history/${WITHOUT%.md}.json" "$STATE/latest.json"
 check "hook: 手置きの terminal なし entry (server 試験の前提)" "$(field "$STATE/latest.json" terminal)" null
 # SubagentStop: 同じ script を subagent の返事にも使う。history にだけ agent 付きで書き、latest.* (本体の返事) は触らない
@@ -126,7 +126,7 @@ check "perm hook: 親が -p 無しの対話 claude なら書く (判定は stop-
 PROMPTHOOK="${RMX_PROMPT_HOOK:-$A/hooks/prompt-state.py}"
 # upr <state dir> <prompt> <env 引数...> → UserPromptSubmit を 1 回実行 (prompt は python で JSON 化)
 # session_id は fixture の返事と同じにする (別 session_id の依頼は「次のセッションの依頼」として前の返事に付かない)
-upr() { local d="$1" p="$2"; shift 2; python3 -c 'import json,sys,os; print(json.dumps({"hook_event_name":"UserPromptSubmit","session_id":"abcd1234-ef56-7890-aaaa-bbbbccccdddd","prompt":sys.argv[1],"cwd":os.getcwd()}))' "$p" | env "$@" RMX_STATE_DIR="$d" python3 "$PROMPTHOOK"; }
+upr() { local d="$1" p="$2"; shift 2; python3 -c 'import json,sys,os; print(json.dumps({"hook_event_name":"UserPromptSubmit","session_id":os.environ.get("UPR_SID","abcd1234-ef56-7890-aaaa-bbbbccccdddd"),"prompt":sys.argv[1],"cwd":os.getcwd()}))' "$p" | env "$@" RMX_STATE_DIR="$d" python3 "$PROMPTHOOK"; }
 pfile() { [ -e "$1" ] && echo written || echo none; }
 upr "$TMP/pr1" $'長い依頼\n二行目' ORCA_TERMINAL_HANDLE=term_p CLAUDE_CODE_ENTRYPOINT=cli
 check "prompt hook: 通常の prompt → prompt/term_p.json に本文 (改行は保つ)" "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["prompt"].replace("\n","|"))' "$TMP/pr1/prompt/term_p.json")" "長い依頼|二行目"
@@ -305,7 +305,7 @@ agent() { curl -s "$BASE/history" | python3 -c "import json,sys; a=[e.get('agent
 check "/history: subagent entry は agent.type、本体は null" "$(agent "$SUB") $(agent "$WITH")" "claude-code-harness:worker None"
 sess() { curl -s "$BASE/history" | python3 -c "import json,sys; print([e.get('session') for e in json.load(sys.stdin) if e['name']==sys.argv[1]][0])" "$1"; }
 check "/history: session = terminal handle (terminal あり)" "$(sess "$WITH")" term_test
-check "/history: session = session_id (terminal なし)" "$(sess "$WITHOUT")" abcd1234-ef56-7890-aaaa-bbbbccccdddd
+check "/history: session = session_id (terminal なし)" "$(sess "$WITHOUT")" noterm-0000
 # live = terminal handle が今の orca terminal list にある (プロジェクト列で終了した repo を隠す)。RMX_LIVE_TTL_MS=0 でキャッシュを切っている
 # lives → "<WITH の live> <WITHOUT の live> <x-rmx-live>"
 lives() { curl -s -D "$TMP/hhead" -o "$TMP/hist" "$BASE/history"; python3 -c "import json,sys; d={e['name']:e.get('live') for e in json.load(open(sys.argv[1]))}; print(d['$WITH'], d['$WITHOUT'], end=' ')" "$TMP/hist"; grep -i '^x-rmx-live:' "$TMP/hhead" | cut -d: -f2 | tr -d ' \r'; echo; }
@@ -833,10 +833,12 @@ ppentry() { # <pane> <dst name>: hook が書いた返事を、名前を付け替
   python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); d["name"]=sys.argv[3]; json.dump(d,open(sys.argv[2],"w"),ensure_ascii=False)' "$d/history/${n%.md}.json" "$STATE/history/${2%.md}.json" "$2"
 }
 ppentry w5:p1 "$PPA"; ppentry w5:p2 "$PPB"
+setsid() { python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["session_id"]=sys.argv[2]; json.dump(d,open(p,"w"),ensure_ascii=False)' "$STATE/history/${1%.md}.json" "$2"; } # 見本は全部同じ session_id なので、別の会話にする entry だけ付け直す
+setsid "$PPA" sess-ppa; setsid "$PPB" sess-ppb
 check "herdr session: 同じ terminal・別 pane の 2 entry は別 session" "$(sessof "$PPA" "$PPB")" "term_pp__w5-p1,term_pp__w5-p2"
 check "herdr session: pane 無し entry は従来どおり terminal のまま (回帰)" "$(sessof "$WITH")" "term_test"
 # asking: 返事の後に A だけ依頼を出す → A の entry にだけ付く
-upr "$STATE" '依頼A2' HERDR_ENV=1 HERDR_PANE_ID=w5:p1 ORCA_TERMINAL_HANDLE=term_pp CLAUDE_CODE_ENTRYPOINT=cli
+UPR_SID=sess-ppa upr "$STATE" '依頼A2' HERDR_ENV=1 HERDR_PANE_ID=w5:p1 ORCA_TERMINAL_HANDLE=term_pp CLAUDE_CODE_ENTRYPOINT=cli
 check "herdr asking: pane A の依頼は A の entry にだけ付き、B には付かない" "$(askof "$PPA") $(askof "$PPB")" "依頼A2 None"
 # 返事が届くと、その pane の依頼だけが meta.prompt に載り消える (別 pane の依頼は触らない)
 upr "$STATE" '依頼B2' HERDR_ENV=1 HERDR_PANE_ID=w5:p2 ORCA_TERMINAL_HANDLE=term_pp CLAUDE_CODE_ENTRYPOINT=cli
@@ -875,6 +877,16 @@ check "herdr title: herdr に出力時刻は無いので共有端末の lastOutp
 check "herdr live: herdr に居る pane は live" "$(fld "$PPA" live) $(fld "$PPB" live)" "True True"
 agentlist "$(ag w5:p1 '◑ 作業A')"
 check "herdr live: herdr に居なくなった pane は live=false (同じ端末の別 pane は live のまま)" "$(fld "$PPA" live) $(fld "$PPB" live)" "True False"
+# 会話を別の pane で再開した (claude --resume): B の会話 (sess-ppb) を p1 で再開 → p2 時代の返事も p1 の行に寄り稼働中になる
+PPR="29990101T000000005-ppr.md"
+cp "$STATE/history/$PPA" "$STATE/history/$PPR"
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); d["name"]=sys.argv[2]; d["session_id"]="sess-ppb"; d["ts"]="2999-01-01T00:00:05+09:00"; json.dump(d,open(sys.argv[3],"w"),ensure_ascii=False)' "$STATE/history/${PPA%.md}.json" "$PPR" "$STATE/history/${PPR%.md}.json"
+check "resume: 別 pane で再開した会話の前の返事は、今の pane の行に寄り稼働中" "$(sessof "$PPB") $(fld "$PPB" live) $(sessof "$PPR")" "term_pp__w5-p1 True term_pp__w5-p1"
+check "resume: 同じ pane の別の会話 (A) は寄らず稼働中でない" "$(sessof "$PPA") $(fld "$PPA" live)" "term_pp__w5-p1 False"
+agentlist "$(ag w5:p1 '◑ 作業A')" "$(ag w5:p2 '✳ 待ちB')"
+check "resume: 元の pane も稼働中 (同じ会話を 2 pane で開いた) なら寄せない" "$(sessof "$PPB") $(fld "$PPB" live)" "term_pp__w5-p2 True"
+agentlist "$(ag w5:p1 '◑ 作業A')"
+rm -f "$STATE/history/$PPR" "$STATE/history/${PPR%.md}.json"
 # /exit → 同じ pane で次の Claude: pane は生きているので前のセッションの返事まで live になっていた (2026-10-13)。今のセッション (最新の返事 / state/prompt の session_id) だけ live
 PPC="29990101T000000003-ppc.md"
 cp "$STATE/history/$PPA" "$STATE/history/$PPC"
@@ -903,10 +915,10 @@ ppentry2() { # <socket> <dst name>: 同じ pane id w5:p1 の返事を、socket �
   cp "$d/history/$n" "$STATE/history/$2"
   python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); d["name"]=sys.argv[3]; json.dump(d,open(sys.argv[2],"w"),ensure_ascii=False)' "$d/history/${n%.md}.json" "$STATE/history/${2%.md}.json" "$2"
 }
-ppentry2 "$DFLT" "$PPD"; ppentry2 "$SOLO" "$PPS"
+ppentry2 "$DFLT" "$PPD"; ppentry2 "$SOLO" "$PPS"; setsid "$PPD" sess-ppd; setsid "$PPS" sess-pps
 check "named session hook: meta に herdr_socket を記録する (既定 / 名前付き)" "$(field "$TMP/pp-${PPD%.md}/latest.json" herdr_socket) $(field "$TMP/pp-${PPS%.md}/latest.json" herdr_socket)" "$DFLT $SOLO"
 check "named session: 同じ pane id (w5:p1) でも既定と名前付きは別 session、既定の key は従来のまま" "$(sessof "$PPD" "$PPS")" "term_pp__w5-p1,term_pp__w5-p1__solo"
-upr "$STATE" '依頼S' HERDR_ENV=1 HERDR_PANE_ID=w5:p1 HERDR_SOCKET_PATH="$SOLO" ORCA_TERMINAL_HANDLE=term_pp CLAUDE_CODE_ENTRYPOINT=cli
+UPR_SID=sess-pps upr "$STATE" '依頼S' HERDR_ENV=1 HERDR_PANE_ID=w5:p1 HERDR_SOCKET_PATH="$SOLO" ORCA_TERMINAL_HANDLE=term_pp CLAUDE_CODE_ENTRYPOINT=cli
 check "named session: 依頼文の state key も session 名つき (既定の w5:p1 の依頼と混ざらない)" "$(ls "$STATE/prompt" | grep '^term_pp__w5-p1' | tr '\n' ' ')" "term_pp__w5-p1__solo.json "
 check "named session: 依頼は名前付きの entry にだけ付く" "$(askof "$PPD") $(askof "$PPS")" "None 依頼S"
 rm -f "$STATE/prompt/term_pp__w5-p1__solo.json"

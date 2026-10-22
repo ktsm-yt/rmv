@@ -186,6 +186,16 @@ async function history(repo: string | null): Promise<Response> {
     if (!paneNow.has(p)) paneNow.set(p, e.session);
     else if (paneNow.get(p) !== e.session) e.live = false;
   }
+  // 会話を別の pane で再開すると (claude --resume)、再開前の返事は前の pane の行に残り、同じ会話が 2 行に分かれる (2026-10-22 user 判断 B)。
+  // 稼働中でない返事のうち、同じ session_id が今どこかの pane で稼働中なら、その行に寄せる。稼働中同士 (同じ会話を 2 pane で開いた) は寄せない
+  const liveSid = new Map<string, string>(); // session_id → 今それが動いている行
+  for (const e of items) if (e.live && e.sid && !liveSid.has(e.sid)) liveSid.set(e.sid, e.session);
+  for (const e of items) {
+    const to = !e.live && e.sid ? liveSid.get(e.sid) : undefined;
+    if (!to || to === e.session) continue;
+    const perm = perms.get(to);
+    Object.assign(e, { session: to, live: true, perm: perm ? { id: perm.id, tool: perm.tool, detail: perm.detail, ts: perm.ts } : null });
+  }
   // sub は出口でだけ agent にする (上の集計は sub を本体の返事として数える: 端末ごとの最新の返事・今のセッションの判定が pane ごとに要る)
   const out = items.map(({ root, sub, ...e }) => ({ ...e, agent: sub ? { type: sub, id: e.session } : e.agent, asking: (e.name.startsWith("asking-") || curSid.get(e.session) === replySid.get(e.session) ? asking.get(e.session) : null) ?? null })); // 次のセッションの依頼は前のセッションの返事に付けない
   const want = repo?.toLowerCase();
