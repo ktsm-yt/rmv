@@ -44,7 +44,7 @@ check "hook: ORCA_TERMINAL_HANDLE なし → latest.json も変えない" "$(cat
 # 以降の server 試験は「terminal なし entry」(過去に記録済みの履歴) を前提にするので、hook を通さず手で置く
 WITHOUT="${WITH%.md}-noterm.md"
 cp "$STATE/history/$WITH" "$STATE/history/$WITHOUT"
-python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); d["terminal"]=None; d["name"]=sys.argv[3]; d["session_id"]="noterm-0000"; json.dump(d,open(sys.argv[2],"w"),ensure_ascii=False)' "$STATE/history/${WITH%.md}.json" "$STATE/history/${WITHOUT%.md}.json" "$WITHOUT"
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); d["terminal"]=None; d["name"]=sys.argv[3]; json.dump(d,open(sys.argv[2],"w"),ensure_ascii=False)' "$STATE/history/${WITH%.md}.json" "$STATE/history/${WITHOUT%.md}.json" "$WITHOUT"
 cp "$STATE/history/$WITHOUT" "$STATE/latest.html"; cp "$STATE/history/${WITHOUT%.md}.json" "$STATE/latest.json"
 check "hook: 手置きの terminal なし entry (server 試験の前提)" "$(field "$STATE/latest.json" terminal)" null
 # SubagentStop: 同じ script を subagent の返事にも使う。history にだけ agent 付きで書き、latest.* (本体の返事) は触らない
@@ -305,7 +305,7 @@ agent() { curl -s "$BASE/history" | python3 -c "import json,sys; a=[e.get('agent
 check "/history: subagent entry は agent.type、本体は null" "$(agent "$SUB") $(agent "$WITH")" "claude-code-harness:worker None"
 sess() { curl -s "$BASE/history" | python3 -c "import json,sys; print([e.get('session') for e in json.load(sys.stdin) if e['name']==sys.argv[1]][0])" "$1"; }
 check "/history: session = terminal handle (terminal あり)" "$(sess "$WITH")" term_test
-check "/history: session = session_id (terminal なし)" "$(sess "$WITHOUT")" noterm-0000
+check "/history: session = session_id (terminal なし)" "$(sess "$WITHOUT")" abcd1234-ef56-7890-aaaa-bbbbccccdddd
 # live = terminal handle が今の orca terminal list にある (プロジェクト列で終了した repo を隠す)。RMX_LIVE_TTL_MS=0 でキャッシュを切っている
 # lives → "<WITH の live> <WITHOUT の live> <x-rmx-live>"
 lives() { curl -s -D "$TMP/hhead" -o "$TMP/hist" "$BASE/history"; python3 -c "import json,sys; d={e['name']:e.get('live') for e in json.load(open(sys.argv[1]))}; print(d['$WITH'], d['$WITHOUT'], end=' ')" "$TMP/hist"; grep -i '^x-rmx-live:' "$TMP/hhead" | cut -d: -f2 | tr -d ' \r'; echo; }
@@ -883,6 +883,18 @@ cp "$STATE/history/$PPA" "$STATE/history/$PPR"
 python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); d["name"]=sys.argv[2]; d["session_id"]="sess-ppb"; d["ts"]="2999-01-01T00:00:05+09:00"; json.dump(d,open(sys.argv[3],"w"),ensure_ascii=False)' "$STATE/history/${PPA%.md}.json" "$PPR" "$STATE/history/${PPR%.md}.json"
 check "resume: 別 pane で再開した会話の前の返事は、今の pane の行に寄り稼働中" "$(sessof "$PPB") $(fld "$PPB" live) $(sessof "$PPR")" "term_pp__w5-p1 True term_pp__w5-p1"
 check "resume: 同じ pane の別の会話 (A) は寄らず稼働中でない" "$(sessof "$PPA") $(fld "$PPA" live)" "term_pp__w5-p1 False"
+# 再開した後、元の pane (p2) で別の会話 (sess-c2) が開かれた: 行は p1 にまとまり、そこから送ると p2 の別の会話でなく p1 へ届く
+agentlist "$(ag w5:p1 '◑ 作業A')" "$(ag w5:p2 '✳ 別の会話')"
+mkdir -p "$STATE/prompt"
+printf '{"prompt":"","waiting":true,"ts":"2999-01-01T00:00:06+09:00","session_id":"sess-c2","cwd":"/x","terminal":"term_pp","herdr_pane":"w5:p2"}' > "$STATE/prompt/term_pp__w5-p2.json"
+rm -f "$TMP/hcalls" "$TMP/hshell" "$TMP/hgone"
+check "resume: 元の pane で別の会話が開かれても、前の返事は今の pane の行" "$(sessof "$PPB") $(fld "$PPB" live)" "term_pp__w5-p1 True"
+check "resume send: 前の返事から送ると今の pane (p1) へ届き、p2 の別の会話には送らない" "$(post "$GOOD" "$(body "$PPB" x)") $(grep 'send-' "$TMP/hcalls" | tr '\n' ',')" "200 send-text w5:p1 x,send-keys w5:p1 enter,"
+rm -f "$STATE/history/$PPR" "$STATE/history/${PPR%.md}.json"; rm -f "$TMP/hcalls"
+check "resume send: 移った先が無く元の pane で別の会話が開かれている → 409、何も送らない" "$(post "$GOOD" "$(body "$PPB" x)") $(grep -c 'send-' "$TMP/hcalls")" "409 0"
+rm -f "$STATE/prompt/term_pp__w5-p2.json" "$TMP/hcalls"
+cp "$STATE/history/$PPA" "$STATE/history/$PPR"
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); d["name"]=sys.argv[2]; d["session_id"]="sess-ppb"; d["ts"]="2999-01-01T00:00:05+09:00"; json.dump(d,open(sys.argv[3],"w"),ensure_ascii=False)' "$STATE/history/${PPA%.md}.json" "$PPR" "$STATE/history/${PPR%.md}.json"
 agentlist "$(ag w5:p1 '◑ 作業A')" "$(ag w5:p2 '✳ 待ちB')"
 check "resume: 元の pane も稼働中 (同じ会話を 2 pane で開いた) なら寄せない" "$(sessof "$PPB") $(fld "$PPB" live)" "term_pp__w5-p2 True"
 agentlist "$(ag w5:p1 '◑ 作業A')"

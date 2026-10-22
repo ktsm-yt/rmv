@@ -188,10 +188,11 @@ async function history(repo: string | null): Promise<Response> {
   }
   // 会話を別の pane で再開すると (claude --resume)、再開前の返事は前の pane の行に残り、同じ会話が 2 行に分かれる (2026-10-22 user 判断 B)。
   // 稼働中でない返事のうち、同じ session_id が今どこかの pane で稼働中なら、その行に寄せる。稼働中同士 (同じ会話を 2 pane で開いた) は寄せない
+  // ponytail: herdr の pane 同士だけ (session に "__")。送信が移った先へ回るのは herdr だけなので、Orca だけの端末は寄せると前の端末の別の会話へ送りうる
   const liveSid = new Map<string, string>(); // session_id → 今それが動いている行
-  for (const e of items) if (e.live && e.sid && !liveSid.has(e.sid)) liveSid.set(e.sid, e.session);
+  for (const e of items) if (e.live && e.sid && e.session.includes("__") && !liveSid.has(e.sid)) liveSid.set(e.sid, e.session);
   for (const e of items) {
-    const to = !e.live && e.sid ? liveSid.get(e.sid) : undefined;
+    const to = !e.live && e.sid && e.session.includes("__") ? liveSid.get(e.sid) : undefined;
     if (!to || to === e.session) continue;
     const perm = perms.get(to);
     Object.assign(e, { session: to, live: true, perm: perm ? { id: perm.id, tool: perm.tool, detail: perm.detail, ts: perm.ts } : null });
@@ -672,10 +673,11 @@ function herdrSend(pane: string, t: string, sock: string | null): ReturnType<typ
 // (2026-10-14 実害: 3709da0b が wF:p9 → wF:p1 に移り、p9 時代の記録から送ると「Claude が居ない」で止まった)。
 // 同じ session_id の記録がある pane のうち、その pane の最新の記録 (返事 / 依頼・起動の記録) も同じ会話のものだけを候補にし、一番新しい記録を返す。
 // pane の最新の記録が別の会話 = その後に別の Claude が開かれた pane なので送らない (誤送信防止)。
-// ponytail: 送信が止まった時だけ history と prompt の json を全部読む (hook が 200 件に切り詰めるので軽い)
-async function movedPane(meta: { session_id?: unknown; herdr_pane?: unknown; herdr_socket?: unknown }): Promise<Record<string, unknown> | null> {
+// left = 元の pane の最新の記録が別の会話 (元の pane に Claude が居ても、そこはもう別の会話)。一覧は再開前の返事を移った先の行に出すので、元の pane へは送らない
+// ponytail: herdr pane への送信のたびに history と prompt の json を全部読む (hook が 200 件に切り詰めるので軽い)
+async function movedPane(meta: { session_id?: unknown; herdr_pane?: unknown; herdr_socket?: unknown }): Promise<{ to: Record<string, unknown> | null; left: boolean }> {
   const sid = meta.session_id;
-  if (typeof sid !== "string" || !sid) return null;
+  if (typeof sid !== "string" || !sid) return { to: null, left: false };
   const newest = new Map<string, { t: number; r: Record<string, unknown> }>(); // key = socket と pane
   for (const dir of [HIST, PROMPT]) {
     for (const n of (await readdir(dir).catch(() => [] as string[])).filter((n) => n.endsWith(".json"))) {
@@ -689,7 +691,8 @@ async function movedPane(meta: { session_id?: unknown; herdr_pane?: unknown; her
   }
   const from = `${herdrSockOf(meta) ?? ""}|${herdrPaneOf(meta)}`;
   const hits = [...newest].filter(([k, v]) => k !== from && v.r.session_id === sid).sort((a, b) => b[1].t - a[1].t);
-  return hits[0]?.[1].r ?? null;
+  const now = newest.get(from)?.r.session_id;
+  return { to: hits[0]?.[1].r ?? null, left: typeof now === "string" && !!now && now !== sid };
 }
 // Origin 必須 + 一致: 無いと任意の web ページが fetch POST で端末にキー入力を流し込める (CSRF)。
 async function send(req: Request): Promise<Response> {
@@ -713,10 +716,11 @@ async function send(req: Request): Promise<Response> {
   if (!pane && (typeof meta.terminal !== "string" || !meta.terminal)) return new Response("entry has no terminal", { status: 409 });
   if (pane) {
     const bad = await checkHerdrPane(pane, sock);
-    // 元の pane が閉じた / Claude が居ない時だけ、同じ会話が移った先の pane を探す。そこも送れなければ元の理由で止める
-    const moved = bad?.status === 409 ? await movedPane(meta) : null;
-    if (bad && (!moved || (await checkHerdrPane(herdrPaneOf(moved)!, herdrSockOf(moved))))) return bad;
-    if (moved) { meta = moved; pane = herdrPaneOf(moved); sock = herdrSockOf(moved); }
+    // 元の pane が閉じた / Claude が居ない / 別の会話が開かれている時は、同じ会話が移った先の pane を探す。そこも送れなければ元の理由で止める
+    const m = !bad || bad.status === 409 ? await movedPane(meta) : null;
+    const gone = bad ?? (m?.left ? new Response(`herdr pane ${pane} では別の会話が開かれている`, { status: 409 }) : null);
+    if (gone && (!m?.to || (await checkHerdrPane(herdrPaneOf(m.to)!, herdrSockOf(m.to))))) return gone;
+    if (gone && m?.to) { meta = m.to; pane = herdrPaneOf(m.to); sock = herdrSockOf(m.to); }
   }
   // herdr pane がある時、orca の端末は焦点を戻す先 (herdr を載せている Orca タブ) としてだけ使う。Orca 無しの herdr だけの entry は handle なし (焦点は動かさない)
   const handle = pane ? meta.terminal || null : await resolveTerminal(meta);
