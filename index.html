@@ -428,11 +428,12 @@ function linkPaths(t) {
   })).join("");
   return { md, media };
 }
+let mediaV = 0;
 // 同じ行のメディアは 1 つの .media に入れる (2 つ以上なら CSS で横並び)
 function mediaHTML(paths) {
   const one = (p) => {
     const kind = MEDIA.find(([, re]) => re.test(p))?.[0];
-    const u = esc(fileURL(p));
+    const u = esc(fileURL(p) + "&v=" + mediaV); // 返事ごとに変える: 同じ URL だとブラウザがページ内の古い画像を使い回す (上書きした png が替わらない)
     if (kind === "img") return `<img src="${u}" loading="lazy" title="クリックで拡大">`; // 拡大は zoomImage (mermaid と同じ全画面)
     if (kind === "video") return `<video controls preload="metadata" src="${u}"></video>`;
     return `<audio controls src="${u}"></audio>`;
@@ -527,6 +528,7 @@ function renderLowLoad(md) {
 async function show(md, entry) {
   const el = document.getElementById("reply");
   stopSpeak(); // 返事が替わったら読み上げは止める
+  mediaV = Date.now();
   el.innerHTML = md ? renderLowLoad(md) : "";
   const ask = document.getElementById("ask"), q = entry?.prompt ?? "";
   ask.hidden = !q; ask.open = false;
