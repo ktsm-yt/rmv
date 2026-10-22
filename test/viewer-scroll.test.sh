@@ -15,10 +15,10 @@ PORT="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); p
 BASE="http://127.0.0.1:$PORT"
 
 # 返事を 1 件置く。本文は画面より十分長く (スクロールできるように)
-entry() { # entry <name-stem> <marker>
-  local md="$STATE/history/$1.md" js="$STATE/history/$1.json"
+entry() { # entry <name-stem> <marker> [端末] (rmv のセッション = 端末。省くと返事ごとに別の端末)
+  local md="$STATE/history/$1.md" js="$STATE/history/$1.json" term="${3:-term_${1##*-}}"
   { echo "# $2"; for i in $(seq 1 120); do echo "$2 行 $i"; echo; done; } > "$md"
-  printf '{"cwd":"/Users/i/Dev/rmv","session_id":"test-%s","ts":"2026-10-20T12:00:00+09:00","name":"%s.md","terminal":"term_test"}\n' "$1" "$1" > "$js"
+  printf '{"cwd":"/Users/i/Dev/rmv","session_id":"test-%s","ts":"2026-10-20T12:00:00+09:00","name":"%s.md","terminal":"%s"}\n' "$1" "$1" "$term" > "$js"
   cp "$md" "$STATE/latest.html"; cp "$js" "$STATE/latest.json"
 }
 entry 20261020T120000000-aaaaaaaa ENTRY1
@@ -40,8 +40,8 @@ def check(label, cond, got=""):
     global fail
     print(("ok   " if cond else "FAIL ") + label + ("" if cond else f" (got {got})"))
     fail += 0 if cond else 1
-def newentry(stem, marker):
-    subprocess.run(["bash", "-c", f'entry {stem} {marker}'], check=True)
+def newentry(stem, marker, term=""):
+    subprocess.run(["bash", "-c", f'entry {stem} {marker} {term}'], check=True)
 with sync_playwright() as p:
     b = p.chromium.launch()
     pg = b.new_page(viewport={"width": 700, "height": 400})
@@ -62,8 +62,14 @@ with sync_playwright() as p:
     time.sleep(3.5)
     txt = pg.evaluate("document.querySelector('main').innerText")
     check("一番上に戻ったら新着 (ENTRY3) に追従する", "ENTRY3" in txt, txt[:40].replace("\n", " "))
+    pg.wait_for_function("document.querySelector('main')?.innerText.includes('ENTRY3 行 120')", timeout=10000)
+    pg.evaluate("document.querySelector('main').scrollTop = 600")
+    newentry("20261020T120300000-dddddddd", "ENTRY4", "term_cccccccc")  # ENTRY3 と同じ端末
+    time.sleep(3.5)
+    txt = pg.evaluate("document.querySelector('main').innerText")
+    check("読んでいる途中でも、同じセッションの新着 (ENTRY4) には切り替わる", "ENTRY4" in txt, txt[:40].replace("\n", " "))
     b.close()
-print(f"scanned 5 checks, {fail} failed")
+print(f"scanned 6 checks, {fail} failed")
 sys.exit(1 if fail else 0)
 EOF
 rc=$?

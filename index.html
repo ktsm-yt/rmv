@@ -1659,7 +1659,9 @@ async function poll() {
       if (mod !== fragMod) { fragMod = mod; await show(await r.text(), null); }
       list = []; renderBar(); return;
     }
-    const keep = following && !hasDraft(shownName) && !busy() ? null : list[idx]?.name; // 書きかけの赤ペン・入力中・読んでいる途中は新着で差し替えない (2026-10-16 user: 右の欄で返事を書いている最中に別の返事へ切り替わり、一番上に戻されたように見えた)
+    // 入力中・読んでいる途中でも、表示中と同じセッションの新着には切り替える (2026-10-22 user: 止めたかったのは他セッションの新着だけ)
+    const sameSess = !!list[idx]?.session && next[0]?.session === list[idx].session;
+    const keep = following && !hasDraft(shownName) && (!busy() || sameSess) ? null : list[idx]?.name; // 書きかけの赤ペン・入力中・読んでいる途中は新着で差し替えない (2026-10-16 user: 右の欄で返事を書いている最中に別の返事へ切り替わり、一番上に戻されたように見えた)
     list = next;
     if (keep) { const j = list.findIndex((e) => e.name === keep); idx = j < 0 ? list.length - 1 : j; renderBar(); return; }
     await showIdx(0);
