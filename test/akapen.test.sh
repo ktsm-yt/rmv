@@ -358,6 +358,30 @@ printf 'claude --resume ORCA_TERMINAL_HANDLE=term_other\n' > "$TMP/ps-env-101"
 rm -f "$TMP/ps-list"
 check "/history: ps 失敗 → (b) だけで判定 (fail open)、header ok" "$(lives)" "True False ok"
 
+# --- /sessions: 外部ツール向けのセッション一覧 (読み取り専用)。/history と同じ items から、稼働中の本体の返事を session ごとに最新 1 件 ---
+# WITH に pane 名と依頼文を手で載せる (herdr の stub を通すと pane 名が sub 判定に絡むので、label は手置きで確かめる)。終わったら戻す
+cp "$STATE/history/${WITH%.md}.json" "$TMP/with-meta.bak"
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); d["herdr_label"]="ラベルS"; d["prompt"]="秘密の依頼S"; json.dump(d,open(sys.argv[1],"w"),ensure_ascii=False)' "$STATE/history/${WITH%.md}.json"
+sessions() { curl -s -D "$TMP/shead" -o "$TMP/sess.json" "$BASE/sessions"; }
+sessions
+check "/sessions: 200 で配列、各要素は 11 キーちょうど" "$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(len(d)>0, {" ".join(sorted(e)) for e in d})' "$TMP/sess.json")" "True {'cwd deliverable head label live name session sid status title ts'}"
+srow() { python3 -c 'import json,sys; r=[e for e in json.load(open(sys.argv[1])) if e["session"]==sys.argv[2]]; print(len(r), *(r[0].get(k) for k in sys.argv[3:])) if r else print(0)' "$TMP/sess.json" "$@"; }
+check "/sessions: 端末 term_test は 1 行、最新の本体の返事 (subagent の返事は採らない)・label・sid・deliverable" "$(srow term_test name label sid live deliverable)" "1 $WITH ラベルS abcd1234-ef56-7890-aaaa-bbbbccccdddd True True"
+check "/sessions: 稼働中でない entry (terminal なし) は出ない" "$(srow abcd1234-ef56-7890-aaaa-bbbbccccdddd)" 0
+check "/sessions: 依頼文 (prompt) は本文のどこにも出ない、root / sub / perm / bg も無い (一覧は空でない)" "$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$TMP/sess.json" 2>/dev/null) $(grep -c '秘密の依頼S\|"prompt"\|"root"\|"sub"\|"perm"\|"bg"' "$TMP/sess.json")" "1 0"
+check "/sessions: 対照 /history には同じ依頼文が出ている" "$(curl -s "$BASE/history" | grep -c '秘密の依頼S')" 1
+check "/sessions: x-rmx-live は /history と同じ (ok)、ACAO は付けない" "$(grep -i '^x-rmx-live:' "$TMP/shead" | cut -d: -f2 | tr -d ' \r') $(grep -ic '^access-control-allow-origin' "$TMP/shead")" "ok 0"
+check "/sessions: /history に label は足さない (既存の口は変えない)" "$(curl -s "$BASE/history" | python3 -c 'import json,sys; print(sum("label" in e for e in json.load(sys.stdin)))')" 0
+check "/sessions: 127.0.0.1 以外の Host (DNS rebinding) → 403" "$(curl -s -o /dev/null -w '%{http_code}' -H "Host: rebind:$PORT" "$BASE/sessions")" 403
+check "/sessions: RMX_ORIGINS と違う ts.net の host → 403" "$(curl -s -o /dev/null -w '%{http_code}' -H "Host: other.tailtest.ts.net" "$BASE/sessions")" 403
+rm -f "$TMP/list.json"
+printf '  101 claude --resume\n' > "$TMP/ps-list"; printf 'claude --resume ORCA_TERMINAL_HANDLE=term_test\n' > "$TMP/ps-env-101"
+sessions
+check "/sessions: Orca の list が取れない時は x-rmx-live unknown (呼ぶ側は live を信じない)" "$(grep -i '^x-rmx-live:' "$TMP/shead" | cut -d: -f2 | tr -d ' \r')" unknown
+rm -f "$TMP/ps-list"
+list "$(term term_test "$CWD" 1)"
+cp "$TMP/with-meta.bak" "$STATE/history/${WITH%.md}.json"
+
 check "send: 正しい Origin → 200" "$(post "$GOOD" "$(body "$WITH" '【赤ペン】\n2「型」→ OK')")" 200
 check "send: 本文 → Enter → switch の順 (--enter は 8 秒待つので使わない)" "$(calls)" "terminal send term_test,terminal send term_test,terminal switch term_test,"
 check "send: 200 の本文は orca の JSON" "$(cat "$TMP/body")" '{"ok":true}'
@@ -972,6 +996,9 @@ upr "$STATE" '初回の依頼' ORCA_TERMINAL_HANDLE=term_fresh CLAUDE_CODE_ENTRY
 check "/history: 返事ゼロの新セッションは asking-<session>.md で一覧に出る" "$(askof asking-term_fresh.md)" "初回の依頼"
 check "/history: 仮 entry の repo は prompt の cwd から" "$(curl -s "$BASE/history" | python3 -c "import json,sys; print([e['repo'] for e in json.load(sys.stdin) if e['name']=='asking-term_fresh.md'][0])")" "$(basename "$PWD")"
 check "/history/asking-…: 本文は依頼文" "$(curl -s "$BASE/history/asking-term_fresh.md" | tail -1)" "初回の依頼"
+list "$(term term_test "$CWD" 1)" "$(term term_fresh "$CWD" 1)"
+check "/sessions: 返事ゼロの仮 entry も、端末が生きていれば依頼時の session_id で出る" "$(curl -s "$BASE/sessions" | python3 -c 'import json,sys; r=[e for e in json.load(sys.stdin) if e["session"]=="term_fresh"]; print(len(r), r[0]["name"], r[0]["sid"]==json.load(open(sys.argv[1]))["session_id"], r[0]["head"]) if r else print(0)' "$STATE/prompt/term_fresh.json")" "1 asking-term_fresh.md True "
+list "$(term term_test "$CWD" 1)"
 python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d.pop("cwd",None); json.dump(d,open(p,"w"))' "$STATE/prompt/term_fresh.json"
 check "/history: cwd の無い古い形式の prompt は仮 entry にしない (対照)" "$(curl -s "$BASE/history" | python3 -c "import json,sys; print(sum(1 for e in json.load(sys.stdin) if e['name']=='asking-term_fresh.md'))")" 0
 rm -f "$STATE/prompt/term_fresh.json"

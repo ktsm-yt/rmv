@@ -97,7 +97,7 @@ function paneView(pane: string | null, agents: Map<string, { title: string; stat
 // agent = subagent の返事なら {type, id} (hook が SubagentStop で書く)、本体の返事は null。
 // live = その entry の terminal handle が (a) 今走っている対話 Claude の端末 かつ (b) 今の orca の書ける端末 にある (terminal 無しは false)。
 // (b) の list が取れない時 (Orca 停止中) は (a) だけで判定し、(a) の ps も失敗した時は全部 true (fail open)。(a) の ps が失敗した時は (b) だけで判定する (2026-10-13: Orca を閉じた後も Orca 端末の古い会話が稼働中のまま残った)
-async function history(repo: string | null): Promise<Response> {
+async function historyItems() {
   const [terms, claude, agents] = await Promise.all([liveTerminals(LIVE_TTL), claudeTerminals(LIVE_TTL), herdrAgents(null, LIVE_TTL)]);
   let named = false; // 名前付き session の list が 1 つでも取れたか (x-rmx-live 用)
   const firstTabsOf = (sock: string | null) => herdrFirstTabs(sock, LIVE_TTL);
@@ -127,7 +127,7 @@ async function history(repo: string | null): Promise<Response> {
       const perm = perms.get(session);
       const pane = herdrPaneOf(meta);
       const shown = paneView(pane, await agentsOf(herdrSockOf(meta)), byHandle.get(meta.terminal));
-      return { name, prompt: typeof meta.prompt === "string" ? meta.prompt : null, ts: meta.ts ?? null, cwd, root, repo: root.split("/").filter(Boolean).pop() ?? "", head: body.replace(/\s+/g, " ").trim().slice(0, 40), sid: typeof meta.session_id === "string" && meta.session_id ? meta.session_id : null, terminal: Boolean(meta.terminal) || pane !== null, live: shown.herdr ? shown.alive : (pane !== null && !meta.terminal ? true : terms ? Boolean(meta.terminal) && handles.has(meta.terminal) : claude ? Boolean(meta.terminal) && claude.has(meta.terminal) : true) && shown.alive, session, perm: perm ? { id: perm.id, tool: perm.tool, detail: perm.detail, ts: perm.ts } : null, agent: meta.agent ?? null, sub: subType(meta, shown.tab, await firstTabsOf(herdrSockOf(meta))), title: shown.title, status: shown.status, lastOutputAt: shown.lastOutputAt, bg: await readBg(session, typeof meta.session_id === "string" ? meta.session_id : null) };
+      return { name, prompt: typeof meta.prompt === "string" ? meta.prompt : null, ts: meta.ts ?? null, cwd, root, label: labelOf(meta), repo: root.split("/").filter(Boolean).pop() ?? "", head: body.replace(/\s+/g, " ").trim().slice(0, 40), sid: typeof meta.session_id === "string" && meta.session_id ? meta.session_id : null, terminal: Boolean(meta.terminal) || pane !== null, live: shown.herdr ? shown.alive : (pane !== null && !meta.terminal ? true : terms ? Boolean(meta.terminal) && handles.has(meta.terminal) : claude ? Boolean(meta.terminal) && claude.has(meta.terminal) : true) && shown.alive, session, perm: perm ? { id: perm.id, tool: perm.tool, detail: perm.detail, ts: perm.ts } : null, agent: meta.agent ?? null, sub: subType(meta, shown.tab, await firstTabsOf(herdrSockOf(meta))), title: shown.title, status: shown.status, lastOutputAt: shown.lastOutputAt, bg: await readBg(session, typeof meta.session_id === "string" ? meta.session_id : null) };
     }),
   )).filter((e): e is NonNullable<typeof e> => e !== null);
   // 1 つの端末で順に別の repo を開くと、端末が生きている限り昔の repo まで live になる (2026-09-29 実機: 1 端末で 4 repo)。
@@ -152,6 +152,7 @@ async function history(repo: string | null): Promise<Response> {
   // 次のセッションの依頼は前のセッションの返事に付けず、下の仮 entry (asking-<session>.md) に出す
   const asking = new Map<string, Awaited<ReturnType<typeof readAsking>>>();
   for (const s of new Set(items.map((e) => e.session))) if (curSid.get(s) === replySid.get(s)) asking.set(s, await readAsking(s, lastReply.get(s) ?? 0));
+  const askSid = new Map<string, string>(); // 仮 entry の session → 依頼時の session_id
   // 返事がまだ 1 件も無い新しいセッション (起動直後の初回依頼) は history に entry が無く一覧から消える (2026-10-12 user 指摘)。
   // state/prompt/<session>.json (cwd 付き) だけを根拠に仮の entry を先頭に足す。name は asking-<session>.md で /history/<name> が依頼文を返す
   for (const n of (await readdir(PROMPT).catch(() => [] as string[])).filter((n) => n.endsWith(".json"))) {
@@ -171,9 +172,10 @@ async function history(repo: string | null): Promise<Response> {
     const root = typeof wt === "string" && wt ? wt : cwd;
     const live = shown.herdr ? shown.alive : (pane !== null && !isTerm ? true : terms ? isTerm && handles.has(handle) : claude ? isTerm && claude.has(handle) : true) && shown.alive;
     asking.set(session, a);
+    if (typeof p?.session_id === "string" && p.session_id) askSid.set(session, p.session_id); // /sessions 用。仮 entry には sid が無く、返事ゼロの session は curSid にも居ない
     // 最初の返事より前の許可待ち (foyer の依頼はほぼこれ) もこの行に載せる。null 固定だと rmv に出なかった (2026-10-15)
     const perm = perms.get(session);
-    items.push({ name: `asking-${session}.md`, prompt: null, ts: a.ts, cwd, root, repo: root.split("/").filter(Boolean).pop() ?? "", head: "", terminal: isTerm || pane !== null, live, session, perm: perm ? { id: perm.id, tool: perm.tool, detail: perm.detail, ts: perm.ts } : null, agent: null, sub: subType(p, shown.tab, await firstTabsOf(herdrSockOf(p))), title: shown.title, status: shown.status, lastOutputAt: shown.lastOutputAt, bg: await readBg(session, typeof p?.session_id === "string" ? p.session_id : null) });
+    items.push({ name: `asking-${session}.md`, prompt: null, ts: a.ts, cwd, root, label: labelOf(p), repo: root.split("/").filter(Boolean).pop() ?? "", head: "", terminal: isTerm || pane !== null, live, session, perm: perm ? { id: perm.id, tool: perm.tool, detail: perm.detail, ts: perm.ts } : null, agent: null, sub: subType(p, shown.tab, await firstTabsOf(herdrSockOf(p))), title: shown.title, status: shown.status, lastOutputAt: shown.lastOutputAt, bg: await readBg(session, typeof p?.session_id === "string" ? p.session_id : null) });
   }
   items.sort((x, y) => (Date.parse(y.ts ?? "") || 0) - (Date.parse(x.ts ?? "") || 0)); // 仮の entry も時刻順。先頭固定だと端末が閉じた後も残る state/prompt の待機中が「最新」に居座り、追従が止まる (2026-10-13 実害: 19:57 の Crewforce が 2 時間先頭に残った)
   // 同じ herdr pane が別の Orca 端末 handle で記録されていると (herdr を別の端末から起こし直した)、pane だけで生死を見るので古い handle の分まで live になる
@@ -197,10 +199,35 @@ async function history(repo: string | null): Promise<Response> {
     const perm = perms.get(to);
     Object.assign(e, { session: to, live: true, perm: perm ? { id: perm.id, tool: perm.tool, detail: perm.detail, ts: perm.ts } : null });
   }
+  return { items, curSid, replySid, asking, askSid, live: terms || agents || named ? "ok" : "unknown" };
+}
+// herdr の pane 名 (hook が記録した herdr_label)。無い・空は null。/history には出さず /sessions だけが使う
+function labelOf(meta: { herdr_label?: unknown } | null | undefined): string | null {
+  return typeof meta?.herdr_label === "string" && meta.herdr_label ? meta.herdr_label : null;
+}
+async function history(repo: string | null): Promise<Response> {
+  const { items, curSid, replySid, asking, live } = await historyItems();
   // sub は出口でだけ agent にする (上の集計は sub を本体の返事として数える: 端末ごとの最新の返事・今のセッションの判定が pane ごとに要る)
-  const out = items.map(({ root, sub, ...e }) => ({ ...e, agent: sub ? { type: sub, id: e.session } : e.agent, asking: (e.name.startsWith("asking-") || curSid.get(e.session) === replySid.get(e.session) ? asking.get(e.session) : null) ?? null })); // 次のセッションの依頼は前のセッションの返事に付けない
+  const out = items.map(({ root, sub, label, ...e }) => ({ ...e, agent: sub ? { type: sub, id: e.session } : e.agent, asking: (e.name.startsWith("asking-") || curSid.get(e.session) === replySid.get(e.session) ? asking.get(e.session) : null) ?? null })); // 次のセッションの依頼は前のセッションの返事に付けない
   const want = repo?.toLowerCase();
-  return Response.json(want ? out.filter((e) => e.repo.toLowerCase() === want) : out, { headers: { "cache-control": "no-store", "x-rmx-live": terms || agents || named ? "ok" : "unknown" } });
+  return Response.json(want ? out.filter((e) => e.repo.toLowerCase() === want) : out, { headers: { "cache-control": "no-store", "x-rmx-live": live } });
+}
+
+// GET /sessions: 外部ツール (別アプリから送り先の Claude を選ぶ等) 向けの、今動いているセッションの一覧。読み取り専用。
+// /history と同じ items から、稼働中 (live) の本体の返事 (agent === null。worker tab の sub は本体として数える) を session ごとに最新 1 件だけ返す。
+// 出さない: prompt (依頼文の全文) と root / sub。CORS (ACAO) は付けない。Host の照合は fetch の入口でそのまま効く。
+// sid = その返事の session_id。仮 entry (asking-…) は依頼時に hook が記録した session_id、無ければ null。
+// x-rmx-live は /history と同じ: unknown の時は live (fail open) を信じない
+async function sessions(): Promise<Response> {
+  const { items, askSid, live } = await historyItems();
+  const seen = new Set<string>();
+  const out = [];
+  for (const e of items) { // items は新しい順
+    if (!e.live || e.agent !== null || seen.has(e.session)) continue;
+    seen.add(e.session);
+    out.push({ sid: e.sid ?? askSid.get(e.session) ?? null, session: e.session, name: e.name, cwd: e.cwd, label: e.label, head: e.head, title: e.title, status: e.status, ts: e.ts, live: e.live, deliverable: e.terminal && e.live });
+  }
+  return Response.json(out, { headers: { "cache-control": "no-store", "x-rmx-live": live } });
 }
 
 // GET /file?p=<絶対パス>: 返事に出た絶対パス (スクショ・動画・生成 html 等) を viewer にそのまま出す口。
@@ -985,6 +1012,7 @@ Bun.serve({
       r.headers.set("x-rmx-page", String(Bun.file(`${DIR}/index.html`).lastModified)); // 開きっぱなしの viewer が新しい index.html に気づくための版
       return r;
     }
+    if (pathname === "/sessions") return sessions();
     if (pathname === "/send" && req.method === "POST") return send(req);
     if (pathname === "/approve" && req.method === "POST") return approve(req);
     if (pathname === "/paste" && req.method === "POST") return paste(req);
