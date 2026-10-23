@@ -97,6 +97,7 @@ RMX_ORIGINS=https://<Mac の名前>.<tailnet>.ts.net bun run server.ts
 ```
 
 launchd で常駐させている時は、`RMX_ORIGINS=…` の行を `state/env` に書けば起動スクリプトが読みます。
+外部ツールに端末へ合図を送らせる `RMX_EXT_ORIGINS` も同じ `state/env` に書けます (README の「外部ツールとつなぐ」)。
 届くのは同じ Tailscale につながった端末だけです。
 返事の中のファイルを開くボタンは、押した端末には出ず、Mac の画面で開きます。
 

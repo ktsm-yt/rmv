@@ -374,6 +374,11 @@ check "/sessions: x-rmx-live は /history と同じ (ok)、ACAO は付けない"
 check "/sessions: /history に label は足さない (既存の口は変えない)" "$(curl -s "$BASE/history" | python3 -c 'import json,sys; print(sum("label" in e for e in json.load(sys.stdin)))')" 0
 check "/sessions: 127.0.0.1 以外の Host (DNS rebinding) → 403" "$(curl -s -o /dev/null -w '%{http_code}' -H "Host: rebind:$PORT" "$BASE/sessions")" 403
 check "/sessions: RMX_ORIGINS と違う ts.net の host → 403" "$(curl -s -o /dev/null -w '%{http_code}' -H "Host: other.tailtest.ts.net" "$BASE/sessions")" 403
+# /ext/*: RMX_EXT_ORIGINS 未設定 (この server) なら、どの origin からも 403。RMX_ORIGINS / 自分の origin でも開かない (詳しくは test/ext-deliver.test.sh)
+extd() { curl -s -o /dev/null -w '%{http_code}' -X POST "$@" -H 'content-type: application/json' --data '{"sid":"abcd1234-ef56-7890-aaaa-bbbbccccdddd","ticket":"20261023-120000-123456"}' "$BASE/ext/deliver"; }
+: > "$TMP/calls"; : > "$TMP/hcalls"
+check "/ext/deliver: RMX_EXT_ORIGINS 未設定 → 外の origin・自分の origin・RMX_ORIGINS・Origin 無しのどれも 403" "$(extd -H 'Origin: chrome-extension://abcdefghijklmnopabcdefghijklmnop') $(extd -H "Origin: $BASE") $(extd -H 'Origin: https://mac.tailtest.ts.net') $(extd)" "403 403 403 403"
+check "/ext/deliver: 403 の時は端末に何も打たない" "$(cat "$TMP/calls" "$TMP/hcalls" | wc -l | tr -d ' ')" 0
 rm -f "$TMP/list.json"
 printf '  101 claude --resume\n' > "$TMP/ps-list"; printf 'claude --resume ORCA_TERMINAL_HANDLE=term_test\n' > "$TMP/ps-env-101"
 sessions
