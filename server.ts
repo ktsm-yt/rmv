@@ -214,19 +214,24 @@ async function history(repo: string | null): Promise<Response> {
 }
 
 // GET /sessions: 外部ツール (別アプリから送り先の Claude を選ぶ等) 向けの、今動いているセッションの一覧。読み取り専用。
-// /history と同じ items から、稼働中 (live) の本体の返事 (agent === null。worker tab の sub は本体として数える) を session ごとに最新 1 件だけ返す。
+// /history と同じ items から、稼働中 (live) の本体の返事を session ごとに最新 1 件だけ返す。本体 = /history の出口で agent が null のもの:
+// subagent の返事 (agent) も、ワーカーの pane (sub: foyer runner の pane・workspace の最初の tab 以外) も出さない。/history で「🤖 ワーカー」側に出る pane を外部ツールの送り先に見せない
 // 出さない: prompt (依頼文の全文) と root / sub。CORS (ACAO) は付けない。Host の照合は fetch の入口でそのまま効く。
 // sid = その返事の session_id。仮 entry (asking-…) は依頼時に hook が記録した session_id、無ければ null。
-// deliverable = 端末があって稼働中、かつ許可待ちでない (state/perm も herdr の "blocked" も無い)。許可待ちの間に合図を打つと数字がダイアログの選択肢になるので、外部ツールに「今は送れない」と見せる
+// deliverable = 端末があって稼働中、かつ許可・質問の答え待ちでない (state/perm も herdr の "blocked" も、pid ごとの記録の status "waiting" も無い)。
+// 待っている間に合図を打つと数字がダイアログの選択肢になるので、外部ツールに「今は送れない」と見せる。最後の判定は /ext/deliver が打つ直前にもう一度する (extCheck)
 // x-rmx-live は /history と同じ: unknown の時は live (fail open) を信じない
 async function sessions(): Promise<Response> {
   const { items, askSid, live } = await historyItems();
+  const waiting = await waitingSids(LIVE_TTL); // historyItems の後: ps のキャッシュが温まってから読む (並べるとキャッシュが冷えている時に ps を 2 回走らせる)
   const seen = new Set<string>();
   const out = [];
   for (const e of items) { // items は新しい順
     if (!e.live || e.agent !== null || seen.has(e.session)) continue;
     seen.add(e.session);
-    out.push({ sid: e.sid ?? askSid.get(e.session) ?? null, session: e.session, name: e.name, cwd: e.cwd, label: e.label, head: e.head, title: e.title, status: e.status, ts: e.ts, live: e.live, deliverable: e.terminal && e.live && !e.perm && e.status !== "blocked" });
+    if (e.sub !== null) continue; // ワーカーかどうかは pane の今の最新の返事で決める (古い返事が tab 1 の頃の記録でも本体に戻さない)
+    const sid = e.sid ?? askSid.get(e.session) ?? null;
+    out.push({ sid, session: e.session, name: e.name, cwd: e.cwd, label: e.label, head: e.head, title: e.title, status: e.status, ts: e.ts, live: e.live, deliverable: e.terminal && e.live && !e.perm && e.status !== "blocked" && !(sid && waiting.has(sid)) });
   }
   return Response.json(out, { headers: { "cache-control": "no-store", "x-rmx-live": live } });
 }
@@ -508,15 +513,28 @@ function herdrFirstTabs(sock: string | null, maxAge: number): Promise<Map<string
 // (a) 今走っている対話 Claude の端末 handle: claude プロセスの環境変数 ORCA_TERMINAL_HANDLE の集合 (2026-09-29 実測、macOS の ps)。
 // daemon / bg-pty-host / bg-spare / claude -p は対話でないので除く。ps が失敗したら null (判定不能)。キャッシュは liveTerminals と同じ
 const PS = process.env.RMX_PS_BIN || "ps"; // env はテストの stub 差し替え用
-let claudeCache: { at: number; handles: Set<string> | null } | null = null;
+let claudeCache: { at: number; handles: Set<string> | null; procs: { pid: string; env: string }[] | null } | null = null;
 async function claudeTerminals(maxAge: number): Promise<Set<string> | null> {
   if (claudeCache && Date.now() - claudeCache.at < maxAge) return claudeCache.handles;
   const procs = await claudeProcs();
   // herdr pane の Claude は herdr を起こした Orca 端末の handle を継ぐので数えない (pane の生死は herdr agent list で決める)。
   // 数えると同じ端末で直に起動して終わった Claude の記録が live に残る (2026-10-20 実害: 18:21 の Usher が herdr の 3 pane のせいで稼働中)
   const handles = procs && new Set(procs.filter((p) => !envOf(p.env, "HERDR_PANE_ID")).map((p) => envOf(p.env, "ORCA_TERMINAL_HANDLE")).filter((h): h is string => !!h));
-  claudeCache = { at: Date.now(), handles };
+  claudeCache = { at: Date.now(), handles, procs };
   return handles;
+}
+// 今走っている Claude のうち、pid ごとの記録 (~/.claude/sessions/<pid>.json) が status "waiting" (許可のダイアログ・質問への答え待ち) の会話の sessionId。
+// /sessions の deliverable 用。ps は claudeTerminals のキャッシュ (LIVE_TTL) を使い回し、記録のファイルだけ毎回読む (走っている Claude の数だけ)。
+// 一覧の表示用なので fail open: ps が失敗した・記録が読めない分は「待っていない」に倒す (打つ直前の extCheck が fail closed で止める)。
+// ponytail: background セッションを映している対話側の待ち (parkedJobId 経由) は拾わない。それも打つ直前の extCheck が止める
+async function waitingSids(maxAge: number): Promise<Set<string>> {
+  await claudeTerminals(maxAge);
+  const out = new Set<string>();
+  await Promise.all((claudeCache?.procs ?? []).map(async (p) => {
+    const r = await Bun.file(`${ccSessionsDir(p.env)}/${p.pid}.json`).json().catch(() => null);
+    if (r && typeof r.sessionId === "string" && String(r.pid ?? p.pid) === p.pid && r.status === "waiting") out.add(r.sessionId);
+  }));
+  return out;
 }
 // 今走っている対話 Claude の pid と環境変数 (ps -Eww の 1 行)。ps が失敗したら null。間に終了した pid は落とす
 async function claudeProcs(): Promise<{ pid: string; env: string }[] | null> {
@@ -733,6 +751,7 @@ async function movedPane(meta: { session_id?: unknown; herdr_pane?: unknown; her
 }
 // Origin 必須 + 一致: 無いと任意の web ページが fetch POST で端末にキー入力を流し込める (CSRF)。
 // opt.exact / opt.check は内部からだけ (/ext/deliver)。HTTP の /send は渡さないので挙動は変わらない。
+// /send の本体には手を入れず opt だけ足した: 送り先が決まるのも打ち始めるのも /send の中なので、差し替えの抑止と打つ直前の確認はここからしか差し込めない
 // check は送り先が決まった後 (herdr の pane の追跡・Orca の端末の解決の後)、打つ直前に呼ぶ。Response を返したらそれを返して何も打たない
 type SendTarget = { meta: Record<string, unknown>; pane: string | null; sock: string | null; handle: string | null };
 async function send(req: Request, opt: { exact?: boolean; check?: (t: SendTarget) => Promise<Response | null> } = {}): Promise<Response> {
@@ -865,7 +884,10 @@ async function extDeliver(req: Request): Promise<Response> {
   const { items, curSid, askSid } = await historyItems();
   // items は新しい順。返事ゼロの仮 entry (asking-…) は依頼時に hook が記録した session_id で引く。subagent の返事は送り先にしない
   const e = items.find((x) => !x.agent && ("sid" in x && x.sid ? x.sid : x.name.startsWith("asking-") ? askSid.get(x.session) : null) === sid);
+  // 知らない sid は 404 (/send で記録が無い時の 404 と同じ)。409 (今は打てない) と分けて、外部ツールが「その会話は rmv の記録に無い」と見分けられるようにする
   if (!e) return new Response("unknown session", { status: 404 });
+  // ワーカーの pane (foyer runner の pane・workspace の最初の tab 以外) には打たない。/sessions にも出さない分で、外部ツールが選べるのは本体の会話だけ
+  if (e.sub !== null) return new Response("session not live: ワーカーの pane なので外部ツールからは打たない", { status: 409 });
   const now = curSid.get(e.session) ?? askSid.get(e.session);
   if (now && now !== sid) return new Response("stale: この端末では別の会話が開かれている", { status: 409 });
   if (!e.terminal || !e.live) return new Response("session not live: 端末が閉じている、または稼働中でない", { status: 409 });
@@ -880,11 +902,16 @@ async function extDeliver(req: Request): Promise<Response> {
     if (!h || (terms && !terms.some((t) => t.handle === h)) || (claude && !claude.has(h))) return new Response("session not live: 端末が閉じた、またはその端末の Claude が終わった", { status: 409 });
   }
   const own = `http://127.0.0.1:${PORT}`;
-  const r = await send(new Request(`${own}/send`, { method: "POST", headers: { origin: own, host: `127.0.0.1:${PORT}`, "content-type": "application/json" }, body: JSON.stringify({ name: e.name, text: `/abg ${ticket}`, focus: false, reset: false }) }), { exact: true, check: (t) => extCheck(t, sid) });
+  const r = await send(new Request(`${own}/send`, { method: "POST", headers: { origin: own, host: `127.0.0.1:${PORT}`, "content-type": "application/json" }, body: JSON.stringify({ name: e.name, text: `/abg ${ticket}`, focus: false, reset: false }) }), { exact: true, check: async (t) => (await extCheck(t, sid)) ?? aborted(req) });
   if (!r.ok) return r;
   return Response.json({ ok: true, via: e.session.includes("__") ? "herdr" : "orca" }, { headers: { "cache-control": "no-store" } });
 }
 
+// 呼んだ側が先に切った (外部ツールの待ち時間切れ・タブを閉じた) なら打たない。外部ツールは「打てなかった」と見て手で貼る道に回るので、ここで打つと同じ合図が 2 回届く。
+// 確かめるのは打ち始める直前 (extCheck の後) の 1 回だけ。本文を打った後に切られても Enter までは送る (入力欄に合図を残すと、手で貼った分とつながる)
+function aborted(req: Request): Response | null {
+  return req.signal.aborted ? new Response("aborted: 呼んだ側が先に切ったので打ち込まない", { status: 499 }) : null;
+}
 // /ext/deliver が打つ直前の確認 (送り先が決まった後)。打たない時は 409 を返す。本文の頭で理由を分ける (外部ツールが見分ける):
 // `stale` = その端末で今動いている会話が sid でない / `permission pending` = 許可待ち・質問のダイアログが出ている / `unverified` = 今の会話を確かめられない。
 // (1) stale: state/prompt と state/history は起動 (source=startup)・依頼・返事の時にしか書かれない。同じ端末で /clear・Claude 内の /resume・claude --resume をした直後から

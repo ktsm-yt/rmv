@@ -22,13 +22,13 @@ if [ "\$1 \$2" = "terminal list" ]; then x=""; if [ -f "$TMP/once" ]; then x=",\
 printf '%s|' "\$@" >> "$TMP/calls"; echo >> "$TMP/calls"
 echo '{"ok":true}'
 STUB
-# herdr: wS:p1 と wS:p2 に Claude が居る。wS:p2 の agent_status は $TMP/p2status (既定 idle)。send-text / send-keys は 1 回 1 行で hcalls に記録
+# herdr: wS:p1 と wS:p2 (どちらも最初の tab wS:t1) と wS:p3 (2 つ目の tab wS:t2 = ワーカーの pane) に Claude が居る。wS:p2 の agent_status は $TMP/p2status (既定 idle)。send-text / send-keys は 1 回 1 行で hcalls に記録
 echo idle > "$TMP/p2status"
 cat > "$TMP/herdr" <<STUB
 #!/usr/bin/env bash
 case "\$1 \$2" in
-  "agent list") echo "{\"result\":{\"agents\":[{\"pane_id\":\"wS:p1\",\"agent\":\"claude\",\"agent_status\":\"idle\",\"terminal_title\":\"t\",\"tab_id\":\"wS:t1\"},{\"pane_id\":\"wS:p2\",\"agent\":\"claude\",\"agent_status\":\"\$(cat "$TMP/p2status")\",\"terminal_title\":\"t\",\"tab_id\":\"wS:t1\"}]}}"; exit 0 ;;
-  "tab list") echo '{"result":{"tabs":[{"workspace_id":"wS","tab_id":"wS:t1","number":1}]}}'; exit 0 ;;
+  "agent list") echo "{\"result\":{\"agents\":[{\"pane_id\":\"wS:p1\",\"agent\":\"claude\",\"agent_status\":\"idle\",\"terminal_title\":\"t\",\"tab_id\":\"wS:t1\"},{\"pane_id\":\"wS:p2\",\"agent\":\"claude\",\"agent_status\":\"\$(cat "$TMP/p2status")\",\"terminal_title\":\"t\",\"tab_id\":\"wS:t1\"},{\"pane_id\":\"wS:p3\",\"agent\":\"claude\",\"agent_status\":\"idle\",\"terminal_title\":\"t\",\"tab_id\":\"wS:t2\"}]}}"; exit 0 ;;
+  "tab list") echo '{"result":{"tabs":[{"workspace_id":"wS","tab_id":"wS:t1","number":1},{"workspace_id":"wS","tab_id":"wS:t2","number":2}]}}'; exit 0 ;;
   "pane get") echo '{"result":{"pane":{"pane_id":"x","agent":"claude"}}}'; exit 0 ;;
   "pane read") exit 0 ;;
 esac
@@ -36,18 +36,21 @@ printf '%s|' "\$@" >> "$TMP/hcalls"; echo >> "$TMP/hcalls"
 echo '{"result":{"type":"ok"}}'
 STUB
 # ps: 対話 Claude は term_a で直に 1 つ、herdr の pane wS:p1 / wS:p2 に 1 つずつ (pane の Claude は端末の生死に数えない)。
-# pid の一覧は $TMP/pids (103 = term_dead、末尾の試験で足し引きする)。$TMP/psfail がある間は ps 自体が失敗する
-LIVE='101 claude\n102 claude\n104 claude\n'
+# wS:p3 (ワーカーの pane) にも 1 つ (105)。pid の一覧は $TMP/pids (103 = term_dead、末尾の試験で足し引きする)。$TMP/psfail がある間は ps 自体が失敗する。
+# $TMP/psslow がある間は pid ごとの環境変数の読み取りが 1 秒かかる (呼んだ側が先に切る、の再現用)
+LIVE='101 claude\n102 claude\n104 claude\n105 claude\n'
 printf "$LIVE" > "$TMP/pids"
 cat > "$TMP/ps" <<STUB
 #!/usr/bin/env bash
 if [ -f "$TMP/psfail" ]; then exit 1; fi
 if [ "\$1" = -axo ]; then cat "$TMP/pids"; exit 0; fi
+if [ -f "$TMP/psslow" ]; then sleep 1; fi
 case "\$5" in
   101) echo "claude ORCA_TERMINAL_HANDLE=term_a" ;;
   102) echo "claude HERDR_PANE_ID=wS:p1 ORCA_TERMINAL_HANDLE=term_h" ;;
   103) echo "claude ORCA_TERMINAL_HANDLE=term_dead" ;;
   104) echo "claude HERDR_PANE_ID=wS:p2 ORCA_TERMINAL_HANDLE=term_h" ;;
+  105) echo "claude HERDR_PANE_ID=wS:p3 ORCA_TERMINAL_HANDLE=term_h" ;;
   *) exit 1 ;;
 esac
 STUB
@@ -58,6 +61,7 @@ SA2=aaaaaaaa-0000-4000-8000-00000000000b # term_a の今の会話
 SB=bbbbbbbb-0000-4000-8000-00000000000a  # herdr wS:p1 の前の会話 (返事あり)
 SB2=bbbbbbbb-0000-4000-8000-00000000000b # herdr wS:p1 で開き直した今の会話 (まだ返事が無い、起動時の記録だけ)
 SC=cccccccc-0000-4000-8000-00000000000c  # herdr wS:p2 の会話
+SW=99999999-0000-4000-8000-000000000009  # herdr wS:p3 (ワーカーの pane) の会話
 SD=dddddddd-0000-4000-8000-00000000000d  # 閉じた Orca 端末 term_dead の会話 (同じフォルダ /x/a に term_a の Claude が居る)
 SN=ffffffff-0000-4000-8000-00000000000f  # /clear・/resume の後の新しい会話 (まだ依頼も返事も無いので state には居ない)
 T=20261023-120000-123456
@@ -65,7 +69,7 @@ T=20261023-120000-123456
 # Claude の pid ごとの記録 (~/.claude/sessions/<pid>.json の形)。pidf <pid> <sessionId> [足す JSON のキー] → 書く
 mkdir -p "$TMP/sessions"
 pidf() { printf '{"pid":%s,"sessionId":"%s","kind":"interactive","status":"idle"%s}' "$1" "$2" "${3:+,$3}" > "$TMP/sessions/$1.json"; }
-pidsok() { pidf 101 "$SA2"; pidf 102 "$SB2"; pidf 103 "$SD"; pidf 104 "$SC"; rm -f "$TMP/sessions/9"*.json; }
+pidsok() { pidf 101 "$SA2"; pidf 102 "$SB2"; pidf 103 "$SD"; pidf 104 "$SC"; pidf 105 "$SW"; rm -f "$TMP/sessions/9"*.json; }
 pidsok
 
 # put <分前> <session_id> <terminal> <herdr_pane> <cwd> → history に返事 1 件
@@ -83,6 +87,7 @@ put 10 "$SA2" term_a "" /x/a
 put 20 "$SB" term_h wS:p1 /x/h
 put 15 "$SC" term_h wS:p2 /x/h
 put 25 "$SD" term_dead "" /x/a
+put 12 "$SW" term_h wS:p3 /x/h
 # wS:p1 で開き直した会話の起動時の記録 (hooks/session-wait.py の形)。返事より新しい
 python3 -c 'import json,sys,datetime; json.dump({"prompt":"","waiting":True,"ts":datetime.datetime.now(datetime.timezone.utc).isoformat(),"session_id":sys.argv[2],"terminal":"term_h","herdr_pane":"wS:p1","cwd":"/x/h"},open(sys.argv[1],"w"))' "$STATE/prompt/term_h__wS-p1.json" "$SB2"
 
@@ -196,6 +201,13 @@ check "/sessions: herdr の blocked の間は deliverable が false" "$(srow "$S
 echo idle > "$TMP/p2status"
 pidj 101 "{\"pid\":101,\"sessionId\":\"$SA2\",\"kind\":\"interactive\",\"status\":\"waiting\",\"waitingFor\":\"input needed\"}"
 check "Orca 端末: pid の記録が status waiting (質問の入力待ち、state/perm に出ない分) → 409 permission pending" "$(ok1 "$(sb "$SA2" "$T")") $(grep -c '^permission pending' "$TMP/body")" "409 1"
+check "/sessions: pid の記録が status waiting (質問の答え待ち) の間は live のまま deliverable が false" "$(srow "$SA2")" "[(True, False)]"
+pidj 104 "{\"pid\":104,\"sessionId\":\"$SC\",\"kind\":\"interactive\",\"status\":\"waiting\",\"waitingFor\":\"input needed\"}"
+check "/sessions: herdr pane でも、herdr は idle のまま pid の記録が waiting なら deliverable が false" "$(srow "$SC")" "[(True, False)]"
+pidsok
+check "/sessions: 答えて waiting が消えると deliverable は true に戻る" "$(srow "$SA2") $(srow "$SC")" "[(True, True)] [(True, True)]"
+pidj 901 "{\"pid\":901,\"sessionId\":\"$SA2\",\"kind\":\"interactive\",\"status\":\"waiting\"}"
+check "/sessions: 今走っていない pid の古い記録が waiting でも deliverable は変えない" "$(srow "$SA2")" "[(True, True)]"
 pidsok
 check "許可待ちの間: 端末に何も打たない" "$(typed)" 0
 
@@ -209,8 +221,23 @@ reset
 check "background: 映している job が別 → 409 stale、何も打たない" "$(ok1 "$(sb "$SA2" "$T")") $(grep -c '^stale' "$TMP/body") $(typed)" "409 1 0"
 pidsok
 
+# --- ワーカーの pane (workspace の最初の tab 以外。/history では「🤖 ワーカー」側に出る): 一覧に出さず、打たない ---
+check "/sessions: ワーカーの pane の会話は出ない (同じ herdr の最初の tab の wS:p2 は出る)" "$(srow "$SW") $(srow "$SC")" "[] [(True, True)]"
+check "/history: 対照、ワーカーの pane の会話は agent 付きで出ている" "$(curl -s "http://127.0.0.1:$P1/history" | python3 -c 'import json,sys; print([bool(x["agent"]) for x in json.load(sys.stdin) if x.get("sid")==sys.argv[1]])' "$SW")" "[True]"
+reset
+check "ワーカーの pane の会話 → 409、何も打たない" "$(ok1 "$(sb "$SW" "$T")") $(typed)" "409 0"
+
+# --- 呼んだ側が先に切った (外部ツールの待ち時間切れ): その後で打たない。打つと、手で貼った分と合わせて合図が 2 回届く ---
+reset; touch "$TMP/psslow"
+check "切った側の curl は時間切れ (前提)" "$(dl "$P1" "$(sb "$SA2" "$T")" -H "Origin: $EXT" --max-time 0.5)" 000
+sleep 4
+check "呼んだ側が先に切った後: 端末に何も打たない" "$(typed)" 0
+rm -f "$TMP/psslow"
+reset
+check "切られなければ今まで通り 200 (対照)" "$(ok1 "$(sb "$SA2" "$T")") $(typed)" "200 2"
+
 # --- 実運用と同じくキャッシュあり (既定の LIVE_TTL は 5 秒。試験が遅くても温めたまま確かめるよう 60 秒) で、一覧を開いた直後に端末が閉じる ---
-# /sessions (受信箱が一覧を開く時に叩く) で term_dead が live のキャッシュを温め、5 秒以内に term_dead を閉じて送る。
+# /sessions (外部ツールが一覧を開く時に叩く) で term_dead が live のキャッシュを温め、5 秒以内に term_dead を閉じて送る。
 # 同じフォルダ /x/a の term_a には別の会話 (SA2) の Claude が居る。そこへ打ってはいけない
 echo "$TA"',{"handle":"term_dead","worktreePath":"/x/a","connected":true,"writable":true,"lastOutputAt":2}' > "$TMP/terms"
 printf "${LIVE}103 claude\n" > "$TMP/pids"
