@@ -48,6 +48,11 @@ async function readAsking(session: string, lastReplyTs: number): Promise<{ promp
 // 一覧のまとめ目印 (item.session) = state/perm・state/prompt のファイル名。hooks/stop-to-fragment.py の session_key と同じ式 (片方だけ直さない)。
 // herdr 配下の pane は Orca 端末 handle を共有するので、pane があれば `<handle>__<pane>` (":" は "-"、他の記号は捨てる) にして pane ごとに分ける。Orca 無し (terminal なし) の herdr だけの環境は handle の代わりに "herdr"。pane 無しは従来の handle || session_id
 const paneKey = (pane: string) => pane.replace(/:/g, "-").replace(/[^A-Za-z0-9_-]/g, "");
+// 返事の締め「終了: OK / NG (…)」(Low-Load 出力スタイル)。入力待ちを『閉じてよい』『返事が要る』に分けるのに使う。末尾 300 字の最後の 1 つを見る (本文中の引用より締めを正にする)
+function endOf(body: string): "ok" | "ng" | null {
+  const m = [...body.slice(-300).matchAll(/終了[:：]\s*(OK|NG)/g)].pop();
+  return m ? (m[1] === "OK" ? "ok" : "ng") : null;
+}
 // 名前付き herdr session (`herdr --session <name>`) は pane id が既定 session と重なる (どちらも w1:p1 から)。socket が <config>/sessions/<name>/herdr.sock なら末尾に `__<name>` を足す。既定 session の key は変えない
 function sessionKey(meta: { terminal?: unknown; session_id?: unknown; herdr_pane?: unknown; herdr_socket?: unknown }): string {
   const pane = typeof meta.herdr_pane === "string" && meta.herdr_pane ? paneKey(meta.herdr_pane) : "";
@@ -127,7 +132,7 @@ async function historyItems() {
       const perm = perms.get(session);
       const pane = herdrPaneOf(meta);
       const shown = paneView(pane, await agentsOf(herdrSockOf(meta)), byHandle.get(meta.terminal));
-      return { name, prompt: typeof meta.prompt === "string" ? meta.prompt : null, ts: meta.ts ?? null, cwd, root, label: labelOf(meta), repo: root.split("/").filter(Boolean).pop() ?? "", head: body.replace(/\s+/g, " ").trim().slice(0, 40), sid: typeof meta.session_id === "string" && meta.session_id ? meta.session_id : null, terminal: Boolean(meta.terminal) || pane !== null, live: shown.herdr ? shown.alive : (pane !== null && !meta.terminal ? true : terms ? Boolean(meta.terminal) && handles.has(meta.terminal) : claude ? Boolean(meta.terminal) && claude.has(meta.terminal) : true) && shown.alive, session, perm: perm ? { id: perm.id, tool: perm.tool, detail: perm.detail, ts: perm.ts } : null, agent: meta.agent ?? null, sub: subType(meta, shown.tab, await firstTabsOf(herdrSockOf(meta))), title: shown.title, status: shown.status, lastOutputAt: shown.lastOutputAt, bg: await readBg(session, typeof meta.session_id === "string" ? meta.session_id : null) };
+      return { name, prompt: typeof meta.prompt === "string" ? meta.prompt : null, ts: meta.ts ?? null, cwd, root, label: labelOf(meta), repo: root.split("/").filter(Boolean).pop() ?? "", head: body.replace(/\s+/g, " ").trim().slice(0, 40), end: endOf(body), sid: typeof meta.session_id === "string" && meta.session_id ? meta.session_id : null, terminal: Boolean(meta.terminal) || pane !== null, live: shown.herdr ? shown.alive : (pane !== null && !meta.terminal ? true : terms ? Boolean(meta.terminal) && handles.has(meta.terminal) : claude ? Boolean(meta.terminal) && claude.has(meta.terminal) : true) && shown.alive, session, perm: perm ? { id: perm.id, tool: perm.tool, detail: perm.detail, ts: perm.ts } : null, agent: meta.agent ?? null, sub: subType(meta, shown.tab, await firstTabsOf(herdrSockOf(meta))), title: shown.title, status: shown.status, lastOutputAt: shown.lastOutputAt, bg: await readBg(session, typeof meta.session_id === "string" ? meta.session_id : null) };
     }),
   )).filter((e): e is NonNullable<typeof e> => e !== null);
   // 1 つの端末で順に別の repo を開くと、端末が生きている限り昔の repo まで live になる (2026-09-29 実機: 1 端末で 4 repo)。

@@ -96,6 +96,8 @@
   #tstat .trow.perm { color: inherit; font-weight: 700; }
   #tstat button { flex: none; font-size: 11px; padding: 0 8px; line-height: 18px; }
   #tstat i.idle { border: 2px solid var(--line); }
+  #tstat i.ng { background: #e5a50a; box-shadow: 0 0 0 3px rgb(229 165 10 / .25); } /* 返事が要る (終了: NG) = 入力待ちと同じ黄の点 */
+  #tstat i.ok { background: #2ec27e; } /* 閉じてよい (終了: OK) = 緑の点、光らせない */
   #tstat i.bg { border: 2px solid #e5a50a; animation: tblink 1.6s ease-in-out infinite; } /* 裏で待ち (shell / monitor / subagent が走っていて、終わると起きる) = 黄のリングがゆっくり明滅 */
   @keyframes tblink { 50% { opacity: .25; } }
   #tstat .task { white-space: pre-wrap; color: var(--fg); padding: 2px 6px 6px 15px; max-height: 40vh; overflow: auto; } /* 行を押すと開く依頼文の全文 */
@@ -158,7 +160,7 @@
     /* 狭い幅の進行状況: 送信の下に、作業中と許可待ちの端末だけ出す (全端末の一覧は高さを食う。2026-10-03 user: ぐるぐるが消えていた / 欄の上だと送り先の行と見分けにくい)。依頼文は既定で畳み、行を押すと開く */
     #cform, #cmsg { order: 1; }
     #tstat { order: 2; }
-    #tstat .trow:not(.perm):not(:has(i.busy, i.bg)), #tstat .trow:not(.perm):not(:has(i.busy, i.bg)) + .task { display: none; } /* 裏で待ちも出す (2026-10-15 user: monitor / shell で待っている画面が見えなかった) */
+    #tstat .trow:not(.perm):not(:has(i.busy, i.bg, i.ng)), #tstat .trow:not(.perm):not(:has(i.busy, i.bg, i.ng)) + .task { display: none; } /* 裏で待ちも出す (2026-10-15 user: monitor / shell で待っている画面が見えなかった)。返事が要る (終了: NG) も出す (2026-10-23) */
     #chat { grid-column: 2; grid-row: 1; gap: 4px; padding: 6px 12px; border-left: 0; border-bottom: 1px solid var(--line); }
     body.chat-closed #chat { padding: 4px 12px; }
     /* 狭い幅: 左に縦長の欄、右にボタン列、送信は列の一番下 (幅より高さが欲しい / 送信が段の間に浮いていた、2026-10-03 user) */
@@ -1290,12 +1292,14 @@ function renderTstat(list) {
     // 裏で待ち (bg: shell / monitor / subagent が走っていて終わると起きる) は、作業中でなければ入力待ち・静かより優先して出す (2026-10-15 user: monitor で待つ画面が『静か』に見えた)
     const bg = Array.isArray(e.bg) && e.bg.length ? e.bg : null;
     const st0 = perm ? "perm" : e.status ? (e.status === "working" || e.status === "blocked" ? "busy" : "wait") : wait ? "wait" : (c && "◑◐◓◒".includes(c)) || (e.lastOutputAt && Date.now() - e.lastOutputAt < 15000) ? "busy" : "idle";
-    const st = bg && (st0 === "wait" || st0 === "idle") ? "bg" : st0;
-    const stTitle = { perm: "許可待ち", wait: "入力待ち", busy: "作業中", idle: "静か", bg: "裏で待ち" }[st];
+    // 入力待ち・静かは、最後の返事の締め (終了: OK / NG) で『閉じてよい』『返事が要る』に分ける (2026-10-23 user: usher に集めたら repo の色で見分けられず、どれを閉じてよいかが見えない)
+    const st1 = bg && (st0 === "wait" || st0 === "idle") ? "bg" : st0;
+    const st = (st1 === "wait" || st1 === "idle") && e.end ? e.end : st1;
+    const stTitle = { perm: "許可待ち", wait: "入力待ち", busy: "作業中", idle: "静か", bg: "裏で待ち", ok: "閉じてよい", ng: "返事が要る" }[st];
     const bgText = bg ? " · 裏で待ち: " + [...bg.reduce((m, t) => m.set(t.type, (m.get(t.type) ?? 0) + 1), new Map()).entries()].map(([k, n]) => `${k} ${n}`).join(" ") : "";
     const ask = e.asking?.prompt ?? e.prompt; // 返事待ちの依頼、無ければ最新の返事を引き出した依頼
     if (perm) return `<div class="trow perm" data-s="${esc(e.session)}" style="--rc:${repoColor(e.repo)}" title="許可待ち"><i class="perm"></i><span>${esc(e.repo || "?")} · ${esc(perm.tool)} 許可待ち · ${esc(perm.detail)}</span><button data-approve="${esc(e.session)}" data-id="${esc(perm.id)}" title="許可する (y)">許可<sup>y</sup></button></div>`;
-    return `<div class="trow${wait ? " wait" : ""}" data-s="${esc(e.session)}" style="--rc:${repoColor(e.repo)}" title="${stTitle}${bg ? " · " + esc(bg.map((t) => t.description).join(" / ")) : ""} · 押すと依頼文を開き、この端末を送り先にする"><i class="${st}"></i><span>${esc(hhmm(new Date(e.ts)))} ${esc(e.repo || "?")}${esc(bgText)} · ${e.asking ? esc(e.asking.waiting ? "待機中" : "依頼: " + e.asking.prompt.replace(/\s+/g, " ").slice(0, 60)) : esc(e.head || "")}</span><time>${e.lastOutputAt ? ago(e.lastOutputAt) : ""}</time></div>` + (openAsk.has(e.session) && ask ? `<div class="task">${esc(ask)}</div>` : "");
+    return `<div class="trow${st === "ng" || (wait && st !== "ok") ? " wait" : ""}" data-s="${esc(e.session)}" style="--rc:${repoColor(e.repo)}" title="${stTitle}${bg ? " · " + esc(bg.map((t) => t.description).join(" / ")) : ""} · 押すと依頼文を開き、この端末を送り先にする"><i class="${st}"></i><span>${esc(hhmm(new Date(e.ts)))} ${esc(e.repo || "?")}${esc(bgText)} · ${e.asking ? esc(e.asking.waiting ? "待機中" : "依頼: " + e.asking.prompt.replace(/\s+/g, " ").slice(0, 60)) : esc(e.head || "")}</span><time>${e.lastOutputAt ? ago(e.lastOutputAt) : ""}</time></div>` + (openAsk.has(e.session) && ask ? `<div class="task">${esc(ask)}</div>` : "");
   }).join("");
   if (html === tstatHtml) return; // chip と同じ: 同じ内容なら書き直さない
   tstatHtml = html;
