@@ -1,6 +1,7 @@
 // 実験 A: 固定シェル (index.html) + AI 断片 (state/latest.html, state/history/) を配る最小サーバ。Bun 専用、依存なし。
 // ponytail: 127.0.0.1 固定・認証なし。上限 = 単一ユーザのローカル実験。他の端末からは tailscale serve 等の中継 + RMX_ORIGINS で開く (docs/config.md)。他人に見せる段階で認証を足す。
 import { appendFile, readdir, stat } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { extname, normalize } from "node:path";
 import { homedir } from "node:os";
 
@@ -172,6 +173,10 @@ async function historyItems() {
     // 端末・pane は記録から読み、ファイル名 (session) と合わなければ出さない (pane を取り違えた entry を作らない)
     const pane = herdrPaneOf({ terminal: p?.terminal, herdr_pane: p?.herdr_pane });
     if (p?.terminal || pane ? sessionKey(p) !== session : session.includes("__")) continue;
+    // 名前付き herdr session (`herdr --session <name>`) は stop で socket が消える (delete で dir も)。返事ゼロの待機中は pane に戻る先が無いので出さない
+    // (2026-10-25 実害: live-trial-boot の受け入れテストが起こした lt-boot-test-* の待機中 (prompt 空) が、list が取れず fail open で『稼働中』のまま 24 時間残った)
+    const sock = herdrSockOf(p);
+    if (sock && herdrSessionName(sock) && !existsSync(sock)) continue;
     const shown = paneView(pane, await agentsOf(herdrSockOf(p)), byHandle.get(handle));
     const wt = isTerm ? byHandle.get(handle)?.worktreePath : undefined;
     const root = typeof wt === "string" && wt ? wt : cwd;
