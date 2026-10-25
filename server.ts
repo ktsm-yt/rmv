@@ -679,18 +679,22 @@ async function now(name: string | null): Promise<Response> {
 // POST /paste: チャット欄に貼った画像を state/paste/ に保存し、絶対パスを返す。端末へは /send が images で貼る。
 // Origin 必須は /send と同じ理由 (他サイトからディスクに書かせない)。
 // ponytail: 古い画像は消さない。上限 = state/paste/ が貼った分だけ増える。溜まったら日数で消す掃除を足す
-const PASTE_EXT: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif" }; // osascript でクリップボードに載せられる型だけ
-const CLIP_CLASS: Record<string, string> = { png: "PNGf", jpg: "JPEG", gif: "GIFf" };
-const PASTED = /^\d+-[0-9a-f]{8}\.(png|jpg|gif)$/; // /paste が付けた名前だけ (任意ファイルをクリップボードに載せさせない)
+// 動画と CLIP_MAX 超の画像はクリップボードに載せず、/send が保存先のパスを本文に足す (Claude Code は動画を画像にできない。67 MB の gif・15 MB の mp4 が貼れなかった、2026-10-25)
+const PASTE_EXT: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "video/mp4": "mp4", "video/quicktime": "mov", "video/webm": "webm" };
+const CLIP_CLASS: Record<string, string> = { png: "PNGf", jpg: "JPEG", gif: "GIFf" }; // osascript でクリップボードに載せられる型だけ
+const PASTED = /^\d+-[0-9a-f]{8}\.(png|jpg|gif|mp4|mov|webm)$/; // /paste が付けた名前だけ (任意ファイルをクリップボードに載せさせない)
+// ponytail: CLIP_MAX は旧い受付上限をそのまま使った。Claude Code が実際に取り込める上限は未計測。PASTE_MAX は Bun.serve の maxRequestBodySize 既定 (128 MB) の手前
+const CLIP_MAX = 20_000_000, PASTE_MAX = 120_000_000;
+const asText = (p: string) => !CLIP_CLASS[p.split(".").pop()!] || Bun.file(p).size > CLIP_MAX;
 async function paste(req: Request): Promise<Response> {
   if (!ORIGINS.has(req.headers.get("origin") ?? "")) return new Response("forbidden origin", { status: 403 });
   const ext = PASTE_EXT[req.headers.get("content-type") ?? ""];
-  if (!ext) return new Response("png / jpeg / gif / webp only", { status: 415 });
+  if (!ext) return new Response("png / jpeg / gif / mp4 / mov / webm only", { status: 415 });
   const buf = await req.arrayBuffer();
-  if (!buf.byteLength || buf.byteLength > 20_000_000) return new Response("image must be 1 B..20 MB", { status: 413 });
+  if (!buf.byteLength || buf.byteLength > PASTE_MAX) return new Response("file must be 1 B..120 MB", { status: 413 });
   const path = `${STATE}/paste/${Date.now()}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
   await Bun.write(path, buf); // 親 dir は Bun.write が作る
-  if (ext !== "gif") await shrink(path);
+  if (ext === "png" || ext === "jpg") await shrink(path);
   return Response.json({ path });
 }
 // 長い辺が MAX_EDGE を超える画像を縮める。長い辺 2000px 超の貼り付けは 8 枚中 6 枚が端末に届かなかった (2026-10-10 集計、2000px 以下は試験用を除き 27 枚中 4 枚)。
@@ -768,7 +772,7 @@ async function send(req: Request, opt: { exact?: boolean; check?: (t: SendTarget
   if (!ORIGINS.has(req.headers.get("origin") ?? "")) return new Response("forbidden origin", { status: 403 });
   const body = await req.json().catch(() => null);
   const name = typeof body?.name === "string" ? body.name : "";
-  const text = typeof body?.text === "string" ? body.text : "";
+  let text = typeof body?.text === "string" ? body.text : "";
   // チャット欄は false: viewer に留まって続けて打つので端末タブへ切り替えない。Mac の外 (スマホ = tailscale serve 経由) から送った時も切り替えない: Mac の画面を勝手に奪うため。
   // 判定は Host (クライアントの申告は信じない)。中継が Host を 127.0.0.1 に書き換えても x-forwarded-* が残る
   const focus = body?.focus !== false && isLocalRequest(req);
@@ -849,16 +853,18 @@ async function send(req: Request, opt: { exact?: boolean; check?: (t: SendTarget
     }
     return "画像が端末に入らなかった (10 秒待っても [Image #N] が増えない)";
   };
+  const clips = (images as string[]).filter((p) => !asText(p)), files = (images as string[]).filter(asText);
+  if (files.length) text = [text, ...files].filter((t) => t.trim()).join("\n"); // 動画・大きい画像はパスを本文の末尾に 1 行ずつ
   try {
-    const clip = images.length ? await saveClip() : null;
+    const clip = clips.length ? await saveClip() : null;
     try {
-      for (const img of images as string[]) {
+      for (const img of clips) {
         const why = await attach(img);
         if (why) return new Response(why, { status: 502 });
       }
     } finally { await restoreClip(clip); }
     // /media 用: クリップボード経由の画像は transcript にパスが残らないので、セッションごとに控える
-    if (images.length && /^[\w-]+$/.test(String(meta.session_id ?? ""))) await appendFile(`${STATE}/paste/${meta.session_id}.txt`, images.join("\n") + "\n");
+    if (clips.length && /^[\w-]+$/.test(String(meta.session_id ?? ""))) await appendFile(`${STATE}/paste/${meta.session_id}.txt`, clips.join("\n") + "\n");
     // 数字キー (reset) は先に端末の入力欄を空にする: 失敗したコマンドなどが残っていると後ろにつながって効かない (2026-10-04)。
     // Ctrl+U で文字を消し、Backspace で `!` (シェル入力の状態) を外す。空の欄に送っても何も起きない (実測)。複数行の書きかけは今の行しか消えない
     if (reset) {
