@@ -929,7 +929,7 @@ function aborted(req: Request): Response | null {
   return req.signal.aborted ? new Response("aborted: 呼んだ側が先に切ったので打ち込まない", { status: 499 }) : null;
 }
 // /ext/deliver が打つ直前の確認 (送り先が決まった後)。打たない時は 409 を返す。本文の頭で理由を分ける (外部ツールが見分ける):
-// `stale` = その端末で今動いている会話が sid でない / `permission pending` = 許可待ち・質問のダイアログが出ている / `unverified` = 今の会話を確かめられない。
+// `stale` = その端末で今動いている会話が sid でない / `permission pending` = 許可待ち・質問のダイアログが出ている / `draft` = 入力欄に書きかけがある / `unverified` = 今の会話か入力欄を確かめられない。
 // (1) stale: state/prompt と state/history は起動 (source=startup)・依頼・返事の時にしか書かれない。同じ端末で /clear・Claude 内の /resume・claude --resume をした直後から
 //     最初の依頼を打つまでは前の会話のまま残り、historyItems の curSid だけでは見分けられない。そこで端末の Claude の pid ごとの記録 (~/.claude/sessions/<pid>.json、
 //     Claude Code の非公開の形式) の sessionId と照らす。Claude Code は会話を切り替えるたびに (clear / resume を含む) この sessionId を書き換える (2.1.309 のバイナリから読んだ)。
@@ -973,7 +973,36 @@ async function extCheck(t: SendTarget, sid: string): Promise<Response | null> {
   if (t.pane && (await herdrAgents(t.sock, 0))?.get(t.pane)?.status === "blocked") return pending("入力");
   const waiting = recs.find((r) => r.status === "waiting");
   if (waiting) return pending(waiting.waitingFor === "permission prompt" ? "許可" : "入力");
+  // (3) draft: 入力欄に書きかけ (履歴の呼び出しを含む) があると、続けて打った合図と Enter で `書きかけ/abg <ticket>` が 1 つの依頼として送られる (2026-10-25 user 赤ペン)
+  const draft = await inputDraft(t);
+  if (draft === null) return unverified("端末の入力欄を読めず、書きかけがあるか確かめられない");
+  if (draft) return new Response("draft: 宛先の端末の入力欄に書きかけがあるので打ち込まない (打つと書きかけと合図が 1 つの依頼で送られる)", { status: 409 });
   return null;
+}
+// Claude Code の入力欄 = 画面の最後の 2 本の罫線 (─ で始まる行) の間で、先頭の行が ❯ (古い版は >) で始まる。true = 書きかけあり / false = 空 / null = 入力欄が見つからない。
+// ponytail: 画面の見た目で判定する。新しい会話に薄い字で出る入力例も書きかけに見えて『打たない』側に倒れる。Claude Code が入力欄の形を変えたら null (打たない) で止まる
+function draftOnScreen(lines: string[]): boolean | null {
+  const rules = lines.flatMap((l, i) => (/^\s*─{3}/.test(l) ? [i] : []));
+  if (rules.length < 2) return null;
+  const box = lines.slice(rules[rules.length - 2] + 1, rules[rules.length - 1]);
+  if (!box.length || !/^\s*[❯>]/.test(box[0])) return null;
+  return box.join("").replace(/^\s*[❯>]/, "").replace(/[\s ]/g, "") !== "";
+}
+// herdr の pane は見えている画面、Orca の端末は描画された画面 (--screen) を読む。Orca が画面を描けない時 (source が screen でない) は読めない扱い
+async function inputDraft(t: SendTarget): Promise<boolean | null> {
+  try {
+    if (t.pane) {
+      const r = await herdrRun(["pane", "read", t.pane, "--source", "visible"], t.sock);
+      return r.code === 0 ? draftOnScreen(r.out.split("\n")) : null;
+    }
+    if (!t.handle) return null;
+    const p = Bun.spawn([ORCA, "terminal", "read", "--terminal", t.handle, "--screen", "--json"], { stdout: "pipe", stderr: "ignore" });
+    const [out, code] = await Promise.all([new Response(p.stdout).text(), p.exited]);
+    const term = code === 0 ? JSON.parse(out)?.result?.terminal : null;
+    return term?.source === "screen" && Array.isArray(term.tail) ? draftOnScreen(term.tail.map(String)) : null;
+  } catch {
+    return null;
+  }
 }
 // Claude Code の pid ごとの記録の置き場。その Claude の CLAUDE_CONFIG_DIR に従う。RMX_SESSIONS_DIR はテストの上書き口 (hooks/stop-to-fragment.py と同じ)
 function ccSessionsDir(env: string): string {

@@ -14,10 +14,15 @@ port() { python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); 
 
 # orca: term_a (/x/a) と term_h (/x/h、herdr を載せている) が書ける。一覧は $TMP/terms (末尾の試験で term_dead を足し引きする)。send / switch は 1 回 1 行で calls に記録
 TA='{"handle":"term_a","worktreePath":"/x/a","connected":true,"writable":true,"lastOutputAt":1},{"handle":"term_h","worktreePath":"/x/h","connected":true,"writable":true,"lastOutputAt":1}'
+# 端末の画面: 既定は空の入力欄 (罫線・❯・罫線・状態行)。$TMP/hscreen (herdr の見えている画面) / $TMP/oscreen (orca terminal read --screen の JSON) を書き換えて、書きかけ・読めない画面を再現する
+HEMPTY="$(printf 'out\n────\n❯\xc2\xa0\n────\n  status')"
+OEMPTY='{"ok":true,"result":{"terminal":{"source":"screen","tail":["out","────","❯\u00a0","────","  status"]}}}'
+printf '%s\n' "$HEMPTY" > "$TMP/hscreen"; echo "$OEMPTY" > "$TMP/oscreen"
 echo "$TA" > "$TMP/terms"
 cat > "$TMP/orca" <<STUB
 #!/usr/bin/env bash
 # $TMP/once がある時は次の 1 回だけその端末も一覧に足して消す (取り直しと送信の間に閉じる、の再現用)
+if [ "\$1 \$2" = "terminal read" ]; then cat "$TMP/oscreen"; exit 0; fi
 if [ "\$1 \$2" = "terminal list" ]; then x=""; if [ -f "$TMP/once" ]; then x=",\$(cat "$TMP/once")"; rm -f "$TMP/once"; fi; echo "{\"ok\":true,\"result\":{\"terminals\":[\$(cat "$TMP/terms")\$x]}}"; exit 0; fi
 printf '%s|' "\$@" >> "$TMP/calls"; echo >> "$TMP/calls"
 echo '{"ok":true}'
@@ -30,7 +35,7 @@ case "\$1 \$2" in
   "agent list") echo "{\"result\":{\"agents\":[{\"pane_id\":\"wS:p1\",\"agent\":\"claude\",\"agent_status\":\"idle\",\"terminal_title\":\"t\",\"tab_id\":\"wS:t1\"},{\"pane_id\":\"wS:p2\",\"agent\":\"claude\",\"agent_status\":\"\$(cat "$TMP/p2status")\",\"terminal_title\":\"t\",\"tab_id\":\"wS:t1\"},{\"pane_id\":\"wS:p3\",\"agent\":\"claude\",\"agent_status\":\"idle\",\"terminal_title\":\"t\",\"tab_id\":\"wS:t2\"}]}}"; exit 0 ;;
   "tab list") echo '{"result":{"tabs":[{"workspace_id":"wS","tab_id":"wS:t1","number":1},{"workspace_id":"wS","tab_id":"wS:t2","number":2}]}}'; exit 0 ;;
   "pane get") echo '{"result":{"pane":{"pane_id":"x","agent":"claude"}}}'; exit 0 ;;
-  "pane read") exit 0 ;;
+  "pane read") cat "$TMP/hscreen"; exit 0 ;;
 esac
 printf '%s|' "\$@" >> "$TMP/hcalls"; echo >> "$TMP/hcalls"
 echo '{"result":{"type":"ok"}}'
@@ -210,6 +215,22 @@ pidj 901 "{\"pid\":901,\"sessionId\":\"$SA2\",\"kind\":\"interactive\",\"status\
 check "/sessions: 今走っていない pid の古い記録が waiting でも deliverable は変えない" "$(srow "$SA2")" "[(True, True)]"
 pidsok
 check "許可待ちの間: 端末に何も打たない" "$(typed)" 0
+
+# --- 入力欄に書きかけ (履歴の呼び出しを含む) がある間は打たない。続けて打つと `書きかけ/abg <ticket>` が 1 つの依頼で送られる ---
+reset
+printf 'out\n────\n❯\xc2\xa0この文を直して\n────\n  status\n' > "$TMP/hscreen"
+check "herdr pane: 入力欄に書きかけ → 409 draft、何も打たない" "$(ok1 "$(sb "$SC" "$T")") $(grep -c '^draft' "$TMP/body") $(typed)" "409 1 0"
+printf 'out\n─── History 3/9 ──────\n❯\xc2\xa0前に送った依頼\n  2 行目\n────\n  status\n' > "$TMP/hscreen"
+check "herdr pane: 履歴を呼び出した入力欄 (複数行) → 409 draft" "$(ok1 "$(sb "$SC" "$T")") $(grep -c '^draft' "$TMP/body")" "409 1"
+printf 'out\nno input box\n' > "$TMP/hscreen"
+check "herdr pane: 画面に入力欄が見つからない → 409 unverified、何も打たない" "$(ok1 "$(sb "$SC" "$T")") $(grep -c '^unverified' "$TMP/body") $(typed)" "409 1 0"
+printf '%s\n' "$HEMPTY" > "$TMP/hscreen"
+echo '{"ok":true,"result":{"terminal":{"source":"screen","tail":["out","────","❯\u00a0書きかけ","────","  status"]}}}' > "$TMP/oscreen"
+check "Orca 端末: 入力欄に書きかけ → 409 draft、何も打たない" "$(ok1 "$(sb "$SA2" "$T")") $(grep -c '^draft' "$TMP/body") $(typed)" "409 1 0"
+echo '{"ok":true,"result":{"terminal":{"source":"screen-unavailable","tail":["stream"]}}}' > "$TMP/oscreen"
+check "Orca 端末: 画面を描けない (screen-unavailable) → 409 unverified" "$(ok1 "$(sb "$SA2" "$T")") $(grep -c '^unverified' "$TMP/body")" "409 1"
+echo "$OEMPTY" > "$TMP/oscreen"
+check "入力欄が空に戻ると 200 (Orca 端末・herdr pane)" "$(ok1 "$(sb "$SA2" "$T")") $(ok1 "$(sb "$SC" "$T")")" "200 200"
 
 # --- background セッション: 端末の対話 Claude は別の sessionId で、parkedJobId = bg 側の jobId (hooks/stop-to-fragment.py の terminal_ids と同じ対応) ---
 pidj 101 "{\"pid\":101,\"sessionId\":\"$SN\",\"kind\":\"interactive\",\"parkedJobId\":\"job1\"}"
