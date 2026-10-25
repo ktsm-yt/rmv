@@ -77,7 +77,10 @@
   /* チャット欄: ピン無しで自由文を元の端末へ。幅 900px 以上は右の列、未満は返事の上の帯 (grid の 1 行目なので返事をスクロールしても隠れない) */
   #chat { display: flex; flex-direction: column; gap: 8px; min-height: 0; overflow: hidden; padding: 12px; border-left: 1px solid var(--line); background: var(--bg); font-size: 13px; line-height: 1.5; }
   #chead { display: flex; gap: 6px; align-items: center; }
-  #ctoggle { flex: none; margin: 0; }
+  #ctoggle { flex: none; margin: 0; font-size: 10px; color: var(--muted); }
+  /* 開閉の印は三角で状態を見せる (鉛筆では畳めると分からなかった、2026-10-25 user)。広い幅は右の列なので ▶ で右へ畳む / ◀ で戻す */
+  #ctoggle::before { content: "▶"; }
+  body.chat-closed #ctoggle::before { content: "◀"; }
   #cto { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
   #cchips { flex: none; display: grid; gap: 4px; padding-bottom: 2px; } /* 送り先: 直近 5 セッションを縦に積む (横並びだとどれがどれか分からない) */
   #cchips .chip { display: flex; gap: 8px; text-align: left; overflow: hidden; white-space: nowrap; border-radius: 6px; border-left: 3px solid var(--rc, var(--line)); }
@@ -144,8 +147,10 @@
   #cwhy:empty, #cmsg:empty { display: none; }
   body.chat-closed #chat { padding: 12px 4px; }
   body.chat-closed #chat > :not(#chead), body.chat-closed #chead > :not(#ctoggle) { display: none; }
-  /* スマホ: 畳んでも送り先を出し、バー全体 (細い 1 行) を押して開閉する。24px の ✎ だけだと指で外す */
+  /* スマホ: 畳んでも送り先を出し、バー全体 (細い 1 行) を押して開閉する。小さい開閉の三角だけだと指で外す */
   html.narrow #chead { cursor: pointer; min-height: 32px; }
+  html.narrow #chead:hover { background: color-mix(in srgb, var(--fg) 5%, transparent); border-radius: 6px; } /* 行全体が押せることを見せる */
+  html.narrow #chead:hover #ctoggle { color: var(--fg); }
   html.narrow body.chat-closed #chead > #cto { display: block; }
   @media (min-width: 900px) {
     body { grid-template-columns: 200px minmax(0, 1fr) 300px; }
@@ -164,6 +169,11 @@
     #tstat .trow:not(.perm):not(:has(i.busy, i.bg, i.ng)), #tstat .trow:not(.perm):not(:has(i.busy, i.bg, i.ng)) + .task { display: none; } /* 裏で待ちも出す (2026-10-15 user: monitor / shell で待っている画面が見えなかった)。返事が要る (終了: NG) も出す (2026-10-23) */
     #chat { grid-column: 2; grid-row: 1; gap: 4px; padding: 6px 12px; border-left: 0; border-bottom: 1px solid var(--line); }
     body.chat-closed #chat { padding: 4px 12px; }
+    /* 返事の上の帯では、帯の下の真ん中に ▲ (上へ畳む) / ▼ (開く) を置く */
+    #chead { position: relative; padding-bottom: 14px; }
+    #ctoggle { position: absolute; left: 50%; bottom: 0; transform: translateX(-50%); width: 40px; height: 14px; border: 0; background: none; }
+    #ctoggle::before { content: "▲"; }
+    body.chat-closed #ctoggle::before { content: "▼"; }
     /* 狭い幅: 左に縦長の欄、右にボタン列、送信は列の一番下 (幅より高さが欲しい / 送信が段の間に浮いていた、2026-10-03 user) */
     #cform { flex-direction: row; align-items: stretch; }
     #ctext { flex: 1; min-width: 0; min-height: 8em; max-height: 40vh; }
@@ -374,7 +384,7 @@ if (isMobileUA && window.visualViewport) {
   </div>
 </main>
 <aside id="chat">
-  <div id="chead"><button id="ctoggle" title="チャット欄を開く / 畳む">✎</button><span id="cto"></span><span id="cctx"></span></div>
+  <div id="chead"><button id="ctoggle" title="送信欄を開く / 畳む" aria-label="送信欄を開く / 畳む"></button><span id="cto"></span><span id="cctx"></span></div>
   <div id="cwhy"></div>
   <nav id="cchips"></nav>
   <div id="sug" hidden></div>
