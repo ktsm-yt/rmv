@@ -169,9 +169,11 @@
     #tstat .trow:not(.perm):not(:has(i.busy, i.bg, i.ng)), #tstat .trow:not(.perm):not(:has(i.busy, i.bg, i.ng)) + .task { display: none; } /* 裏で待ちも出す (2026-10-15 user: monitor / shell で待っている画面が見えなかった)。返事が要る (終了: NG) も出す (2026-10-23) */
     #chat { grid-column: 2; grid-row: 1; gap: 4px; padding: 6px 12px; border-left: 0; border-bottom: 1px solid var(--line); }
     body.chat-closed #chat { padding: 4px 12px; }
-    /* 返事の上の帯では、帯の下の真ん中に ▲ (上へ畳む) / ▼ (開く) を置く */
-    #chead { position: relative; padding-bottom: 14px; }
-    #ctoggle { position: absolute; left: 50%; bottom: 0; transform: translateX(-50%); width: 40px; height: 14px; border: 0; background: none; }
+    /* 返事の上の帯では、同じ行の真ん中に ▲ (上へ畳む) / ▼ (開く) を置く */
+    #chead { position: relative; }
+    #ctoggle { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 40px; height: 100%; border: 0; background: none; }
+    #cto { flex: 0 1 auto; max-width: calc(50% - 24px); } /* 長い送り先名は真ん中の三角の手前で省略する */
+    #cctx { margin-left: auto; }
     #ctoggle::before { content: "▲"; }
     body.chat-closed #ctoggle::before { content: "▼"; }
     /* 狭い幅: 左に縦長の欄、右にボタン列、送信は列の一番下 (幅より高さが欲しい / 送信が段の間に浮いていた、2026-10-03 user) */
