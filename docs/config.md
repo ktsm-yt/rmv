@@ -31,7 +31,7 @@ README の続きです。
 送信ボタンの左には、送り先のモデルとエフォートが「opus · high」の形で出ます。
 表示するだけで、切り替えは Orca か端末で行います。
 端末で直接変えた分は、次の返事で反映されます。
-モデルが transcript から分からない時は `~/.claude/settings.json` の `"model"` を読みます。場所は環境変数 `RMV_CC_SETTINGS` で変えられます。
+モデルが transcript から分からない時は settings の `"model"` を読みます。順は Claude Code と同じで `<送り先の cwd>/.claude/settings.local.json` → `<cwd>/.claude/settings.json` → `~/.claude/settings.json` (最後の場所は環境変数 `RMV_CC_SETTINGS` で変えられます)。
 
 見出しの右には、context の使用量が「268k / 1M」の形で出ます。
 30% 以上で黄、50% 以上で赤になります。

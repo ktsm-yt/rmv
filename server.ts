@@ -67,6 +67,8 @@ function herdrSessionName(sock: unknown): string {
   return typeof sock === "string" ? (/\/sessions\/([^/]+)\/herdr\.sock$/.exec(sock)?.[1] ?? "").replace(/[^A-Za-z0-9_-]/g, "") : "";
 }
 const NAME = /^[\w.-]+\.md$/; // [\w.-] のみ: "/" を含まないので state/history の外は読めない
+// name (… .md) の meta。asking-<session>.md (返事ゼロの仮 entry) は history に meta が無いので state/prompt の記録 (terminal・herdr_pane・cwd 付き) を使う
+const metaOf = (name: string) => Bun.file(name.startsWith("asking-") ? `${PROMPT}/${name.slice(7, -3)}.json` : `${HIST}/${name.slice(0, -3)}.json`).json().catch(() => null);
 const TEXT = { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" };
 
 // sub (ワーカー) なら一覧に出す名前 (pane 名 "foyer" / herdr の pane 名 / "worker")、メインなら null。sub の返事はメインに出さず「🤖 ワーカー」側に出す (2026-10-16 user)。
@@ -591,7 +593,7 @@ async function resolveTerminal(meta: { terminal: string; cwd?: unknown }, exact 
 const MEDIA = /\/(?:Users|private|tmp|var)\/[^\s"'`<>()[\]\\]+?\.(?:png|jpe?g|gif|webp|pdf)\b/gi;
 async function media(name: string | null): Promise<Response> {
   if (!name || !NAME.test(name)) return new Response("bad name", { status: 400 });
-  const meta = await Bun.file(`${HIST}/${name.slice(0, -3)}.json`).json().catch(() => null);
+  const meta = await metaOf(name); // 仮 entry (asking-…) は state/prompt の記録 (cwd 付き)。起動直後の表示に cwd 側の settings を使う
   const sid = String(meta?.session_id ?? "");
   if (!/^[\w-]+$/.test(sid)) return Response.json([]);
   const texts: string[] = [];
@@ -623,7 +625,7 @@ async function media(name: string | null): Promise<Response> {
 
 // GET /now?name=<history の .md>: その返事のセッションの今の {model, effort} (取れなければ null)。プルダウンの初期表示用
 // model = transcript で後ろにある方: /model の引数 か 本体 assistant の message.model を別名に寄せたもの (別名が同じなら /model の引数を残す)。
-// settings.json の "model" は transcript に何も無い時と、同じ別名で [1m] 等の付いた形を補う時だけ (settings は新しいセッションの既定でしかなく、起動時の --model や Orca の選択を反映しない)
+// settings の "model" (project → global の順、下の for) は transcript に何も無い時と、同じ別名で [1m] 等の付いた形を補う時だけ (settings は新しいセッションの既定でしかなく、起動時の --model や Orca の選択を反映しない)
 // effort = 最後の assistant 行の "effort" と最後の /effort の引数のうち、行が後ろの方
 // /model・/effort は type:"user" で message.content が文字列の `<command-name>/model</command-name> … <command-args>X</command-args>` (CC 2.1.288 実機)
 // ponytail: transcript は末尾 512KB だけ読む。上限 = その範囲に /model・assistant 行がある間 (無ければ settings か null に落ちる)。/effort の行形は /model と同じと仮定 (実機未確認)
@@ -635,7 +637,7 @@ const NOW_TAIL = 512 * 1024;
 const MODEL_ALIAS = ["opus", "sonnet", "haiku", "fable"];
 async function now(name: string | null): Promise<Response> {
   if (!name || !NAME.test(name)) return new Response("bad name", { status: 400 });
-  const meta = await Bun.file(`${HIST}/${name.slice(0, -3)}.json`).json().catch(() => null);
+  const meta = await metaOf(name); // 仮 entry (asking-…) は state/prompt の記録 (cwd 付き)。起動直後の表示に cwd 側の settings を使う
   const sid = String(meta?.session_id ?? "");
   let model: string | null = null, effort: string | null = null, used: number | null = null;
   if (/^[\w-]+$/.test(sid)) {
@@ -667,8 +669,14 @@ async function now(name: string | null): Promise<Response> {
       }
     } catch {} // projects 置き場が無い = transcript なし
   }
-  const cfg = await Bun.file(CC_SETTINGS).json().catch(() => null);
-  const s = typeof cfg?.model === "string" && cfg.model ? cfg.model : null;
+  // settings は Claude Code と同じ順で最初に "model" のある 1 つ: <cwd>/.claude/settings.local.json → <cwd>/.claude/settings.json → ~/.claude/settings.json
+  // (2026-10-28 Usher の project settings が fable、global が opus で、起動直後の返事無しの表示が opus になった)
+  const cwd = typeof meta?.cwd === "string" && meta.cwd ? meta.cwd : null;
+  let s: string | null = null;
+  for (const f of [...(cwd ? [`${cwd}/.claude/settings.local.json`, `${cwd}/.claude/settings.json`] : []), CC_SETTINGS]) {
+    const cfg = await Bun.file(f).json().catch(() => null);
+    if (typeof cfg?.model === "string" && cfg.model) { s = cfg.model; break; }
+  }
   if (s && (!model || (MODEL_ALIAS.includes(model) && s.startsWith(model)))) model = s;
   // 上限は state/ctx/<session_id>.json の {size} (statusline が Claude Code の context_window_size を置く) を優先し、次に Ghostex が statusline の入力を丸ごと置く <sid>.json。無ければ model 名から推定
   // (2026-10-20 に statusLine が Ghostex 経由の Pulse に替わり state/ctx が書かれなくなった。fable の 148k が 200k 扱いで赤くなり、204k / 1M の灰と色が逆転した)
@@ -784,7 +792,7 @@ async function send(req: Request, opt: { exact?: boolean; check?: (t: SendTarget
   if (images.length > 10 || !images.every((p) => typeof p === "string" && p.startsWith(`${STATE}/paste/`) && PASTED.test(p.slice(STATE.length + 7)))) return new Response("bad images", { status: 400 });
   if ((!text.trim() && !images.length) || text.length > 100000) return new Response("text must be 1..100000 chars", { status: 400 }); // 10 万字 = markdown の長文を貼っても足りる長さ。orca terminal send で 10 万字 (23 万バイト) が欠けずに届くのを確かめた (2026-10-08)
   // asking-<session>.md (返事ゼロの仮 entry、待機中の最初の依頼の送り先) は history に meta が無いので、state/prompt の記録 (terminal・herdr_pane・cwd 付き) を meta に使う
-  let meta = await Bun.file(name.startsWith("asking-") ? `${PROMPT}/${name.slice(7, -3)}.json` : `${HIST}/${name.slice(0, -3)}.json`).json().catch(() => null);
+  let meta = await metaOf(name);
   if (!meta) return new Response("not found", { status: 404 });
   let pane = herdrPaneOf(meta);
   let sock = herdrSockOf(meta);
@@ -913,7 +921,7 @@ async function extDeliver(req: Request): Promise<Response> {
   // その間に端末を閉じた・Claude を終えた sid を通さないよう、打つ直前にキャッシュ無しで取り直す。取れない時 (null) は historyItems と同じく fail open。
   // さらに send には exact を渡し、「同じフォルダの別の Claude の端末」への差し替えをさせない (取り直しと送信の間に閉じても別の会話には打たない)。
   // herdr の pane は send 側が session_id で照合する (movedPane) ので取り直さない
-  const meta = await Bun.file(e.name.startsWith("asking-") ? `${PROMPT}/${e.name.slice(7, -3)}.json` : `${HIST}/${e.name.slice(0, -3)}.json`).json().catch(() => null);
+  const meta = await metaOf(e.name);
   if (meta && !herdrPaneOf(meta)) {
     const h = typeof meta.terminal === "string" ? meta.terminal : "";
     const [terms, claude] = await Promise.all([liveTerminals(0), claudeTerminals(0)]);
