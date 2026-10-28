@@ -14,7 +14,7 @@ EOF
   chmod +x "$T/herdr"
   rm -f "$T/out"
   echo '{"hook_event_name":"PermissionRequest","session_id":"s1","cwd":"/x/sot-flow/.worktrees/feat","tool_name":"Bash","tool_input":{"command":"git push"}}' |
-    RMX_STATE_DIR="$T/state" RMX_HERDR_BIN="$T/herdr" HERDR_ENV=1 HERDR_PANE_ID=wZ:p9 CLAUDE_CODE_ENTRYPOINT=cli python3 "$HOOK"
+    RMV_STATE_DIR="$T/state" RMV_HERDR_BIN="$T/herdr" HERDR_ENV=1 HERDR_PANE_ID=wZ:p9 CLAUDE_CODE_ENTRYPOINT=cli python3 "$HOOK"
   sleep 1
 }
 check() { if eval "$2"; then echo "ok: $1"; else echo "NG: $1"; fail=1; fi; }

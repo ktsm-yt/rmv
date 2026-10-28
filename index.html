@@ -950,7 +950,7 @@ document.addEventListener("keydown", (ev) => {
 // 下書きは表示中の返事ごとに drafts (name → 下書き) に持つ。← → で行き来しても消えない。
 // ponytail: 下書きはメモリだけ (リロードで消える)。上限 = 1 タブで書いてすぐ送る用途。
 const drafts = new Map();
-let pageVer = null; // 読み込んだ index.html の版 (/history の x-rmx-page)
+let pageVer = null; // 読み込んだ index.html の版 (/history の x-rmv-page)
 let cur = null; // 表示中の履歴 entry。latest.html だけ映している間は null (送信不可・コピーのみ)
 const curName = () => cur?.name ?? "";
 const draftOf = (n) => { if (!drafts.has(n)) drafts.set(n, { pins: new Map(), choices: new Map(), free: "", imgs: [] }); return drafts.get(n); };
@@ -1560,7 +1560,7 @@ try { lastSeen = JSON.parse(localStorage.getItem("rmx.seen")); } catch {}
 const saveSeen = () => { try { localStorage.setItem("rmx.seen", JSON.stringify(lastSeen)); } catch {} };
 const renderFilter = () => { document.getElementById("filter").innerHTML = REPO ? `[<span class="lbl">repo: </span>${esc(REPO)}]` : ""; };
 let projHtml = null;
-// 終了した repo (live な entry が 1 つも無い = 端末が全部閉じた) は既定で隠す。liveState = /history の x-rmx-live (ok 以外 = 判定不能なので全部出す)
+// 終了した repo (live な entry が 1 つも無い = 端末が全部閉じた) は既定で隠す。liveState = /history の x-rmv-live (ok 以外 = 判定不能なので全部出す)
 let liveState = null, showDead = false;
 try { showDead = localStorage.getItem("rmx.proj.dead") === "show"; } catch {}
 function renderProjects() {
@@ -1686,9 +1686,9 @@ async function poll() {
   try {
     const hr = await fetch("/history", { cache: "no-store" });
     // index.html が更新されたら読み直す (サーバー再起動では開いたままの画面は変わらない、2026-09-29 実害)。赤ペンの下書き中は消さない
-    const page = hr.headers.get("x-rmx-page");
+    const page = hr.headers.get("x-rmv-page");
     if (page) { if (pageVer && page !== pageVer && !drafts.size && !busy()) return location.reload(); pageVer = page; }
-    liveState = hr.headers.get("x-rmx-live");
+    liveState = hr.headers.get("x-rmv-live");
     all = await hr.json();
     // 選んでいた repo が履歴から消えたら (repo の決め方が変わった・古い URL 等) すべてに戻す。空の画面で止めない
     if (REPO && !all.some((e) => e.repo.toLowerCase() === REPO.toLowerCase())) { REPO = ""; SESS = ""; setParam("repo", ""); setParam("s", ""); renderFilter(); }

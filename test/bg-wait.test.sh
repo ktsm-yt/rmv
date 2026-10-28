@@ -3,12 +3,12 @@
 # negative control: background_tasks 無し / 全部 completed → ファイル無し、/history の bg は null。別 session_id の取り残しは載せない
 set -u
 A="$(cd "$(dirname "$0")/.." && pwd)"
-HOOK="${RMX_HOOK:-$A/hooks/stop-to-fragment.py}"
-SERVER="${RMX_SERVER:-$A/server.ts}"
+HOOK="${RMV_HOOK:-$A/hooks/stop-to-fragment.py}"
+SERVER="${RMV_SERVER:-$A/server.ts}"
 export CLAUDE_CODE_ENTRYPOINT=cli
 unset ORCA_TERMINAL_HANDLE HERDR_SESSION
 TMP="$(mktemp -d)"
-export RMX_SESSIONS_DIR="$TMP/no-sessions"
+export RMV_SESSIONS_DIR="$TMP/no-sessions"
 STATE="$TMP/state"; mkdir -p "$STATE/history" "$STATE/perm"
 PORT="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')"
 BASE="http://127.0.0.1:$PORT"
@@ -25,7 +25,7 @@ STUB
 chmod +x "$TMP/herdr"
 stop() { # $1 = background_tasks の JSON
   python3 -c 'import json,sys; print(json.dumps({"hook_event_name":"Stop","session_id":"sess-A","cwd":"/tmp/repo","last_assistant_message":"返事","background_tasks":json.loads(sys.argv[1])}))' "$1" \
-    | HERDR_ENV=1 HERDR_PANE_ID=wS:p1 RMX_HERDR_BIN="$TMP/herdr" RMX_STATE_DIR="$STATE" python3 "$HOOK"
+    | HERDR_ENV=1 HERDR_PANE_ID=wS:p1 RMV_HERDR_BIN="$TMP/herdr" RMV_STATE_DIR="$STATE" python3 "$HOOK"
 }
 KEY="$STATE/bg/herdr__wS-p1.json"
 stop '[]'
@@ -34,7 +34,7 @@ sleep 1.1
 stop '[{"id":"b1","type":"shell","status":"running","description":"sleep 240","command":"sleep 240"},{"id":"b2","type":"monitor","status":"running","description":"Air を見張る"},{"id":"b3","type":"shell","status":"completed","description":"終わった分"}]'
 check "hook: running の 2 件だけ置く" "$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(len(d["tasks"]), d["session_id"], d["tasks"][1]["type"])' "$KEY")" "2 sess-A monitor"
 # --- server: bg が載る ---
-RMX_STATE_DIR="$STATE" RMX_PORT="$PORT" RMX_HERDR_BIN="$TMP/herdr" RMX_ORCA_BIN=/usr/bin/false RMX_PS_BIN=/usr/bin/false RMX_LIVE_TTL_MS=0 bun run "$SERVER" > "$TMP/server.log" 2>&1 &
+RMV_STATE_DIR="$STATE" RMV_PORT="$PORT" RMV_HERDR_BIN="$TMP/herdr" RMV_ORCA_BIN=/usr/bin/false RMV_PS_BIN=/usr/bin/false RMV_LIVE_TTL_MS=0 bun run "$SERVER" > "$TMP/server.log" 2>&1 &
 SPID=$!
 for _ in $(seq 50); do curl -s -o /dev/null "$BASE/history" && break; sleep 0.1; done
 bgof() { curl -s "$BASE/history" | python3 -c 'import json,sys; es=[e for e in json.load(sys.stdin) if not e["name"].startswith("asking-")]; b=es[0].get("bg"); print("null" if b is None else " ".join(t["type"] for t in b))'; }

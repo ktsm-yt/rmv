@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 狭い幅 (サイドパネル) では左の細帯を横切っても一覧が開かず、上の ☰ ＋ に乗った時だけ開くことの再現テスト (2026-10-25 user)。
-# 広い幅は今まで通り、帯のどこに乗っても開く。本物の state は触らない (RMX_STATE_DIR を一時領域へ)。
+# 広い幅は今まで通り、帯のどこに乗っても開く。本物の state は触らない (RMV_STATE_DIR を一時領域へ)。
 # 実行: bash rmv/test/narrow-hover.test.sh   (bun / uv / playwright の chromium が要る)
 #   RMV_DIR=<dir> で index.html の置き場を差し替えられる (旧 index.html に当てると FAIL = negative control)
 #   SHOTS=<dir> で狭い幅の開く前・開いた後の画面を保存する
@@ -17,7 +17,7 @@ md="$STATE/history/20261025T120000000-aaaaaaaa.md"
 printf '{"cwd":"/Users/i/Dev/rmv","session_id":"test-a","ts":"2026-10-25T12:00:00+09:00","name":"20261025T120000000-aaaaaaaa.md","terminal":"term_a"}\n' > "${md%.md}.json"
 cp "$md" "$STATE/latest.html"; cp "${md%.md}.json" "$STATE/latest.json"
 
-RMX_STATE_DIR="$STATE" RMX_PORT="$PORT" RMX_ORCA_BIN=/usr/bin/true bun "$RMV_DIR/server.ts" >"$TMP/server.log" 2>&1 &
+RMV_STATE_DIR="$STATE" RMV_PORT="$PORT" RMV_ORCA_BIN=/usr/bin/true bun "$RMV_DIR/server.ts" >"$TMP/server.log" 2>&1 &
 SV=$!
 trap 'kill $SV 2>/dev/null' EXIT
 for _ in $(seq 1 50); do curl -sf "$BASE/history" >/dev/null 2>&1 && break; sleep 0.1; done

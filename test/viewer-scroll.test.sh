@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 読んでいる途中 (本文を下へスクロール中) に新着が来ても、表示中の返事とスクロール位置が動かないことの再現テスト。
 # 10-15 / 10-16 / 10-18 に同じ訴えを 3 回受け、fa1d783 → 5ea9b0d → e84e97b と経路ごとに直したが再現を毎回捨てていた
-# (escaped-defects L202、harness bd harness-hk5)。本物の state は触らない (RMX_STATE_DIR を一時領域へ)。
+# (escaped-defects L202、harness bd harness-hk5)。本物の state は触らない (RMV_STATE_DIR を一時領域へ)。
 # 実行: bash rmv/test/viewer-scroll.test.sh   (bun / uv / playwright の chromium が要る)
 #   RMV_DIR=<dir> で server.ts + index.html の置き場を差し替えられる (旧 index.html に当てる negative control 用:
 #   mkdir -p /tmp/old && cp server.ts /tmp/old && git show 5ea9b0d~1:index.html > /tmp/old/index.html && RMV_DIR=/tmp/old bash test/viewer-scroll.test.sh → FAIL になる)
@@ -23,7 +23,7 @@ entry() { # entry <name-stem> <marker> [端末] (rmv のセッション = 端末
 }
 entry 20261020T120000000-aaaaaaaa ENTRY1
 
-RMX_STATE_DIR="$STATE" RMX_PORT="$PORT" RMX_ORCA_BIN=/usr/bin/true bun "$RMV_DIR/server.ts" >"$TMP/server.log" 2>&1 &
+RMV_STATE_DIR="$STATE" RMV_PORT="$PORT" RMV_ORCA_BIN=/usr/bin/true bun "$RMV_DIR/server.ts" >"$TMP/server.log" 2>&1 &
 SV=$!
 trap 'kill $SV 2>/dev/null' EXIT
 for _ in $(seq 1 50); do curl -sf "$BASE/history" >/dev/null 2>&1 && break; sleep 0.1; done

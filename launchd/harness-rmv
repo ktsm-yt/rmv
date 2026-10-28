@@ -2,9 +2,11 @@
 # ログイン項目に job 名で並べるための wrapper (BTM の Name = 起動バイナリの basename)。
 # 置き場は自分で解決する (repo をどこに clone しても動く)。
 RMV_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-# state/env (git に入らない) があれば読む。例: スマホから開く時の RMX_ORIGINS (docs/config.md「スマホなど別の端末から開く」)
+# state/env (git に入らない) があれば読む。例: スマホから開く時の RMV_ORIGINS (docs/config.md「スマホなど別の端末から開く」)
 [ -f "$RMV_DIR/state/env" ] && { set -a; . "$RMV_DIR/state/env"; set +a; }
+# 旧名 RMX_* が state/env に残っていても効く (v0.19.0 で RMV_ に改名。server と hook も同じ写しをする)
+for _k in $(env | sed -n "s/^RMX_\([A-Z0-9_]*\)=.*/\1/p"); do eval "[ -n \"\${RMV_$_k+x}\" ] || export RMV_$_k=\"\$RMX_$_k\""; done
 # メモリがこれを超えたら server が自分で終了し、KeepAlive で起動し直す (state/env で上書きできる)
-export RMX_MAX_FOOTPRINT_MB="${RMX_MAX_FOOTPRINT_MB:-1024}"
+export RMV_MAX_FOOTPRINT_MB="${RMV_MAX_FOOTPRINT_MB:-1024}"
 BUN="${BUN:-$(command -v bun || echo "$HOME/.bun/bin/bun")}"
 exec "$BUN" run "$RMV_DIR/server.ts" "$@"

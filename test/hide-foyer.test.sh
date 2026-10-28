@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # sub (herdr の pane 名 "foyer"、または tab 1 以外の pane) の返事はワーカー側 (agent.type=foyer) に出し、メイン (agent null) には出さない。Lead (tab 1、pane 名なし / 依頼N) はメイン。
 # tab は hook が herdr_tab に記録する。古い記録 (herdr_tab なし) は今の agent list の tab_id で決める。
-# hook は herdr_label を記録に残す (記録は消さない: foyer runner が読む)。RMX_HOOK / RMX_SERVER で旧実装に当てる negative control 用
+# hook は herdr_label を記録に残す (記録は消さない: foyer runner が読む)。RMV_HOOK / RMV_SERVER で旧実装に当てる negative control 用
 set -u
 A="$(cd "$(dirname "$0")/.." && pwd)"
-HOOK="${RMX_HOOK:-$A/hooks/stop-to-fragment.py}"
-SERVER="${RMX_SERVER:-$A/server.ts}"
+HOOK="${RMV_HOOK:-$A/hooks/stop-to-fragment.py}"
+SERVER="${RMV_SERVER:-$A/server.ts}"
 export CLAUDE_CODE_ENTRYPOINT=cli
 unset ORCA_TERMINAL_HANDLE HERDR_SESSION
 TMP="$(mktemp -d)"
-export RMX_SESSIONS_DIR="$TMP/no-sessions"
+export RMV_SESSIONS_DIR="$TMP/no-sessions"
 STATE="$TMP/state"; mkdir -p "$STATE/history" "$STATE/perm"
 PORT="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')"
 BASE="http://127.0.0.1:$PORT"
@@ -31,36 +31,36 @@ chmod +x "$TMP/herdr"
 
 # --- hook: foyer の pane なら herdr_label=foyer、名前なしなら null。どちらも記録は書く ---
 FIX="$A/test/fixture-lowload.jsonl"
-HERDR_STUB_LABEL='"foyer"' HERDR_ENV=1 HERDR_PANE_ID=wS:p7 RMX_HERDR_BIN="$TMP/herdr" RMX_STATE_DIR="$STATE" python3 "$HOOK" < "$FIX"
+HERDR_STUB_LABEL='"foyer"' HERDR_ENV=1 HERDR_PANE_ID=wS:p7 RMV_HERDR_BIN="$TMP/herdr" RMV_STATE_DIR="$STATE" python3 "$HOOK" < "$FIX"
 SUB="$(field "$STATE/latest.json" name)"
 check "hook: foyer pane の記録は書く" "$([ -f "$STATE/history/$SUB" ] && echo yes)" yes
 check "hook: herdr_label=foyer" "$(field "$STATE/history/${SUB%.md}.json" herdr_label)" foyer
 sleep 1.1
-HERDR_ENV=1 HERDR_PANE_ID=wS:p1 RMX_HERDR_BIN="$TMP/herdr" RMX_STATE_DIR="$STATE" python3 "$HOOK" < "$FIX"
+HERDR_ENV=1 HERDR_PANE_ID=wS:p1 RMV_HERDR_BIN="$TMP/herdr" RMV_STATE_DIR="$STATE" python3 "$HOOK" < "$FIX"
 LEAD="$(field "$STATE/latest.json" name)"
 check "hook: 名前なし pane は herdr_label null" "$(field "$STATE/history/${LEAD%.md}.json" herdr_label)" null
 check "hook: tab を herdr_tab に記録" "$(field "$STATE/history/${LEAD%.md}.json" herdr_tab)" wS:t1
 sleep 1.1
 # tab 2 の pane (名前は user 風の 依頼1、foyer ではない) → ワーカー
-HERDR_STUB_LABEL='"依頼1"' HERDR_STUB_TAB=wS:t2 HERDR_ENV=1 HERDR_PANE_ID=wS:p3 RMX_HERDR_BIN="$TMP/herdr" RMX_STATE_DIR="$STATE" python3 "$HOOK" < "$FIX"
+HERDR_STUB_LABEL='"依頼1"' HERDR_STUB_TAB=wS:t2 HERDR_ENV=1 HERDR_PANE_ID=wS:p3 RMV_HERDR_BIN="$TMP/herdr" RMV_STATE_DIR="$STATE" python3 "$HOOK" < "$FIX"
 TAB2="$(field "$STATE/latest.json" name)"
 sleep 1.1
 # tab 1 を閉じた workspace wX (t2 だけ) の pane → その workspace の最初の tab なのでメイン (Crewforce の形、2026-10-17 実測)
-HERDR_STUB_LABEL='"依頼1"' HERDR_STUB_TAB=wX:t2 HERDR_ENV=1 HERDR_PANE_ID=wX:p1 RMX_HERDR_BIN="$TMP/herdr" RMX_STATE_DIR="$STATE" python3 "$HOOK" < "$FIX"
+HERDR_STUB_LABEL='"依頼1"' HERDR_STUB_TAB=wX:t2 HERDR_ENV=1 HERDR_PANE_ID=wX:p1 RMV_HERDR_BIN="$TMP/herdr" RMV_STATE_DIR="$STATE" python3 "$HOOK" < "$FIX"
 ONLYT2="$(field "$STATE/latest.json" name)"
 sleep 1.1
 # 古い記録 (herdr_tab なし) の pane wS:p4 は agent list で tab 2 → ワーカー
-HERDR_ENV=1 HERDR_PANE_ID=wS:p4 RMX_HERDR_BIN="$TMP/herdr" RMX_STATE_DIR="$STATE" python3 "$HOOK" < "$FIX"
+HERDR_ENV=1 HERDR_PANE_ID=wS:p4 RMV_HERDR_BIN="$TMP/herdr" RMV_STATE_DIR="$STATE" python3 "$HOOK" < "$FIX"
 OLD="$(field "$STATE/latest.json" name)"
 python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d.pop("herdr_tab", None); json.dump(d, open(p, "w"))' "$STATE/history/${OLD%.md}.json"
 sleep 1.1
-HERDR_STUB_LABEL='"foyer"' HERDR_ENV=1 HERDR_PANE_ID=wS:p9 RMX_HERDR_BIN="$TMP/herdr" RMX_STATE_DIR="$STATE" python3 "$HOOK" < "$FIX"
+HERDR_STUB_LABEL='"foyer"' HERDR_ENV=1 HERDR_PANE_ID=wS:p9 RMV_HERDR_BIN="$TMP/herdr" RMV_STATE_DIR="$STATE" python3 "$HOOK" < "$FIX"
 SUBPERM="$(field "$STATE/latest.json" name)"
 # wS:p9 の sub は許可待ち中 (session key = herdr__wS-p9)
 python3 -c 'import json,sys,datetime; json.dump({"id":"perm1","tool":"Bash","detail":"git push","ts":datetime.datetime.now().astimezone().isoformat(timespec="seconds"),"herdr_pane":"wS:p9"},open(sys.argv[1],"w"))' "$STATE/perm/herdr__wS-p9.json"
 
 # --- server ---
-RMX_STATE_DIR="$STATE" RMX_PORT="$PORT" RMX_HERDR_BIN="$TMP/herdr" RMX_ORCA_BIN=/usr/bin/false RMX_PS_BIN=/usr/bin/false RMX_LIVE_TTL_MS=0 bun run "$SERVER" > "$TMP/server.log" 2>&1 &
+RMV_STATE_DIR="$STATE" RMV_PORT="$PORT" RMV_HERDR_BIN="$TMP/herdr" RMV_ORCA_BIN=/usr/bin/false RMV_PS_BIN=/usr/bin/false RMV_LIVE_TTL_MS=0 bun run "$SERVER" > "$TMP/server.log" 2>&1 &
 SPID=$!
 for _ in $(seq 50); do curl -s -o /dev/null "$BASE/history" && break; sleep 0.1; done
 names() { curl -s "$BASE/history" | python3 -c 'import json,sys; print(" ".join(sorted(e["name"] for e in json.load(sys.stdin))))'; }

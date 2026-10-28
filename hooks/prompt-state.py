@@ -10,13 +10,16 @@ stdout には何も出さない (hook 出力は user 画面に出る)。exit 0 �
 import importlib.util
 import json
 import os
+for _k, _v in list(os.environ.items()):  # 旧名 RMX_* も読む (v0.19.0 で RMV_ に改名)
+    if _k.startswith("RMX_"): os.environ.setdefault("RMV_" + _k[4:], _v)
+
 import re
 import sys
 from datetime import datetime
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-# RMX_STATE_DIR はテストが本物の rmv/state を触らないための上書き口 (perm-state.py と同じ)
-STATE = os.environ.get("RMX_STATE_DIR") or os.path.join(os.path.dirname(HERE), "state")
+# RMV_STATE_DIR はテストが本物の rmv/state を触らないための上書き口 (perm-state.py と同じ)
+STATE = os.environ.get("RMV_STATE_DIR") or os.path.join(os.path.dirname(HERE), "state")
 PROMPT = os.path.join(STATE, "prompt")
 PROMPT_MAX = 100000  # チャット欄の上限 (server.ts の /send) と同じ。4000 字だと長文の依頼が表示の途中で切れた (2026-10-08 user)
 AUTO_MARKERS = ("<task-notification>", "<system-reminder>", "[SYSTEM NOTIFICATION", "<agent-message")

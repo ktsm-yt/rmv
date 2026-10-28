@@ -2,7 +2,7 @@
 # launchctl を実行せず、旧 job の退役と新 job の再登録だけを確認する。
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-INSTALLER="${RMX_INSTALLER:-$ROOT/launchd/install.sh}"
+INSTALLER="${RMV_INSTALLER:-$ROOT/launchd/install.sh}"
 TMP="$(mktemp -d)"
 TEST_HOME="$TMP/home"
 BIN="$TMP/bin"

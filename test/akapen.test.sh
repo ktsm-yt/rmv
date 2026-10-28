@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # 赤ペン送信の確認: hook が terminal を記録するか / server の POST /send の許可・拒否。
-# 本物の rmv/state と orca は触らない (RMX_STATE_DIR と RMX_ORCA_BIN を一時領域へ向ける)。
+# 本物の rmv/state と orca は触らない (RMV_STATE_DIR と RMV_ORCA_BIN を一時領域へ向ける)。
 # 実行: bash rmv/test/akapen.test.sh   (bun と python3 が要る)
-#   RMX_HOOK=<path> で hook を差し替えられる (旧実装に当てる negative control 用)
-#   RMX_SERVER=<path> で server を差し替えられる (同上)
+#   RMV_HOOK=<path> で hook を差し替えられる (旧実装に当てる negative control 用)
+#   RMV_SERVER=<path> で server を差し替えられる (同上)
 set -u
 A="$(cd "$(dirname "$0")/.." && pwd)"
-HOOK="${RMX_HOOK:-$A/hooks/stop-to-fragment.py}"
-SERVER="${RMX_SERVER:-$A/server.ts}"
-PERMHOOK="${RMX_PERM_HOOK:-$A/hooks/perm-state.py}"
+HOOK="${RMV_HOOK:-$A/hooks/stop-to-fragment.py}"
+SERVER="${RMV_SERVER:-$A/server.ts}"
+PERMHOOK="${RMV_PERM_HOOK:-$A/hooks/perm-state.py}"
 # hook は claude -p (entrypoint sdk-*) の返事を捨てる。親が -p でも結果が変わらないよう対話側に固定する
 export CLAUDE_CODE_ENTRYPOINT=cli
 # hook は Orca 外 (handle なし) の返事を記録しない。Orca の外から実行しても通るよう既定は handle あり (なしを試す箇所は env -u)
@@ -17,7 +17,7 @@ export ORCA_TERMINAL_HANDLE=term_env
 unset HERDR_ENV HERDR_PANE_ID HERDR_SOCKET_PATH HERDR_SESSION
 TMP="$(mktemp -d)"
 # hook は Claude Code の sessions/ を読んで bg session の端末を取り直す。本物の ~/.claude/sessions を読まないよう空の場所に向ける
-export RMX_SESSIONS_DIR="$TMP/no-sessions"
+export RMV_SESSIONS_DIR="$TMP/no-sessions"
 STATE="$TMP/state"
 STUB="$TMP/orca-stub"
 PORT="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')"
@@ -32,13 +32,13 @@ field() { python3 -c 'import json,sys; v=json.load(open(sys.argv[1])).get(sys.ar
 
 # --- hook ---
 FIX="$A/test/fixture-lowload.jsonl"
-ORCA_TERMINAL_HANDLE=term_test RMX_STATE_DIR="$STATE" python3 "$HOOK" < "$FIX"
+ORCA_TERMINAL_HANDLE=term_test RMV_STATE_DIR="$STATE" python3 "$HOOK" < "$FIX"
 WITH="$(field "$STATE/latest.json" name)"
 check "hook: ORCA_TERMINAL_HANDLE あり → latest.json.terminal" "$(field "$STATE/latest.json" terminal)" term_test
 check "hook: history/<name>.json にも terminal" "$(field "$STATE/history/${WITH%.md}.json" terminal)" term_test
 # Orca 外 (ORCA_TERMINAL_HANDLE なし) の返事は記録しない: history / latest.* が増えも変わりもしない
 BEFORE_LS="$(ls "$STATE/history" | sort | tr '\n' ' ')"; BEFORE_LATEST="$(cat "$STATE/latest.json")"
-env -u ORCA_TERMINAL_HANDLE RMX_STATE_DIR="$STATE" python3 "$HOOK" < "$FIX"
+env -u ORCA_TERMINAL_HANDLE RMV_STATE_DIR="$STATE" python3 "$HOOK" < "$FIX"
 check "hook: ORCA_TERMINAL_HANDLE なし → history に新しいファイルを足さない" "$(ls "$STATE/history" | sort | tr '\n' ' ')" "$BEFORE_LS"
 check "hook: ORCA_TERMINAL_HANDLE なし → latest.json も変えない" "$(cat "$STATE/latest.json")" "$BEFORE_LATEST"
 # 以降の server 試験は「terminal なし entry」(過去に記録済みの履歴) を前提にするので、hook を通さず手で置く
@@ -50,31 +50,31 @@ check "hook: 手置きの terminal なし entry (server 試験の前提)" "$(fie
 # SubagentStop: 同じ script を subagent の返事にも使う。history にだけ agent 付きで書き、latest.* (本体の返事) は触らない
 SUBFIX="$A/test/fixture-subagent.jsonl"
 BEFORE="$(cat "$STATE/latest.html")"
-ORCA_TERMINAL_HANDLE=term_test RMX_STATE_DIR="$STATE" python3 "$HOOK" < "$SUBFIX"
+ORCA_TERMINAL_HANDLE=term_test RMV_STATE_DIR="$STATE" python3 "$HOOK" < "$SUBFIX"
 SUB="$(ls "$STATE/history" | grep '\.md$' | sort | tail -1)"
 check "hook(SubagentStop): history json に agent.type / id" "$(python3 -c 'import json,sys; a=json.load(open(sys.argv[1])).get("agent") or {}; print(a.get("type"), a.get("id"))' "$STATE/history/${SUB%.md}.json")" "claude-code-harness:worker a1"
 check "hook(SubagentStop): latest.html は更新しない (本体の返事のまま)" "$([ "$(cat "$STATE/latest.html")" = "$BEFORE" ] && echo same || echo changed)" same
 check "hook(SubagentStop): latest.json も本体の返事のまま" "$(field "$STATE/latest.json" name)" "$WITHOUT"
 N0="$(ls "$STATE/history" | wc -l | tr -d ' ')"
-sed 's/"agent_type": *"[^"]*"/"agent_type": ""/' "$SUBFIX" | ORCA_TERMINAL_HANDLE=term_test RMX_STATE_DIR="$STATE" python3 "$HOOK"
+sed 's/"agent_type": *"[^"]*"/"agent_type": ""/' "$SUBFIX" | ORCA_TERMINAL_HANDLE=term_test RMV_STATE_DIR="$STATE" python3 "$HOOK"
 check "hook(SubagentStop): agent_type 空 (Claude Code 内部の裏作業) は history に書かない" "$(ls "$STATE/history" | wc -l | tr -d ' ')" "$N0"
 python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); d["cwd"]="/Users/i/Dev/harness-rmx/.harness-worktrees/5ca9f4fc"; print(json.dumps(d))' "$SUBFIX" > "$TMP/sub-wt.json"
-RMX_STATE_DIR="$TMP/sub-wt" python3 "$HOOK" < "$TMP/sub-wt.json"
+RMV_STATE_DIR="$TMP/sub-wt" python3 "$HOOK" < "$TMP/sub-wt.json"
 check "hook(SubagentStop): 一時 worktree の cwd は親 repo に寄せる" "$(field "$TMP/sub-wt/history/$(ls "$TMP/sub-wt/history" | grep '\.json$')" cwd)" "/Users/i/Dev/harness-rmx"
 python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); d["last_assistant_message"]="x"*5000; print(json.dumps(d))' "$SUBFIX" > "$TMP/sub-long.json"
-RMX_STATE_DIR="$TMP/sub-long" python3 "$HOOK" < "$TMP/sub-long.json"
+RMV_STATE_DIR="$TMP/sub-long" python3 "$HOOK" < "$TMP/sub-long.json"
 check "hook(SubagentStop): 4000 字超は先頭 4000 字 + (以下略)" "$(python3 -c 'import sys,glob; t=open(glob.glob(sys.argv[1]+"/history/*.md")[0]).read(); print(t.startswith("x"*4000) and not t.startswith("x"*4001), t.endswith("(以下略)"))' "$TMP/sub-long")" "True True"
 # 履歴は 200 件残す (プロジェクト列から静かな repo が落ちないため、hooks/stop-to-fragment.py の KEEP)。古い 205 件を置いて 1 回書く
 KS="$TMP/keep"
 mkdir -p "$KS/history"
 for i in $(seq 0 204); do n="$(printf '19990101T000000%03d-dummy' "$i")"; : > "$KS/history/$n.md"; echo '{}' > "$KS/history/$n.json"; done
-RMX_STATE_DIR="$KS" python3 "$HOOK" < "$FIX"
+RMV_STATE_DIR="$KS" python3 "$HOOK" < "$FIX"
 check "hook: 履歴は 200 件まで残す" "$(ls "$KS/history" | grep -c '\.md$')" 200
 check "hook: 残るのは新しい側 (最古の dummy は消える)" "$([ -e "$KS/history/19990101T000000000-dummy.md" ] && echo kept || echo gone)" gone
 check "hook: 今回の entry は残る" "$([ -e "$KS/history/$(field "$KS/latest.json" name)" ] && echo kept || echo gone)" kept
 # 対話 session だけ記録する (他の hook / script が起動した claude -p は CLAUDE_CODE_ENTRYPOINT=sdk-cli)
 # rec <ラベル> <env 引数...> → 新しい state に 1 回書き、history の .md 件数を返す
-rec() { local d="$TMP/ep-$1"; env "${@:2}" RMX_STATE_DIR="$d" python3 "$HOOK" < "$FIX"; ls "$d/history" 2>/dev/null | grep -c '\.md$'; }
+rec() { local d="$TMP/ep-$1"; env "${@:2}" RMV_STATE_DIR="$d" python3 "$HOOK" < "$FIX"; ls "$d/history" 2>/dev/null | grep -c '\.md$'; }
 check "hook: entrypoint=cli (対話) → 記録" "$(rec cli CLAUDE_CODE_ENTRYPOINT=cli)" 1
 check "hook: entrypoint=sdk-cli (claude -p) → 何も書かない" "$(rec sdk CLAUDE_CODE_ENTRYPOINT=sdk-cli)" 0
 check "hook: entrypoint=sdk-cli → latest.json も書かない" "$([ -e "$TMP/ep-sdk/latest.json" ] && echo written || echo none)" none
@@ -85,7 +85,7 @@ check "hook: entrypoint が未知の値 (IDE 等) → 記録" "$(rec other CLAUD
 mkdir -p "$TMP/bin" && ln -s /bin/sh "$TMP/bin/claude"
 check "hook: 偽 claude が起動できる (起動できないと捨てる側の検査が空振りする)" "$("$TMP/bin/claude" -c 'echo up')" up
 # under <ラベル> <entrypoint> <親 claude の argv...> → 親 claude の下で 1 回書き、history の .md 件数を返す
-under() { local d="$TMP/pa-$1"; CLAUDE_CODE_ENTRYPOINT="$2" H="$HOOK" F="$FIX" RMX_STATE_DIR="$d" "$TMP/bin/claude" -c 'python3 "$H" < "$F"; :' "${@:3}"; ls "$d/history" 2>/dev/null | grep -c '\.md$'; }
+under() { local d="$TMP/pa-$1"; CLAUDE_CODE_ENTRYPOINT="$2" H="$HOOK" F="$FIX" RMV_STATE_DIR="$d" "$TMP/bin/claude" -c 'python3 "$H" < "$F"; :' "${@:3}"; ls "$d/history" 2>/dev/null | grep -c '\.md$'; }
 check "hook: bg 対話 session (親 claude bg-spare) は sdk-cli を継承していても記録" "$(under bg sdk-cli bg-spare --bg-spare x.sock)" 1
 check "hook: 親が claude -p なら entrypoint=claude-vscode でも捨てる" "$(under vscode-p claude-vscode x -p)" 0
 check "hook: 親が --print --sdk-url (remote-control の子) なら捨てる" "$(under rc cli x --print --sdk-url ws://h)" 0
@@ -93,7 +93,7 @@ check "hook: 親が -p 無しの対話 claude なら記録" "$(under tui cli x -
 
 # --- perm-state hook: 許可待ちの間だけ state/perm/<key>.json ---
 # pev <state dir> <event> <tool> <tool_input json> <env 引数...> → hook を 1 回実行 (PEV_AGENT=<id> で agent_id を足す)
-pev() { local d="$1" ev="$2" tool="$3" ti="$4"; shift 4; printf '{"hook_event_name":"%s","session_id":"sess-1","cwd":"/x","tool_name":"%s","tool_input":%s%s}' "$ev" "$tool" "$ti" "${PEV_AGENT:+,\"agent_id\":\"$PEV_AGENT\"}" | env "$@" RMX_STATE_DIR="$d" python3 "$PERMHOOK"; }
+pev() { local d="$1" ev="$2" tool="$3" ti="$4"; shift 4; printf '{"hook_event_name":"%s","session_id":"sess-1","cwd":"/x","tool_name":"%s","tool_input":%s%s}' "$ev" "$tool" "$ti" "${PEV_AGENT:+,\"agent_id\":\"$PEV_AGENT\"}" | env "$@" RMV_STATE_DIR="$d" python3 "$PERMHOOK"; }
 PS1="$TMP/perm1"
 pev "$PS1" PermissionRequest Bash '{"command":"rm -rf\n  /tmp/x"}' ORCA_TERMINAL_HANDLE=term_x CLAUDE_CODE_ENTRYPOINT=cli
 check "perm hook: PermissionRequest → perm/term_x.json に tool / detail (改行は空白に畳む)" "$(field "$PS1/perm/term_x.json" tool) $(field "$PS1/perm/term_x.json" detail)" "Bash rm -rf /tmp/x"
@@ -117,24 +117,24 @@ pev "$TMP/perm3" PermissionRequest Edit '{"file_path":"/x/a.ts"}' -u ORCA_TERMIN
 check "perm hook: 端末 handle 無しは session_id が key、detail は file_path、terminal は null" "$(field "$TMP/perm3/perm/sess-1.json" detail) $(field "$TMP/perm3/perm/sess-1.json" terminal)" "/x/a.ts null"
 # 親が claude -p の下 (偽 claude): entrypoint が cli でも書かない
 printf '{"hook_event_name":"PermissionRequest","session_id":"s","tool_name":"Bash","tool_input":{"command":"ls"}}' > "$TMP/perm-in.json"
-CLAUDE_CODE_ENTRYPOINT=cli ORCA_TERMINAL_HANDLE=term_x H="$PERMHOOK" F="$TMP/perm-in.json" RMX_STATE_DIR="$TMP/perm4" "$TMP/bin/claude" -c 'python3 "$H" < "$F"; :' x -p
+CLAUDE_CODE_ENTRYPOINT=cli ORCA_TERMINAL_HANDLE=term_x H="$PERMHOOK" F="$TMP/perm-in.json" RMV_STATE_DIR="$TMP/perm4" "$TMP/bin/claude" -c 'python3 "$H" < "$F"; :' x -p
 check "perm hook: 親が claude -p なら書かない" "$([ -e "$TMP/perm4/perm/term_x.json" ] && echo written || echo none)" none
-CLAUDE_CODE_ENTRYPOINT=sdk-cli ORCA_TERMINAL_HANDLE=term_x H="$PERMHOOK" F="$TMP/perm-in.json" RMX_STATE_DIR="$TMP/perm5" "$TMP/bin/claude" -c 'python3 "$H" < "$F"; :' x --permission-mode auto
+CLAUDE_CODE_ENTRYPOINT=sdk-cli ORCA_TERMINAL_HANDLE=term_x H="$PERMHOOK" F="$TMP/perm-in.json" RMV_STATE_DIR="$TMP/perm5" "$TMP/bin/claude" -c 'python3 "$H" < "$F"; :' x --permission-mode auto
 check "perm hook: 親が -p 無しの対話 claude なら書く (判定は stop-to-fragment の is_interactive)" "$([ -e "$TMP/perm5/perm/term_x.json" ] && echo written || echo none)" written
 
 # --- prompt-state hook: 送った依頼文 → state/prompt/<key>.json → 返事の meta.prompt ---
-PROMPTHOOK="${RMX_PROMPT_HOOK:-$A/hooks/prompt-state.py}"
+PROMPTHOOK="${RMV_PROMPT_HOOK:-$A/hooks/prompt-state.py}"
 # upr <state dir> <prompt> <env 引数...> → UserPromptSubmit を 1 回実行 (prompt は python で JSON 化)
 # session_id は fixture の返事と同じにする (別 session_id の依頼は「次のセッションの依頼」として前の返事に付かない)
-upr() { local d="$1" p="$2"; shift 2; python3 -c 'import json,sys,os; print(json.dumps({"hook_event_name":"UserPromptSubmit","session_id":os.environ.get("UPR_SID","abcd1234-ef56-7890-aaaa-bbbbccccdddd"),"prompt":sys.argv[1],"cwd":os.getcwd()}))' "$p" | env "$@" RMX_STATE_DIR="$d" python3 "$PROMPTHOOK"; }
+upr() { local d="$1" p="$2"; shift 2; python3 -c 'import json,sys,os; print(json.dumps({"hook_event_name":"UserPromptSubmit","session_id":os.environ.get("UPR_SID","abcd1234-ef56-7890-aaaa-bbbbccccdddd"),"prompt":sys.argv[1],"cwd":os.getcwd()}))' "$p" | env "$@" RMV_STATE_DIR="$d" python3 "$PROMPTHOOK"; }
 pfile() { [ -e "$1" ] && echo written || echo none; }
 upr "$TMP/pr1" $'長い依頼\n二行目' ORCA_TERMINAL_HANDLE=term_p CLAUDE_CODE_ENTRYPOINT=cli
 check "prompt hook: 通常の prompt → prompt/term_p.json に本文 (改行は保つ)" "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["prompt"].replace("\n","|"))' "$TMP/pr1/prompt/term_p.json")" "長い依頼|二行目"
-ORCA_TERMINAL_HANDLE=term_p CLAUDE_CODE_ENTRYPOINT=cli RMX_STATE_DIR="$TMP/pr1" python3 "$HOOK" < "$FIX"
+ORCA_TERMINAL_HANDLE=term_p CLAUDE_CODE_ENTRYPOINT=cli RMV_STATE_DIR="$TMP/pr1" python3 "$HOOK" < "$FIX"
 PRN="$(field "$TMP/pr1/latest.json" name)"
 check "prompt hook: 返事の meta.prompt に依頼文が載る" "$(field "$TMP/pr1/history/${PRN%.md}.json" prompt | tr '\n' '|')" "長い依頼|二行目|"
 check "prompt hook: 返事に載せたら prompt ファイルは消える (次の自動 turn に古い依頼を付けない)" "$(pfile "$TMP/pr1/prompt/term_p.json")" none
-ORCA_TERMINAL_HANDLE=term_p CLAUDE_CODE_ENTRYPOINT=cli RMX_STATE_DIR="$TMP/pr1" python3 "$HOOK" < "$FIX"
+ORCA_TERMINAL_HANDLE=term_p CLAUDE_CODE_ENTRYPOINT=cli RMV_STATE_DIR="$TMP/pr1" python3 "$HOOK" < "$FIX"
 PRN2="$(field "$TMP/pr1/latest.json" name)"
 check "prompt hook: 依頼の無い返事 (自動通知が起こした turn) は meta.prompt なし" "$(field "$TMP/pr1/history/${PRN2%.md}.json" prompt)" null
 upr "$TMP/pr2" 'ok <task-notification><x/></task-notification>' ORCA_TERMINAL_HANDLE=term_p CLAUDE_CODE_ENTRYPOINT=cli
@@ -153,9 +153,9 @@ upr "$TMP/pr9" "$(python3 -c 'print("a" * 100001)')" ORCA_TERMINAL_HANDLE=term_p
 check "prompt hook: 依頼文は 10 万字まで残す (4000 字で切れていた、2026-10-08)" "$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["prompt"]))' "$TMP/pr9/prompt/term_p.json")" 100000
 
 # --- session-wait hook (SessionStart): 起動直後の依頼なし session を state/prompt/<key>.json に「待機中」で置く ---
-WAITHOOK="${RMX_WAIT_HOOK:-$A/hooks/session-wait.py}"
+WAITHOOK="${RMV_WAIT_HOOK:-$A/hooks/session-wait.py}"
 # swt <state dir> <source> <env 引数...> → SessionStart を 1 回実行 (stdout は何も出さないことも確かめる)
-swt() { local d="$1" s="$2"; shift 2; printf '{"hook_event_name":"SessionStart","session_id":"sess-1","source":"%s","cwd":"%s"}' "$s" "$PWD" | env "$@" RMX_STATE_DIR="$d" python3 "$WAITHOOK"; }
+swt() { local d="$1" s="$2"; shift 2; printf '{"hook_event_name":"SessionStart","session_id":"sess-1","source":"%s","cwd":"%s"}' "$s" "$PWD" | env "$@" RMV_STATE_DIR="$d" python3 "$WAITHOOK"; }
 swt "$TMP/sw1" startup ORCA_TERMINAL_HANDLE=term_w CLAUDE_CODE_ENTRYPOINT=cli > "$TMP/sw1.out"
 check "session-wait hook: startup → prompt/term_w.json に待機中 (prompt 空・cwd・terminal 付き)" "$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d["waiting"], repr(d["prompt"]), d["cwd"] == sys.argv[2], d["terminal"])' "$TMP/sw1/prompt/term_w.json" "$PWD")" "True '' True term_w"
 check "session-wait hook: stdout は空" "$(wc -c < "$TMP/sw1.out" | tr -d ' ')" 0
@@ -172,7 +172,7 @@ check "session-wait hook: herdr 配下の key は prompt-state と同じ <handle
 upr "$TMP/sw1" '最初の依頼' ORCA_TERMINAL_HANDLE=term_w CLAUDE_CODE_ENTRYPOINT=cli
 check "session-wait hook: 依頼を送ると同じファイルが依頼で上書きされ、待機中が消える" "$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d.get("waiting"), d["prompt"])' "$TMP/sw1/prompt/term_w.json")" "None 最初の依頼"
 swt "$TMP/sw6" startup ORCA_TERMINAL_HANDLE=term_w CLAUDE_CODE_ENTRYPOINT=cli
-ORCA_TERMINAL_HANDLE=term_w CLAUDE_CODE_ENTRYPOINT=cli RMX_STATE_DIR="$TMP/sw6" python3 "$HOOK" < "$FIX"
+ORCA_TERMINAL_HANDLE=term_w CLAUDE_CODE_ENTRYPOINT=cli RMV_STATE_DIR="$TMP/sw6" python3 "$HOOK" < "$FIX"
 SWN="$(field "$TMP/sw6/latest.json" name)"
 check "session-wait hook: 依頼無しで返事が来ると待機中のファイルは消え、meta.prompt は載らない" "$(pfile "$TMP/sw6/prompt/term_w.json") $(field "$TMP/sw6/history/${SWN%.md}.json" prompt)" "none null"
 mkdir -p "$TMP/sw7/prompt"
@@ -196,7 +196,7 @@ PANE='{"pid":4242,"sessionId":"bb948076","kind":"interactive","parkedJobId":"abc
 sess() { local d="$TMP/sess-$1" i=0; shift; mkdir -p "$d"; for j in "$@"; do i=$((i + 1)); printf '%s' "$j" > "$d/$i.json"; done; echo "$d"; }
 # bgrun <ラベル> <sessions dir> → 依頼 → 許可待ち → 返事 を 1 巡させ、prompt / perm の key と latest / history の terminal、返事に載った依頼文を返す
 bgrun() {
-  local d="$TMP/bg-$1" e=(ORCA_TERMINAL_HANDLE=term_daemon RMX_SESSIONS_DIR="$2" RMX_PS_BIN="$BGPS" RMX_STATE_DIR="$TMP/bg-$1") pk n
+  local d="$TMP/bg-$1" e=(ORCA_TERMINAL_HANDLE=term_daemon RMV_SESSIONS_DIR="$2" RMV_PS_BIN="$BGPS" RMV_STATE_DIR="$TMP/bg-$1") pk n
   printf '{"hook_event_name":"UserPromptSubmit","session_id":"%s","prompt":"bg の依頼"}' "$SID" | env "${e[@]}" python3 "$PROMPTHOOK"
   printf '{"hook_event_name":"PermissionRequest","session_id":"%s","tool_name":"Bash","tool_input":{"command":"ls"}}' "$SID" | env "${e[@]}" python3 "$PERMHOOK"
   pk="$(ls "$d/prompt" 2>/dev/null)"
@@ -284,7 +284,7 @@ if [ "\$2" = read ]; then n=\$(grep -c '^send-keys .*ctrl+v' "$TMP/hcalls"); [ -
 echo '{"result":{"type":"ok"}}'
 EOF
 chmod +x "$HERDRSTUB"
-GEMINI_API_KEY= RMX_TTS_KEYCHAIN_SERVICE="rmv-test-nonexistent-$$" RMX_PROJECTS_DIR="$TMP/projects" RMX_CC_SETTINGS="$TMP/cc-settings.json" RMX_GHOSTEX_STATUS_DIR="$TMP/ghostex" RMX_MONO_FONT="$TMP/mono.ttf" RMX_STATE_DIR="$STATE" RMX_PORT="$PORT" RMX_ORCA_BIN="$STUB" RMX_HERDR_BIN="$HERDRSTUB" RMX_OSASCRIPT_BIN="$OSASTUB" RMX_PBPASTE_BIN="$TMP/pbpaste-stub" RMX_PBCOPY_BIN="$TMP/pbcopy-stub" RMX_PS_BIN="$PSSTUB" RMX_OPEN_BIN="$TMP/open-stub" RMX_LIVE_TTL_MS=0 RMX_WT_TTL_MS=0 RMX_ORIGINS="https://mac.tailtest.ts.net" bun run "$SERVER" > "$TMP/server.log" 2>&1 &
+GEMINI_API_KEY= RMV_TTS_KEYCHAIN_SERVICE="rmv-test-nonexistent-$$" RMV_PROJECTS_DIR="$TMP/projects" RMV_CC_SETTINGS="$TMP/cc-settings.json" RMV_GHOSTEX_STATUS_DIR="$TMP/ghostex" RMV_MONO_FONT="$TMP/mono.ttf" RMV_STATE_DIR="$STATE" RMV_PORT="$PORT" RMV_ORCA_BIN="$STUB" RMV_HERDR_BIN="$HERDRSTUB" RMV_OSASCRIPT_BIN="$OSASTUB" RMV_PBPASTE_BIN="$TMP/pbpaste-stub" RMV_PBCOPY_BIN="$TMP/pbcopy-stub" RMV_PS_BIN="$PSSTUB" RMV_OPEN_BIN="$TMP/open-stub" RMV_LIVE_TTL_MS=0 RMV_WT_TTL_MS=0 RMV_ORIGINS="https://mac.tailtest.ts.net" bun run "$SERVER" > "$TMP/server.log" 2>&1 &
 SRV=$!
 trap 'kill $SRV 2>/dev/null' EXIT
 for _ in $(seq 50); do curl -s -o /dev/null "$BASE/history" && break; sleep 0.1; done
@@ -306,9 +306,9 @@ check "/history: subagent entry は agent.type、本体は null" "$(agent "$SUB"
 sess() { curl -s "$BASE/history" | python3 -c "import json,sys; print([e.get('session') for e in json.load(sys.stdin) if e['name']==sys.argv[1]][0])" "$1"; }
 check "/history: session = terminal handle (terminal あり)" "$(sess "$WITH")" term_test
 check "/history: session = session_id (terminal なし)" "$(sess "$WITHOUT")" abcd1234-ef56-7890-aaaa-bbbbccccdddd
-# live = terminal handle が今の orca terminal list にある (プロジェクト列で終了した repo を隠す)。RMX_LIVE_TTL_MS=0 でキャッシュを切っている
-# lives → "<WITH の live> <WITHOUT の live> <x-rmx-live>"
-lives() { curl -s -D "$TMP/hhead" -o "$TMP/hist" "$BASE/history"; python3 -c "import json,sys; d={e['name']:e.get('live') for e in json.load(open(sys.argv[1]))}; print(d['$WITH'], d['$WITHOUT'], end=' ')" "$TMP/hist"; grep -i '^x-rmx-live:' "$TMP/hhead" | cut -d: -f2 | tr -d ' \r'; echo; }
+# live = terminal handle が今の orca terminal list にある (プロジェクト列で終了した repo を隠す)。RMV_LIVE_TTL_MS=0 でキャッシュを切っている
+# lives → "<WITH の live> <WITHOUT の live> <x-rmv-live>"
+lives() { curl -s -D "$TMP/hhead" -o "$TMP/hist" "$BASE/history"; python3 -c "import json,sys; d={e['name']:e.get('live') for e in json.load(open(sys.argv[1]))}; print(d['$WITH'], d['$WITHOUT'], end=' ')" "$TMP/hist"; grep -i '^x-rmv-live:' "$TMP/hhead" | cut -d: -f2 | tr -d ' \r'; echo; }
 check "/history: list に handle あり → live true、terminal なし → false、header ok" "$(lives)" "True False ok"
 list "$(term term_other "$CWD" 1)"
 check "/history: handle が list に無い (端末を閉じた) → live false" "$(lives)" "False False ok"
@@ -370,19 +370,19 @@ check "/sessions: 端末 term_test は 1 行、最新の本体の返事 (subagen
 check "/sessions: 稼働中でない entry (terminal なし) は出ない" "$(srow abcd1234-ef56-7890-aaaa-bbbbccccdddd)" 0
 check "/sessions: 依頼文 (prompt) は本文のどこにも出ない、root / sub / perm / bg も無い (一覧は空でない)" "$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$TMP/sess.json" 2>/dev/null) $(grep -c '秘密の依頼S\|"prompt"\|"root"\|"sub"\|"perm"\|"bg"' "$TMP/sess.json")" "1 0"
 check "/sessions: 対照 /history には同じ依頼文が出ている" "$(curl -s "$BASE/history" | grep -c '秘密の依頼S')" 1
-check "/sessions: x-rmx-live は /history と同じ (ok)、ACAO は付けない" "$(grep -i '^x-rmx-live:' "$TMP/shead" | cut -d: -f2 | tr -d ' \r') $(grep -ic '^access-control-allow-origin' "$TMP/shead")" "ok 0"
+check "/sessions: x-rmv-live は /history と同じ (ok)、ACAO は付けない" "$(grep -i '^x-rmv-live:' "$TMP/shead" | cut -d: -f2 | tr -d ' \r') $(grep -ic '^access-control-allow-origin' "$TMP/shead")" "ok 0"
 check "/sessions: /history に label は足さない (既存の口は変えない)" "$(curl -s "$BASE/history" | python3 -c 'import json,sys; print(sum("label" in e for e in json.load(sys.stdin)))')" 0
 check "/sessions: 127.0.0.1 以外の Host (DNS rebinding) → 403" "$(curl -s -o /dev/null -w '%{http_code}' -H "Host: rebind:$PORT" "$BASE/sessions")" 403
-check "/sessions: RMX_ORIGINS と違う ts.net の host → 403" "$(curl -s -o /dev/null -w '%{http_code}' -H "Host: other.tailtest.ts.net" "$BASE/sessions")" 403
-# /ext/*: RMX_EXT_ORIGINS 未設定 (この server) なら、どの origin からも 403。RMX_ORIGINS / 自分の origin でも開かない (詳しくは test/ext-deliver.test.sh)
+check "/sessions: RMV_ORIGINS と違う ts.net の host → 403" "$(curl -s -o /dev/null -w '%{http_code}' -H "Host: other.tailtest.ts.net" "$BASE/sessions")" 403
+# /ext/*: RMV_EXT_ORIGINS 未設定 (この server) なら、どの origin からも 403。RMV_ORIGINS / 自分の origin でも開かない (詳しくは test/ext-deliver.test.sh)
 extd() { curl -s -o /dev/null -w '%{http_code}' -X POST "$@" -H 'content-type: application/json' --data '{"sid":"abcd1234-ef56-7890-aaaa-bbbbccccdddd","ticket":"20261023-120000-123456"}' "$BASE/ext/deliver"; }
 : > "$TMP/calls"; : > "$TMP/hcalls"
-check "/ext/deliver: RMX_EXT_ORIGINS 未設定 → 外の origin・自分の origin・RMX_ORIGINS・Origin 無しのどれも 403" "$(extd -H 'Origin: chrome-extension://abcdefghijklmnopabcdefghijklmnop') $(extd -H "Origin: $BASE") $(extd -H 'Origin: https://mac.tailtest.ts.net') $(extd)" "403 403 403 403"
+check "/ext/deliver: RMV_EXT_ORIGINS 未設定 → 外の origin・自分の origin・RMV_ORIGINS・Origin 無しのどれも 403" "$(extd -H 'Origin: chrome-extension://abcdefghijklmnopabcdefghijklmnop') $(extd -H "Origin: $BASE") $(extd -H 'Origin: https://mac.tailtest.ts.net') $(extd)" "403 403 403 403"
 check "/ext/deliver: 403 の時は端末に何も打たない" "$(cat "$TMP/calls" "$TMP/hcalls" | wc -l | tr -d ' ')" 0
 rm -f "$TMP/list.json"
 printf '  101 claude --resume\n' > "$TMP/ps-list"; printf 'claude --resume ORCA_TERMINAL_HANDLE=term_test\n' > "$TMP/ps-env-101"
 sessions
-check "/sessions: Orca の list が取れない時は x-rmx-live unknown (呼ぶ側は live を信じない)" "$(grep -i '^x-rmx-live:' "$TMP/shead" | cut -d: -f2 | tr -d ' \r')" unknown
+check "/sessions: Orca の list が取れない時は x-rmv-live unknown (呼ぶ側は live を信じない)" "$(grep -i '^x-rmv-live:' "$TMP/shead" | cut -d: -f2 | tr -d ' \r')" unknown
 rm -f "$TMP/ps-list"
 list "$(term term_test "$CWD" 1)"
 cp "$TMP/with-meta.bak" "$STATE/history/${WITH%.md}.json"
@@ -507,9 +507,9 @@ case "$PP" in "$STATE"/paste/*.png) ok "paste: state/paste/ 配下の png パス
 check "paste: 保存した中身が貼った画像と同じ" "$(cmp -s "$PP" "$TMP/p.png" && echo same || echo diff)" same
 check "paste: 別 Origin → 403" "$(pst "https://evil.example" image/png "$TMP/p.png")" 403
 check "paste: Origin 無し → 403" "$(pst - image/png "$TMP/p.png")" 403
-check "paste: RMX_ORIGINS の origin (中継越し) → 200" "$(pst "https://mac.tailtest.ts.net" image/png "$TMP/p.png")" 200
-check "host: RMX_ORIGINS の host (中継が Host を残す) → 200" "$(curl -s -o /dev/null -w '%{http_code}' -H "Host: mac.tailtest.ts.net" "$BASE/history")" 200
-check "host: RMX_ORIGINS と違う ts.net の host → 403" "$(curl -s -o /dev/null -w '%{http_code}' -H "Host: other.tailtest.ts.net" "$BASE/history")" 403
+check "paste: RMV_ORIGINS の origin (中継越し) → 200" "$(pst "https://mac.tailtest.ts.net" image/png "$TMP/p.png")" 200
+check "host: RMV_ORIGINS の host (中継が Host を残す) → 200" "$(curl -s -o /dev/null -w '%{http_code}' -H "Host: mac.tailtest.ts.net" "$BASE/history")" 200
+check "host: RMV_ORIGINS と違う ts.net の host → 403" "$(curl -s -o /dev/null -w '%{http_code}' -H "Host: other.tailtest.ts.net" "$BASE/history")" 403
 check "paste: 画像以外 (text/plain) → 415" "$(pst "$GOOD" text/plain "$TMP/p.png")" 415
 : > "$TMP/empty.png"
 check "paste: 空 → 413" "$(pst "$GOOD" image/png "$TMP/empty.png")" 413
@@ -527,7 +527,7 @@ mkpng 300 20 "$TMP/small.png"; pst "$GOOD" image/png "$TMP/small.png" > /dev/nul
 check "paste: 長い辺 2000px 以下は中身を変えない" "$(cmp -s "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["path"])' "$TMP/body")" "$TMP/small.png" && echo same || echo diff)" same
 
 # --- /open: 返事中のパスを既定アプリ (open) で開く / ⌥ で Finder に表示 (open -R) ---
-# 実物の open を呼ぶとテストでアプリが立ち上がるので、引数を 1 行ずつ追記する stub に向ける (RMX_OPEN_BIN、server 起動行で指定)
+# 実物の open を呼ぶとテストでアプリが立ち上がるので、引数を 1 行ずつ追記する stub に向ける (RMV_OPEN_BIN、server 起動行で指定)
 OPENLOG="$TMP/open.log"
 OPENSTUB="$TMP/open-stub"
 printf '#!/usr/bin/env bash\necho "$*" >> "%s"\n' "$OPENLOG" > "$OPENSTUB"
@@ -711,7 +711,7 @@ HTTPServer(("127.0.0.1", int(sys.argv[1])), Handler).serve_forever()
 PY
 VV=$!
 VP="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')"
-RMX_TTS_PROVIDER=voicevox RMX_VOICEVOX_URL="http://127.0.0.1:$VVPORT" RMX_PROJECTS_DIR="$TMP/projects" RMX_CC_SETTINGS="$TMP/cc-settings.json" RMX_MONO_FONT="$TMP/mono.ttf" RMX_STATE_DIR="$STATE" RMX_PORT="$VP" RMX_ORCA_BIN="$STUB" RMX_HERDR_BIN="$HERDRSTUB" RMX_OSASCRIPT_BIN="$OSASTUB" RMX_PBPASTE_BIN="$TMP/pbpaste-stub" RMX_PBCOPY_BIN="$TMP/pbcopy-stub" RMX_PS_BIN="$PSSTUB" RMX_OPEN_BIN="$TMP/open-stub" RMX_LIVE_TTL_MS=0 RMX_WT_TTL_MS=0 bun run "$SERVER" > "$TMP/voicevox-server.log" 2>&1 &
+RMV_TTS_PROVIDER=voicevox RMV_VOICEVOX_URL="http://127.0.0.1:$VVPORT" RMV_PROJECTS_DIR="$TMP/projects" RMV_CC_SETTINGS="$TMP/cc-settings.json" RMV_MONO_FONT="$TMP/mono.ttf" RMV_STATE_DIR="$STATE" RMV_PORT="$VP" RMV_ORCA_BIN="$STUB" RMV_HERDR_BIN="$HERDRSTUB" RMV_OSASCRIPT_BIN="$OSASTUB" RMV_PBPASTE_BIN="$TMP/pbpaste-stub" RMV_PBCOPY_BIN="$TMP/pbcopy-stub" RMV_PS_BIN="$PSSTUB" RMV_OPEN_BIN="$TMP/open-stub" RMV_LIVE_TTL_MS=0 RMV_WT_TTL_MS=0 bun run "$SERVER" > "$TMP/voicevox-server.log" 2>&1 &
 VSRV=$!
 for _ in $(seq 50); do curl -s -o /dev/null "http://127.0.0.1:$VP/history" && break; sleep 0.1; done
 VBASE="http://127.0.0.1:$VP"
@@ -732,7 +732,7 @@ check "speak: VOICEVOX 接続不能 → 502" "$(spkv)" 502
 kill "$VSRV" 2>/dev/null
 
 UP="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')"
-RMX_TTS_PROVIDER=unknown RMX_PROJECTS_DIR="$TMP/projects" RMX_CC_SETTINGS="$TMP/cc-settings.json" RMX_MONO_FONT="$TMP/mono.ttf" RMX_STATE_DIR="$STATE" RMX_PORT="$UP" RMX_ORCA_BIN="$STUB" RMX_HERDR_BIN="$HERDRSTUB" RMX_OSASCRIPT_BIN="$OSASTUB" RMX_PBPASTE_BIN="$TMP/pbpaste-stub" RMX_PBCOPY_BIN="$TMP/pbcopy-stub" RMX_PS_BIN="$PSSTUB" RMX_OPEN_BIN="$TMP/open-stub" RMX_LIVE_TTL_MS=0 RMX_WT_TTL_MS=0 bun run "$SERVER" > "$TMP/unknown-tts-server.log" 2>&1 &
+RMV_TTS_PROVIDER=unknown RMV_PROJECTS_DIR="$TMP/projects" RMV_CC_SETTINGS="$TMP/cc-settings.json" RMV_MONO_FONT="$TMP/mono.ttf" RMV_STATE_DIR="$STATE" RMV_PORT="$UP" RMV_ORCA_BIN="$STUB" RMV_HERDR_BIN="$HERDRSTUB" RMV_OSASCRIPT_BIN="$OSASTUB" RMV_PBPASTE_BIN="$TMP/pbpaste-stub" RMV_PBCOPY_BIN="$TMP/pbcopy-stub" RMV_PS_BIN="$PSSTUB" RMV_OPEN_BIN="$TMP/open-stub" RMV_LIVE_TTL_MS=0 RMV_WT_TTL_MS=0 bun run "$SERVER" > "$TMP/unknown-tts-server.log" 2>&1 &
 USRV=$!
 for _ in $(seq 50); do curl -s -o /dev/null "http://127.0.0.1:$UP/history" && break; sleep 0.1; done
 UBASE="http://127.0.0.1:$UP"
@@ -767,20 +767,20 @@ rm -f "$STATE/perm/term_test.json"
 
 # --- herdr 配下: 記録した pane に herdr CLI で直接届く (orca の端末は herdr 全体で共有され、送ると focus 中の別 pane に入る) ---
 HDIR="$TMP/herdr-state"
-HERDR_ENV=1 HERDR_PANE_ID=w3:p2 ORCA_TERMINAL_HANDLE=term_hd RMX_STATE_DIR="$HDIR" python3 "$HOOK" < "$FIX"
+HERDR_ENV=1 HERDR_PANE_ID=w3:p2 ORCA_TERMINAL_HANDLE=term_hd RMV_STATE_DIR="$HDIR" python3 "$HOOK" < "$FIX"
 HN="$(field "$HDIR/latest.json" name)"
 check "herdr hook: HERDR_ENV=1 + HERDR_PANE_ID → meta に herdr_pane (terminal も残る)" "$(field "$HDIR/latest.json" herdr_pane) $(field "$HDIR/latest.json" terminal)" "w3:p2 term_hd"
-HERDR_PANE_ID=w3:p2 ORCA_TERMINAL_HANDLE=term_hd RMX_STATE_DIR="$TMP/herdr-noenv" python3 "$HOOK" < "$FIX"
+HERDR_PANE_ID=w3:p2 ORCA_TERMINAL_HANDLE=term_hd RMV_STATE_DIR="$TMP/herdr-noenv" python3 "$HOOK" < "$FIX"
 check "herdr hook: HERDR_ENV が無ければ herdr_pane は null (従来どおり)" "$(field "$TMP/herdr-noenv/latest.json" herdr_pane)" null
-printf '{"hook_event_name":"PermissionRequest","session_id":"sess-1","tool_name":"Bash","tool_input":{"command":"ls"}}' | HERDR_ENV=1 HERDR_PANE_ID=w3:p2 ORCA_TERMINAL_HANDLE=term_hd CLAUDE_CODE_ENTRYPOINT=cli RMX_STATE_DIR="$HDIR" python3 "$PERMHOOK"
+printf '{"hook_event_name":"PermissionRequest","session_id":"sess-1","tool_name":"Bash","tool_input":{"command":"ls"}}' | HERDR_ENV=1 HERDR_PANE_ID=w3:p2 ORCA_TERMINAL_HANDLE=term_hd CLAUDE_CODE_ENTRYPOINT=cli RMV_STATE_DIR="$HDIR" python3 "$PERMHOOK"
 check "herdr hook(perm): perm にも herdr_pane" "$(field "$HDIR/perm/term_hd__w3-p2.json" herdr_pane)" w3:p2
 # bg session: pane も映している対話プロセスの env から取る (daemon の env の pane は別の Claude のもの)
 HSESS="$TMP/sess-herdr"; mkdir -p "$HSESS"; printf '%s' "$BG" > "$HSESS/1.json"; printf '%s' "$PANE" > "$HSESS/2.json"  # (sess() はこの時点で別物に差し替わっている)
 printf 'claude --resume HERDR_ENV=1 HERDR_PANE_ID=w9:p9 ORCA_TERMINAL_HANDLE=term_pane HOME=/x\n' > "$TMP/bgps-4242"
-HERDR_ENV=1 HERDR_PANE_ID=w1:daemon ORCA_TERMINAL_HANDLE=term_daemon RMX_SESSIONS_DIR="$HSESS" RMX_PS_BIN="$BGPS" RMX_STATE_DIR="$TMP/bg-herdr" python3 "$HOOK" < "$FIX"
+HERDR_ENV=1 HERDR_PANE_ID=w1:daemon ORCA_TERMINAL_HANDLE=term_daemon RMV_SESSIONS_DIR="$HSESS" RMV_PS_BIN="$BGPS" RMV_STATE_DIR="$TMP/bg-herdr" python3 "$HOOK" < "$FIX"
 check "herdr hook(bg): 映している対話プロセスの pane (daemon の w1:daemon ではない)" "$(field "$TMP/bg-herdr/latest.json" herdr_pane)" w9:p9
 printf 'claude --resume ORCA_TERMINAL_HANDLE=term_pane HOME=/x\n' > "$TMP/bgps-4242"
-HERDR_ENV=1 HERDR_PANE_ID=w1:daemon ORCA_TERMINAL_HANDLE=term_daemon RMX_SESSIONS_DIR="$HSESS" RMX_PS_BIN="$BGPS" RMX_STATE_DIR="$TMP/bg-herdr2" python3 "$HOOK" < "$FIX"
+HERDR_ENV=1 HERDR_PANE_ID=w1:daemon ORCA_TERMINAL_HANDLE=term_daemon RMV_SESSIONS_DIR="$HSESS" RMV_PS_BIN="$BGPS" RMV_STATE_DIR="$TMP/bg-herdr2" python3 "$HOOK" < "$FIX"
 check "herdr hook(bg): 対話プロセスが herdr 配下でなければ pane は null (daemon の pane を使わない)" "$(field "$TMP/bg-herdr2/latest.json" herdr_pane)" null
 
 # 以降は server の history / perm に herdr_pane 付きを置いて試す
@@ -861,7 +861,7 @@ rm -f "$STATE/prompt/term_pp__w5-p1.json" "$STATE/prompt/term_pp__w5-p2.json"
 PPA="29990101T000000001-ppa.md"; PPB="29990101T000000002-ppb.md"
 ppentry() { # <pane> <dst name>: hook が書いた返事を、名前を付け替えて server の history に置く
   local d="$TMP/pp-${2%.md}" n
-  pp "$1" RMX_STATE_DIR="$d" python3 "$HOOK" < "$FIX"
+  pp "$1" RMV_STATE_DIR="$d" python3 "$HOOK" < "$FIX"
   n="$(field "$d/latest.json" name)"
   cp "$d/history/$n" "$STATE/history/$2"
   python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); d["name"]=sys.argv[3]; json.dump(d,open(sys.argv[2],"w"),ensure_ascii=False)' "$d/history/${n%.md}.json" "$STATE/history/${2%.md}.json" "$2"
@@ -876,13 +876,13 @@ UPR_SID=sess-ppa upr "$STATE" '依頼A2' HERDR_ENV=1 HERDR_PANE_ID=w5:p1 ORCA_TE
 check "herdr asking: pane A の依頼は A の entry にだけ付き、B には付かない" "$(askof "$PPA") $(askof "$PPB")" "依頼A2 None"
 # 返事が届くと、その pane の依頼だけが meta.prompt に載り消える (別 pane の依頼は触らない)
 upr "$STATE" '依頼B2' HERDR_ENV=1 HERDR_PANE_ID=w5:p2 ORCA_TERMINAL_HANDLE=term_pp CLAUDE_CODE_ENTRYPOINT=cli
-pp w5:p2 RMX_STATE_DIR="$STATE" python3 "$HOOK" < "$FIX"
+pp w5:p2 RMV_STATE_DIR="$STATE" python3 "$HOOK" < "$FIX"
 BREPLY="$(field "$STATE/latest.json" name)"
 check "herdr asking: B の返事は B の依頼を載せ、A の依頼ファイルは残る" "$(field "$STATE/history/${BREPLY%.md}.json" prompt) $(pfile "$STATE/prompt/term_pp__w5-p2.json") $(pfile "$STATE/prompt/term_pp__w5-p1.json")" "依頼B2 none written"
 rm -f "$STATE/prompt/term_pp__w5-p1.json" "$STATE/history/$BREPLY" "$STATE/history/${BREPLY%.md}.json"
 # 許可待ち: 同じ端末の 2 pane が同時でも両方出る
-printf '{"hook_event_name":"PermissionRequest","session_id":"sess-a","tool_name":"Bash","tool_input":{"command":"cmd-A"}}' | pp w5:p1 RMX_STATE_DIR="$STATE" python3 "$PERMHOOK"
-printf '{"hook_event_name":"PermissionRequest","session_id":"sess-b","tool_name":"Bash","tool_input":{"command":"cmd-B"}}' | pp w5:p2 RMX_STATE_DIR="$STATE" python3 "$PERMHOOK"
+printf '{"hook_event_name":"PermissionRequest","session_id":"sess-a","tool_name":"Bash","tool_input":{"command":"cmd-A"}}' | pp w5:p1 RMV_STATE_DIR="$STATE" python3 "$PERMHOOK"
+printf '{"hook_event_name":"PermissionRequest","session_id":"sess-b","tool_name":"Bash","tool_input":{"command":"cmd-B"}}' | pp w5:p2 RMV_STATE_DIR="$STATE" python3 "$PERMHOOK"
 check "herdr perm hook: 許可待ちの key も pane ごと" "$(ls "$STATE/perm" | grep '^term_pp' | tr '\n' ' ')" "term_pp__w5-p1.json term_pp__w5-p2.json "
 PIDA="$(field "$STATE/perm/term_pp__w5-p1.json" id)"; PIDB="$(field "$STATE/perm/term_pp__w5-p2.json" id)"
 check "herdr perm: 2 pane 同時の許可待ちが両方 /history に出る (それぞれ自分の detail)" "$(permof "$PPA") $(permof "$PPB")" "('$PIDA', 'Bash', 'cmd-A') ('$PIDB', 'Bash', 'cmd-B')"
@@ -899,7 +899,7 @@ check "herdr approve: pane を含まない session (端末だけ) では pane �
 python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["herdr_pane"]="w5:p9"; json.dump(d,open(p,"w"))' "$STATE/perm/term_pp__w5-p1.json"
 check "herdr approve: ファイル名と中身の pane が食い違う perm → 409、何も送らない" "$(apost "$GOOD" "{\"session\":\"term_pp__w5-p1\",\"id\":\"$PIDA\"}") $(cat "$TMP/hcalls" 2>/dev/null | grep -c 'send-')" "409 0"
 # 別 pane のイベントでは消えない (消す規則は pane 単位の key でも保たれる)
-printf '{"hook_event_name":"PostToolUse","session_id":"sess-b","tool_name":"Bash"}' | pp w5:p2 RMX_STATE_DIR="$STATE" python3 "$PERMHOOK"
+printf '{"hook_event_name":"PostToolUse","session_id":"sess-b","tool_name":"Bash"}' | pp w5:p2 RMV_STATE_DIR="$STATE" python3 "$PERMHOOK"
 check "herdr perm hook: pane B の PostToolUse は B の perm だけ消し、A の perm は残る" "$(pfile "$STATE/perm/term_pp__w5-p2.json") $(pfile "$STATE/perm/term_pp__w5-p1.json")" "none written"
 rm -f "$STATE/perm/term_pp__w5-p1.json"
 # 題名・live: herdr の pane から取る
@@ -956,7 +956,7 @@ list "$(term term_test "$CWD" 1)" "$(term term_pp "$CWD" 5)"
 PPD="29990101T000000011-ppd.md"; PPS="29990101T000000012-pps.md"
 ppentry2() { # <socket> <dst name>: 同じ pane id w5:p1 の返事を、socket だけ変えて server の history に置く
   local d="$TMP/pp-${2%.md}" n
-  pp w5:p1 HERDR_SOCKET_PATH="$1" RMX_STATE_DIR="$d" python3 "$HOOK" < "$FIX"
+  pp w5:p1 HERDR_SOCKET_PATH="$1" RMV_STATE_DIR="$d" python3 "$HOOK" < "$FIX"
   n="$(field "$d/latest.json" name)"
   cp "$d/history/$n" "$STATE/history/$2"
   python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); d["name"]=sys.argv[3]; json.dump(d,open(sys.argv[2],"w"),ensure_ascii=False)' "$d/history/${n%.md}.json" "$STATE/history/${2%.md}.json" "$2"
@@ -975,7 +975,7 @@ check "named session send: 全ての herdr 呼び出しが名前付き socket �
 rm -f "$TMP/hcalls" "$TMP/hsocks"
 check "default session send: 既定 session の entry は socket を切り替えずに届く" "$(post "$GOOD" "$(body "$PPD" 赤D)") $(sort -u "$TMP/hsocks" | tr '\n' ' ')" "200 $DFLT "
 # 許可: 名前付き session の perm は名前付きの key で、approve も名前付き socket にだけ
-printf '{"hook_event_name":"PermissionRequest","session_id":"sess-1","tool_name":"Bash","tool_input":{"command":"ls"}}' | HERDR_ENV=1 HERDR_PANE_ID=w5:p1 HERDR_SOCKET_PATH="$SOLO" ORCA_TERMINAL_HANDLE=term_pp CLAUDE_CODE_ENTRYPOINT=cli RMX_STATE_DIR="$STATE" python3 "$PERMHOOK"
+printf '{"hook_event_name":"PermissionRequest","session_id":"sess-1","tool_name":"Bash","tool_input":{"command":"ls"}}' | HERDR_ENV=1 HERDR_PANE_ID=w5:p1 HERDR_SOCKET_PATH="$SOLO" ORCA_TERMINAL_HANDLE=term_pp CLAUDE_CODE_ENTRYPOINT=cli RMV_STATE_DIR="$STATE" python3 "$PERMHOOK"
 SPID="$(field "$STATE/perm/term_pp__w5-p1__solo.json" id)"
 rm -f "$TMP/hcalls" "$TMP/hsocks" "$TMP/calls"
 check "named session approve: 200 で名前付き socket にだけ 1 を送る" "$(apost "$GOOD" "{\"session\":\"term_pp__w5-p1__solo\",\"id\":\"$SPID\"}") $(sort -u "$TMP/hsocks" | tr '\n' ' ') $(tr '\n' ',' < "$TMP/hcalls")" "200 $SOLO  get w5:p1 ,send-text w5:p1 1,"
@@ -992,7 +992,7 @@ rm -f "$TMP/hagents" "$TMP/hagents.solo" "$STATE/history/$PPD" "$STATE/history/$
 check "/history: 依頼が無ければ asking null" "$(askof "$WITH")" None
 upr "$STATE" '状態行に出す依頼' ORCA_TERMINAL_HANDLE=term_test CLAUDE_CODE_ENTRYPOINT=cli
 check "/history: 返事前の依頼は、その端末の entry に asking で付く" "$(askof "$WITH")" "状態行に出す依頼"
-ORCA_TERMINAL_HANDLE=term_test RMX_STATE_DIR="$STATE" python3 "$HOOK" < "$FIX"
+ORCA_TERMINAL_HANDLE=term_test RMV_STATE_DIR="$STATE" python3 "$HOOK" < "$FIX"
 NEWN="$(field "$STATE/latest.json" name)"
 check "/history: 返事が届くと asking は消える" "$(askof "$WITH")" None
 check "/history: 返事の entry に prompt が付く" "$(curl -s "$BASE/history" | python3 -c "import json,sys; print([e['prompt'] for e in json.load(sys.stdin) if e['name']==sys.argv[1]][0])" "$NEWN")" "状態行に出す依頼"
@@ -1150,11 +1150,11 @@ rm -f "$TMP/hrunning"
 check "new(herdr): herdr server 停止 → 500、Orca には落ちない (split も create も呼ばない)" "$(hnew "{\"cwd\":\"$WTA\",\"near\":\"term_x__w3-pB\"}")" "500 status, orca-none"
 check "new(herdr): 500 の本文に理由 (画面の cmsg に出る)" "$(cat "$TMP/body")" "herdr server が動いていない"
 
-# --- herdr だけ (Orca 無し): ORCA_TERMINAL_HANDLE が無くても HERDR_ENV=1 + HERDR_PANE_ID があれば記録・一覧・送信・許可・新規が通る。Orca は呼ばない (RMX_ORCA_BIN = false) ---
+# --- herdr だけ (Orca 無し): ORCA_TERMINAL_HANDLE が無くても HERDR_ENV=1 + HERDR_PANE_ID があれば記録・一覧・送信・許可・新規が通る。Orca は呼ばない (RMV_ORCA_BIN = false) ---
 HO="$TMP/herdr-only"
 HOENV=(-u ORCA_TERMINAL_HANDLE HERDR_ENV=1 CLAUDE_CODE_ENTRYPOINT=cli)
 upr "$HO" '依頼H1' "${HOENV[@]}" HERDR_PANE_ID=w7:p1
-env "${HOENV[@]}" HERDR_PANE_ID=w7:p1 RMX_STATE_DIR="$HO" python3 "$HOOK" < "$FIX"
+env "${HOENV[@]}" HERDR_PANE_ID=w7:p1 RMV_STATE_DIR="$HO" python3 "$HOOK" < "$FIX"
 HON="$(field "$HO/latest.json" name)"
 check "herdr だけ hook: Orca 無しでも pane があれば記録 (terminal は null、herdr_pane は pane)" "$(field "$HO/latest.json" terminal) $(field "$HO/latest.json" herdr_pane)" "null w7:p1"
 check "herdr だけ hook: 依頼文は herdr__<pane> の key で返事に載り、ファイルは消える" "$(field "$HO/history/${HON%.md}.json" prompt) $(pfile "$HO/prompt/herdr__w7-p1.json")" "依頼H1 none"
@@ -1164,16 +1164,16 @@ swt "$HO" startup "${HOENV[@]}" HERDR_PANE_ID=w7:p3
 check "herdr だけ session-wait hook: 待機中を herdr__<pane> に置く" "$(ls "$HO/prompt" | tr '\n' ' ')" "herdr__w7-p2.json herdr__w7-p3.json "
 pev "$HO" PermissionRequest Bash '{"command":"ls"}' "${HOENV[@]}" HERDR_PANE_ID=w7:p1
 check "herdr だけ perm hook: 許可待ちを herdr__<pane> に置く (terminal は null)" "$(field "$HO/perm/herdr__w7-p1.json" terminal) $(field "$HO/perm/herdr__w7-p1.json" herdr_pane)" "null w7:p1"
-env -u ORCA_TERMINAL_HANDLE -u HERDR_ENV -u HERDR_PANE_ID CLAUDE_CODE_ENTRYPOINT=cli RMX_STATE_DIR="$TMP/neither" python3 "$HOOK" < "$FIX"
+env -u ORCA_TERMINAL_HANDLE -u HERDR_ENV -u HERDR_PANE_ID CLAUDE_CODE_ENTRYPOINT=cli RMV_STATE_DIR="$TMP/neither" python3 "$HOOK" < "$FIX"
 check "herdr だけ hook: Orca も herdr も無ければ従来どおり記録しない" "$(ls "$TMP/neither/history" 2>/dev/null | wc -l | tr -d ' ')" 0
 # bg session: 映している対話プロセスが herdr だけ (ORCA_TERMINAL_HANDLE 無し) なら、その pane を handle なしで使う
 printf 'claude --resume HERDR_ENV=1 HERDR_PANE_ID=w9:p8 HOME=/x\n' > "$TMP/bgps-4242"
-env -u ORCA_TERMINAL_HANDLE HERDR_ENV=1 HERDR_PANE_ID=w1:daemon RMX_SESSIONS_DIR="$HSESS" RMX_PS_BIN="$BGPS" RMX_STATE_DIR="$TMP/bg-herdr3" python3 "$HOOK" < "$FIX"
+env -u ORCA_TERMINAL_HANDLE HERDR_ENV=1 HERDR_PANE_ID=w1:daemon RMV_SESSIONS_DIR="$HSESS" RMV_PS_BIN="$BGPS" RMV_STATE_DIR="$TMP/bg-herdr3" python3 "$HOOK" < "$FIX"
 check "herdr だけ hook(bg): 映している対話プロセスの pane (daemon の w1:daemon ではない)" "$(field "$TMP/bg-herdr3/latest.json" herdr_pane) $(field "$TMP/bg-herdr3/latest.json" terminal)" "w9:p8 null"
 
 PORT3="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')"
 B3="http://127.0.0.1:$PORT3"
-RMX_STATE_DIR="$HO" RMX_PORT="$PORT3" RMX_ORCA_BIN=/usr/bin/false RMX_HERDR_BIN="$HERDRSTUB" RMX_WT_TTL_MS=0 RMX_LIVE_TTL_MS=0 RMX_OSASCRIPT_BIN="$OSASTUB" bun run "$SERVER" > "$TMP/server3.log" 2>&1 &
+RMV_STATE_DIR="$HO" RMV_PORT="$PORT3" RMV_ORCA_BIN=/usr/bin/false RMV_HERDR_BIN="$HERDRSTUB" RMV_WT_TTL_MS=0 RMV_LIVE_TTL_MS=0 RMV_OSASCRIPT_BIN="$OSASTUB" bun run "$SERVER" > "$TMP/server3.log" 2>&1 &
 SRV3=$!
 trap 'kill $SRV $SRV3 2>/dev/null' EXIT
 for _ in $(seq 50); do curl -s -o /dev/null "$B3/history" && break; sleep 0.1; done
@@ -1183,7 +1183,7 @@ p3() { curl -s -o "$TMP/body" -w '%{http_code}' -X POST -H "Origin: $B3" -H 'con
 AKQ="asking-herdr__w7-p2.md"
 agentlist "$(ag w7:p1 '◑ 作業H')" "$(ag w7:p2 '✳ 待ちH')"
 check "herdr だけ /history: 返事の session / terminal / title / live" "$(f3 "$HON" session) $(f3 "$HON" terminal) $(f3 "$HON" title) $(f3 "$HON" live)" "herdr__w7-p1 True ◑ 作業H True"
-check "herdr だけ /history: 生死判定が取れているので x-rmx-live は ok (Orca の list は取れない)" "$(grep -i '^x-rmx-live:' "$TMP/h3head" | cut -d: -f2 | tr -d ' \r')" ok
+check "herdr だけ /history: 生死判定が取れているので x-rmv-live は ok (Orca の list は取れない)" "$(grep -i '^x-rmv-live:' "$TMP/h3head" | cut -d: -f2 | tr -d ' \r')" ok
 check "herdr だけ /history: 返事ゼロの仮 entry も出る (依頼文と pane 付き)" "$(f3 "$AKQ" session) $(f3 "$AKQ" terminal) $(f3 "$AKQ" live)" "herdr__w7-p2 True True"
 agentlist "$(ag w7:p2 '✳ 待ちH')"
 check "herdr だけ /history: herdr から居なくなった pane は live=false" "$(f3 "$HON" live)" "False"

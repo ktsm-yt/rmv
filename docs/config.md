@@ -20,7 +20,7 @@ README の続きです。
 
 - `↑` `↓` は、チャット欄が空なら欄の中でも使えます。`1`〜`0` は欄の外だけです。
 - 赤ペンを送ると、Orca はそのセッションのタブに移ります。
-- Orca の端末の中で [herdr](https://herdr.dev) を使っている時は、赤ペンも許可ボタンもそのセッションの pane に直接届きます。pane が閉じていたり Claude が居なければ、別の pane には送らずエラーにします (`herdr` コマンドが必要。場所を変えるなら `RMX_HERDR_BIN`)。 一覧のまとめ・許可待ち・入力中の依頼も herdr の pane ごとに分け、題名と生死も herdr から取ります (同じ Orca 端末の別 pane は別のセッション。herdr に出力時刻は無いので、その行の時刻は出ません)。
+- Orca の端末の中で [herdr](https://herdr.dev) を使っている時は、赤ペンも許可ボタンもそのセッションの pane に直接届きます。pane が閉じていたり Claude が居なければ、別の pane には送らずエラーにします (`herdr` コマンドが必要。場所を変えるなら `RMV_HERDR_BIN`)。 一覧のまとめ・許可待ち・入力中の依頼も herdr の pane ごとに分け、題名と生死も herdr から取ります (同じ Orca 端末の別 pane は別のセッション。herdr に出力時刻は無いので、その行の時刻は出ません)。
 - Orca が無く herdr だけで使う時も、herdr の中で動く Claude (`HERDR_ENV=1` と `HERDR_PANE_ID` が入っている) は一覧に出て、赤ペン・許可ボタン・新規セッションが herdr の pane に届きます。新規セッションで選べるフォルダは、Orca の worktree 一覧が取れない時だけ herdr に開いてある pane のフォルダになります。
 - `Esc` は、ひとことを書いたピンで止まります。
 - `y` は、送り先のセッションの許可待ちを押します。送り先に許可待ちが無い時は、許可待ちが 1 つだけならそれを押します。
@@ -31,7 +31,7 @@ README の続きです。
 送信ボタンの左には、送り先のモデルとエフォートが「opus · high」の形で出ます。
 表示するだけで、切り替えは Orca か端末で行います。
 端末で直接変えた分は、次の返事で反映されます。
-モデルが transcript から分からない時は `~/.claude/settings.json` の `"model"` を読みます。場所は環境変数 `RMX_CC_SETTINGS` で変えられます。
+モデルが transcript から分からない時は `~/.claude/settings.json` の `"model"` を読みます。場所は環境変数 `RMV_CC_SETTINGS` で変えられます。
 
 見出しの右には、context の使用量が「268k / 1M」の形で出ます。
 30% 以上で黄、50% 以上で赤になります。
@@ -84,20 +84,20 @@ PDF は押すと新しいタブで開きます。
 行を押すと、そのフォルダでまっさらな Claude Code が Orca の新しい端末タブで起動します。
 一覧の先頭は今選んでいるプロジェクト、残りは最近返事があった順です。
 
-- `RMX_NEW_CMD`: 端末で走らせるコマンド (既定 `claude`)
+- `RMV_NEW_CMD`: 端末で走らせるコマンド (既定 `claude`)
 
 ## スマホなど別の端末から開く
 
 rmv は Mac の中 (`127.0.0.1`) でしか待ち受けません。
-別の端末から開く時は、Tailscale の `tailscale serve` に中継させ、その URL を環境変数 `RMX_ORIGINS` で許可します。
+別の端末から開く時は、Tailscale の `tailscale serve` に中継させ、その URL を環境変数 `RMV_ORIGINS` で許可します。
 
 ```bash
 tailscale serve --bg 4310                # https://<Mac の名前>.<tailnet>.ts.net → 127.0.0.1:4310
-RMX_ORIGINS=https://<Mac の名前>.<tailnet>.ts.net bun run server.ts
+RMV_ORIGINS=https://<Mac の名前>.<tailnet>.ts.net bun run server.ts
 ```
 
-launchd で常駐させている時は、`RMX_ORIGINS=…` の行を `state/env` に書けば起動スクリプトが読みます。
-外部ツールに端末へ合図を送らせる `RMX_EXT_ORIGINS` も同じ `state/env` に書けます (README の「外部ツールとつなぐ」)。
+launchd で常駐させている時は、`RMV_ORIGINS=…` の行を `state/env` に書けば起動スクリプトが読みます。
+外部ツールに端末へ合図を送らせる `RMV_EXT_ORIGINS` も同じ `state/env` に書けます (README の「外部ツールとつなぐ」)。
 届くのは同じ Tailscale につながった端末だけです。
 返事の中のファイルを開くボタンは、押した端末には出ず、Mac の画面で開きます。
 
@@ -134,27 +134,27 @@ Android の Chrome の内蔵の声は一時停止できません。
 
 環境変数:
 
-- `RMX_TTS_MODEL`: 読み上げモデル (既定 `gemini-3.1-flash-tts-preview`。`gemini-3.8-flash-tts` は声が良いが無料枠が 1 日 10 回)
-- `RMX_TTS_VOICE`: 声 (既定 `Kore`)
-- `RMX_TTS_STYLE`: 話し方の指示 (既定 `落ち着いて、はっきりと`。3.8 のときだけ効く)
+- `RMV_TTS_MODEL`: 読み上げモデル (既定 `gemini-3.1-flash-tts-preview`。`gemini-3.8-flash-tts` は声が良いが無料枠が 1 日 10 回)
+- `RMV_TTS_VOICE`: 声 (既定 `Kore`)
+- `RMV_TTS_STYLE`: 話し方の指示 (既定 `落ち着いて、はっきりと`。3.8 のときだけ効く)
 
 ローカルの [VOICEVOX ENGINE](https://github.com/VOICEVOX/voicevox_engine) を使う時は、起動した ENGINE に合わせて次を設定します。Gemini のキーは不要です。
 
 ```bash
-RMX_TTS_PROVIDER=voicevox
-RMX_VOICEVOX_URL=http://127.0.0.1:50021
-RMX_VOICEVOX_SPEAKER=3 # ずんだもん / ノーマル
+RMV_TTS_PROVIDER=voicevox
+RMV_VOICEVOX_URL=http://127.0.0.1:50021
+RMV_VOICEVOX_SPEAKER=3 # ずんだもん / ノーマル
 ```
 
-`RMX_TTS_PROVIDER` を設定しなければ Gemini のままです。
+`RMV_TTS_PROVIDER` を設定しなければ Gemini のままです。
 
 ## 返事に出てきたファイルの扱い
 
 画像・動画・PDF などは、ホーム配下と一時ディレクトリにあればページの中に表示します。
 `.md` や `.code-workspace` などは読まずに、Mac の既定アプリで開きます。
-スクリプト (`.sh` `.py`、実行ビット付き、`#!` 始まり) は実行させないよう、`RMX_EDITOR_APP` (既定 `Visual Studio Code`) で開きます。
+スクリプト (`.sh` `.py`、実行ビット付き、`#!` 始まり) は実行させないよう、`RMV_EDITOR_APP` (既定 `Visual Studio Code`) で開きます。
 
 ## ポート
 
 既定は `4310` です。
-環境変数 `RMX_PORT` で変えられます。
+環境変数 `RMV_PORT` で変えられます。

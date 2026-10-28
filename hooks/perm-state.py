@@ -13,6 +13,9 @@ stdout には何も出さない (hook 出力は user 画面に出る)。exit 0 �
 import importlib.util
 import json
 import os
+for _k, _v in list(os.environ.items()):  # 旧名 RMX_* も読む (v0.19.0 で RMV_ に改名)
+    if _k.startswith("RMX_"): os.environ.setdefault("RMV_" + _k[4:], _v)
+
 import re
 import subprocess
 import sys
@@ -20,8 +23,8 @@ import uuid
 from datetime import datetime
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-# RMX_STATE_DIR はテストが本物の rmv/state を触らないための上書き口 (stop-to-fragment.py と同じ)
-STATE = os.environ.get("RMX_STATE_DIR") or os.path.join(os.path.dirname(HERE), "state")
+# RMV_STATE_DIR はテストが本物の rmv/state を触らないための上書き口 (stop-to-fragment.py と同じ)
+STATE = os.environ.get("RMV_STATE_DIR") or os.path.join(os.path.dirname(HERE), "state")
 PERM = os.path.join(STATE, "perm")
 DETAIL_MAX = 120
 DETAIL_KEY = {"Bash": "command", "Edit": "file_path", "Write": "file_path", "Read": "file_path", "NotebookEdit": "file_path", "WebFetch": "url"}
@@ -91,7 +94,7 @@ def notify(rec):
     if not cmd or not rec["herdr_pane"]:
         return
     env = dict(os.environ, HERDR_SOCKET_PATH=rec["herdr_socket"]) if rec["herdr_socket"] else None
-    out = subprocess.run([os.environ.get("RMX_HERDR_BIN") or "/opt/homebrew/bin/herdr", "pane", "get", rec["herdr_pane"]],
+    out = subprocess.run([os.environ.get("RMV_HERDR_BIN") or "/opt/homebrew/bin/herdr", "pane", "get", rec["herdr_pane"]],
                          capture_output=True, text=True, timeout=3, env=env).stdout
     # ponytail: foyer の画面 (Hermes などから頼まれた作業) だけ。手元の画面は目の前で見えるので送らない。全部送りたくなったら label の条件を外す
     if (json.loads(out).get("result") or {}).get("pane", {}).get("label") != "foyer":

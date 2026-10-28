@@ -10,13 +10,16 @@ import glob
 import importlib.util
 import json
 import os
+for _k, _v in list(os.environ.items()):  # 旧名 RMX_* も読む (v0.19.0 で RMV_ に改名)
+    if _k.startswith("RMX_"): os.environ.setdefault("RMV_" + _k[4:], _v)
+
 import sys
 import time
 from datetime import datetime
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-# RMX_STATE_DIR はテストが本物の rmv/state を触らないための上書き口 (prompt-state.py と同じ)
-STATE = os.environ.get("RMX_STATE_DIR") or os.path.join(os.path.dirname(HERE), "state")
+# RMV_STATE_DIR はテストが本物の rmv/state を触らないための上書き口 (prompt-state.py と同じ)
+STATE = os.environ.get("RMV_STATE_DIR") or os.path.join(os.path.dirname(HERE), "state")
 PROMPT = os.path.join(STATE, "prompt")
 WAIT_TTL = 24 * 3600  # server.ts の WAIT_TTL と同じ (待機中が一覧に出る長さ = ファイルを残す長さ。片方だけ直さない)
 

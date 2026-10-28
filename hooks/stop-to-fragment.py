@@ -13,14 +13,17 @@ stdout には何も出さない (hook 出力は user 画面に出る)。exit 0 �
 """
 import json
 import os
+for _k, _v in list(os.environ.items()):  # 旧名 RMX_* も読む (v0.19.0 で RMV_ に改名)
+    if _k.startswith("RMX_"): os.environ.setdefault("RMV_" + _k[4:], _v)
+
 import re
 import subprocess
 import sys
 import time
 from datetime import datetime
 
-# RMX_STATE_DIR はテストが本物の rmv/state を触らないための上書き口
-STATE = os.environ.get("RMX_STATE_DIR") or os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "state")
+# RMV_STATE_DIR はテストが本物の rmv/state を触らないための上書き口
+STATE = os.environ.get("RMV_STATE_DIR") or os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "state")
 HIST = os.path.join(STATE, "history")
 KEEP = 200  # 静かなプロジェクトも左のプロジェクト列から落ちないだけ残す
 AGENT_MAX = 4000  # subagent の報告は長いので切る
@@ -105,7 +108,7 @@ def pane_info(pane, sock):
         return {"label": None, "tab": None}
     try:
         env = dict(os.environ, HERDR_SOCKET_PATH=sock) if sock else None
-        out = subprocess.run([os.environ.get("RMX_HERDR_BIN") or "/opt/homebrew/bin/herdr", "pane", "get", pane],
+        out = subprocess.run([os.environ.get("RMV_HERDR_BIN") or "/opt/homebrew/bin/herdr", "pane", "get", pane],
                              capture_output=True, text=True, timeout=3, env=env).stdout
         info = (json.loads(out).get("result") or {}).get("pane", {})
         pick = lambda k: info.get(k) if isinstance(info.get(k), str) and info.get(k) else None
@@ -121,7 +124,7 @@ def terminal_ids(session_id):
     env_pane = os.environ.get("HERDR_PANE_ID") if os.environ.get("HERDR_ENV") == "1" else None
     env = (env_handle, env_pane or None, (os.environ.get("HERDR_SOCKET_PATH") or None) if env_pane else None)
     try:
-        d = os.environ.get("RMX_SESSIONS_DIR") or os.path.join(os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude"), "sessions")
+        d = os.environ.get("RMV_SESSIONS_DIR") or os.path.join(os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude"), "sessions")
         recs = []
         for n in os.listdir(d):
             if not n.endswith(".json"):
@@ -139,8 +142,8 @@ def terminal_ids(session_id):
         peer = next((r for r in recs if r.get("parkedJobId") == me["jobId"]), None)
         if not peer:
             return env
-        # 生死は ps に任せる (終了済みの pid は exit 1)。テストは server と同じ RMX_PS_BIN で stub に差し替える
-        p = subprocess.run([os.environ.get("RMX_PS_BIN") or "ps", "-Eww", "-o", "command=", "-p", str(int(peer["pid"]))],
+        # 生死は ps に任せる (終了済みの pid は exit 1)。テストは server と同じ RMV_PS_BIN で stub に差し替える
+        p = subprocess.run([os.environ.get("RMV_PS_BIN") or "ps", "-Eww", "-o", "command=", "-p", str(int(peer["pid"]))],
                            capture_output=True, text=True, timeout=2)
         # 相手が claude の時だけ使う: 消え残った sessions/<pid>.json の pid が素のシェルに再利用されていると、赤ペンの文がコマンドとして走る
         ok = p.returncode == 0 and re.match(r"\S*claude", p.stdout.lstrip())

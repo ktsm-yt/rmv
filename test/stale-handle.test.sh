@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # herdr を別の Orca 端末から起こし直すと、同じ pane が古い handle (term_old) と今の handle (term_new) の両方で記録に残る。pane の生死だけで見ると古い方まで live になり、3 pane が 6 セッションに見えた (2026-10-20)。
 # また herdr pane の Claude は今の handle を継ぐので、同じ端末で直に起動して終わった Claude (pane 無し) の記録まで ps 判定で live になった。
-# RMX_SERVER で旧実装に当てる negative control 用
+# RMV_SERVER で旧実装に当てる negative control 用
 set -u
 A="$(cd "$(dirname "$0")/.." && pwd)"
-SERVER="${RMX_SERVER:-$A/server.ts}"
+SERVER="${RMV_SERVER:-$A/server.ts}"
 TMP="$(mktemp -d)"
 STATE="$TMP/state"; mkdir -p "$STATE/history" "$STATE/perm" "$STATE/prompt"
 PORT="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')"
@@ -40,7 +40,7 @@ put 20261020T104455000-aaaaaaaa 2026-10-20T10:44:55+09:00 aaaaaaaa-0 term_old wS
 put 20261020T182103000-bbbbbbbb 2026-10-20T18:21:03+09:00 bbbbbbbb-0 term_new ""
 put 20261020T185738000-cccccccc 2026-10-20T18:57:38+09:00 cccccccc-0 term_new wS:p1
 
-RMX_STATE_DIR="$STATE" RMX_PORT="$PORT" RMX_HERDR_BIN="$TMP/herdr" RMX_ORCA_BIN="$TMP/orca" RMX_PS_BIN="$TMP/ps" RMX_LIVE_TTL_MS=0 bun run "$SERVER" > "$TMP/server.log" 2>&1 &
+RMV_STATE_DIR="$STATE" RMV_PORT="$PORT" RMV_HERDR_BIN="$TMP/herdr" RMV_ORCA_BIN="$TMP/orca" RMV_PS_BIN="$TMP/ps" RMV_LIVE_TTL_MS=0 bun run "$SERVER" > "$TMP/server.log" 2>&1 &
 SPID=$!
 for _ in $(seq 50); do curl -s -o /dev/null "$BASE/history" && break; sleep 0.1; done
 live() { curl -s "$BASE/history" | python3 -c "import json,sys; print([e['live'] for e in json.load(sys.stdin) if e['session']=='$1'][0])"; }

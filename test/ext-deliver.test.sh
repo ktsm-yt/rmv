@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # POST /ext/deliver (外部ツールから端末へ合図を打ち込む口、opt-in) の許可・拒否・送り先。
 # 本物の端末には打たない: orca / herdr / ps は stub で、打ち込みは $TMP/calls (orca) と $TMP/hcalls (herdr) に記録するだけ。state と Claude の pid ごとの記録 ($TMP/sessions) は一時領域。
-# 実行: bash test/ext-deliver.test.sh   (bun と python3 が要る)。RMX_SERVER=<path> で server を差し替えられる (旧実装に当てる negative control 用)
+# 実行: bash test/ext-deliver.test.sh   (bun と python3 が要る)。RMV_SERVER=<path> で server を差し替えられる (旧実装に当てる negative control 用)
 set -u
 A="$(cd "$(dirname "$0")/.." && pwd)"
-SERVER="${RMX_SERVER:-$A/server.ts}"
+SERVER="${RMV_SERVER:-$A/server.ts}"
 TMP="$(mktemp -d)"
 STATE="$TMP/state"; mkdir -p "$STATE/history" "$STATE/perm" "$STATE/prompt"
 N=0
@@ -96,9 +96,9 @@ put 12 "$SW" term_h wS:p3 /x/h
 # wS:p1 で開き直した会話の起動時の記録 (hooks/session-wait.py の形)。返事より新しい
 python3 -c 'import json,sys,datetime; json.dump({"prompt":"","waiting":True,"ts":datetime.datetime.now(datetime.timezone.utc).isoformat(),"session_id":sys.argv[2],"terminal":"term_h","herdr_pane":"wS:p1","cwd":"/x/h"},open(sys.argv[1],"w"))' "$STATE/prompt/term_h__wS-p1.json" "$SB2"
 
-# serve <port> <RMX_EXT_ORIGINS> [RMX_LIVE_TTL_MS] → 起動して pid を返す。TTL の既定は 0 (キャッシュ無し)
+# serve <port> <RMV_EXT_ORIGINS> [RMV_LIVE_TTL_MS] → 起動して pid を返す。TTL の既定は 0 (キャッシュ無し)
 serve() {
-  RMX_LIVE_TTL_MS="${3:-0}" RMX_STATE_DIR="$STATE" RMX_PORT="$1" RMX_EXT_ORIGINS="$2" RMX_ORIGINS= RMX_ORCA_BIN="$TMP/orca" RMX_HERDR_BIN="$TMP/herdr" RMX_PS_BIN="$TMP/ps" RMX_SESSIONS_DIR="$TMP/sessions" RMX_OSASCRIPT_BIN=/usr/bin/false RMX_PBPASTE_BIN=/usr/bin/false RMX_PBCOPY_BIN=/usr/bin/false RMX_OPEN_BIN=/usr/bin/false RMX_PROJECTS_DIR="$TMP/projects" bun run "$SERVER" > "$TMP/server-$1.log" 2>&1 &
+  RMV_LIVE_TTL_MS="${3:-0}" RMV_STATE_DIR="$STATE" RMV_PORT="$1" RMV_EXT_ORIGINS="$2" RMV_ORIGINS= RMV_ORCA_BIN="$TMP/orca" RMV_HERDR_BIN="$TMP/herdr" RMV_PS_BIN="$TMP/ps" RMV_SESSIONS_DIR="$TMP/sessions" RMV_OSASCRIPT_BIN=/usr/bin/false RMV_PBPASTE_BIN=/usr/bin/false RMV_PBCOPY_BIN=/usr/bin/false RMV_OPEN_BIN=/usr/bin/false RMV_PROJECTS_DIR="$TMP/projects" bun run "$SERVER" > "$TMP/server-$1.log" 2>&1 &
   echo $!
 }
 up() { for _ in $(seq 50); do curl -s -o /dev/null "http://127.0.0.1:$1/history" && return; sleep 0.1; done; }
@@ -115,7 +115,7 @@ sb() { printf '{"sid":"%s","ticket":"%s"}' "$1" "$2"; }
 typed() { cat "$TMP/calls" "$TMP/hcalls" 2>/dev/null | wc -l | tr -d ' '; }
 reset() { : > "$TMP/calls"; : > "$TMP/hcalls"; }
 
-# --- opt-in: RMX_EXT_ORIGINS が空なら閉じたまま ---
+# --- opt-in: RMV_EXT_ORIGINS が空なら閉じたまま ---
 reset
 check "未設定: 外部ツールの origin → 403" "$(dl "$P0" "$(sb "$SA2" "$T")" -H "Origin: $EXT")" 403
 check "未設定: 自分の origin (viewer) でも 403" "$(dl "$P0" "$(sb "$SA2" "$T")" -H "Origin: http://127.0.0.1:$P0")" 403
@@ -124,7 +124,7 @@ check "未設定: 端末に何も打たない" "$(typed)" 0
 # --- 設定済み: origin ---
 check "設定済み: Origin 無し → 403" "$(dl "$P1" "$(sb "$SA2" "$T")")" 403
 check "設定済み: 別の origin → 403" "$(dl "$P1" "$(sb "$SA2" "$T")" -H 'Origin: https://evil.example')" 403
-check "設定済み: 自分の origin (viewer) → 403 (/ext/* は RMX_EXT_ORIGINS だけ)" "$(dl "$P1" "$(sb "$SA2" "$T")" -H "Origin: http://127.0.0.1:$P1")" 403
+check "設定済み: 自分の origin (viewer) → 403 (/ext/* は RMV_EXT_ORIGINS だけ)" "$(dl "$P1" "$(sb "$SA2" "$T")" -H "Origin: http://127.0.0.1:$P1")" 403
 check "設定済み: カンマ区切りの 2 つ目 (前後の空白は無視) → 403 でない" "$(dl "$P1" '{}' -H 'Origin: https://other.example')" 400
 check "設定済み: 外部ツールの origin でも Host が違えば 403 (DNS rebinding)" "$(dl "$P1" "$(sb "$SA2" "$T")" -H "Origin: $EXT" -H "Host: rebind:$P1")" 403
 check "設定済み: 外部ツールの origin は /send には使えない (403)" "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "Origin: $EXT" -H 'content-type: application/json' --data '{"name":"x.md","text":"x"}' "http://127.0.0.1:$P1/send")" 403
