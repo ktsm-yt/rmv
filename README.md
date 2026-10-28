@@ -2,8 +2,9 @@
 
 <img src="docs/rmv-icon.png" alt="RMV" width="112">
 
-Claude Code の返事を、[Orca](https://github.com/stablyai/orca) のフローティングブラウザで「見て分かる」形に描き、赤ペンでそのセッションへ返すビューアです。
-（chrome等でも見れますが、vimium等ショートカットの競合注意）
+Claude Code の返事を「見て分かる」形に描き、赤ペンでそのセッションの端末へ返すビューアです。
+[Orca](https://github.com/stablyai/orca) のフローティングブラウザや [herdr](https://herdr.dev) の pane と組み合わせると、赤ペンも許可ボタンもその端末に直接届きます (Orca だけ・herdr だけでも動きます。詳しくは [外部ツールとつなぐ](#外部ツールとつなぐ))。
+（Chrome 等でも見れますが、vimium 等ショートカットの競合注意）
 
 macOS ネイティブの [RMV Float](float/README.md) も同梱しています。
 Tailscale で中継すれば、スマホからも同じ画面で返事を読み、赤ペンを返せます ([スマホなど別の端末から開く](docs/config.md#スマホなど別の端末から開く))。
@@ -170,6 +171,14 @@ RMX_EXT_ORIGINS=chrome-extension://kgdkanfbaiakfcncpfdllehhenoplheg
 ```
 
 ## 外部ツールとつなぐ
+
+### Orca / herdr と組む
+
+- **Orca**: フローティングブラウザに rmv を開き、`cmd+J` で出し入れします。赤ペンと許可ボタンは Orca の端末へ届きます。
+- **herdr**: Orca の端末の中で herdr を使っている時も、Orca 無しで herdr だけの時も、herdr の pane で動く Claude が一覧に出て、赤ペン・許可ボタン・新規セッションがその pane に直接届きます。pane が閉じていたり Claude が居なければ、別の pane には送らずエラーにします (`herdr` コマンドが必要。場所を変えるなら `RMX_HERDR_BIN`)。
+- 細かい挙動 (pane ごとの一覧・題名・生死の取り方) は [docs/config.md](docs/config.md) にあります。
+
+### 一覧を読む
 
 別のツールから、今動いている Claude のセッションの一覧を読めます (読み取りだけ)。
 
