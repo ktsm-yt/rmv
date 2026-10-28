@@ -135,7 +135,7 @@ check "設定済み: 403 / 404 の間は端末に何も打たない" "$(typed)" 
 check "本文: JSON でない → 400" "$(ok1 'x')" 400
 check "本文: 配列 → 400" "$(ok1 '[]')" 400
 check "本文: ticket 無し → 400" "$(ok1 "{\"sid\":\"$SA2\"}")" 400
-for bad in '20261023-120000-12345' '20261023-120000-1234567' '/abg 20261023-120000-123456' '20261023-120000-123456\n' '../20261023-120000-123456' 'x; rm -rf /' ''; do
+for bad in '20261023-120000-12345' '20261023-120000-1234567' '/rmp 20261023-120000-123456' '20261023-120000-123456\n' '../20261023-120000-123456' 'x; rm -rf /' ''; do
   check "本文: 不正な ticket '$bad' → 400" "$(ok1 "{\"sid\":\"$SA2\",\"ticket\":\"$bad\"}")" 400
 done
 check "本文: ticket が数値 → 400" "$(ok1 "{\"sid\":\"$SA2\",\"ticket\":20261023}")" 400
@@ -154,17 +154,17 @@ check "409 の間は端末に何も打たない" "$(typed)" 0
 reset
 check "Orca 端末の今の会話 → 200" "$(ok1 "$(sb "$SA2" "$T")")" 200
 check "応答は {ok, via: orca}" "$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d.get("ok"), d.get("via"), sorted(d))' "$TMP/body")" "True orca ['ok', 'via']"
-check "Orca 端末: 打つのは /abg <ticket> と Enter の 2 回だけ、term_a へ" "$(cat "$TMP/calls")" "terminal|send|--terminal|term_a|--text|/abg $T|--json|
+check "Orca 端末: 打つのは /rmp <ticket> と Enter の 2 回だけ、term_a へ" "$(cat "$TMP/calls")" "terminal|send|--terminal|term_a|--text|/rmp $T|--json|
 terminal|send|--terminal|term_a|--text|$(printf '\r')|--json|"
 check "Orca 端末: focus:false (端末タブへ切り替えない)" "$(grep -c switch "$TMP/calls")" 0
 
 reset
 check "herdr pane wS:p2 の会話 → 200 via herdr" "$(ok1 "$(sb "$SC" "$T")") $(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("via"))' "$TMP/body")" "200 herdr"
-check "herdr pane: wS:p2 に /abg <ticket> と Enter、Orca には何も打たない・切り替えない" "$(cat "$TMP/hcalls")|$(typed)" "pane|send-text|wS:p2|/abg $T|
+check "herdr pane: wS:p2 に /rmp <ticket> と Enter、Orca には何も打たない・切り替えない" "$(cat "$TMP/hcalls")|$(typed)" "pane|send-text|wS:p2|/rmp $T|
 pane|send-keys|wS:p2|enter||2"
 
 reset
-check "herdr pane: 開き直した今の会話 (返事なし) → 200、wS:p1 に打つ" "$(ok1 "$(sb "$SB2" "$T")") $(head -1 "$TMP/hcalls")" "200 pane|send-text|wS:p1|/abg $T|"
+check "herdr pane: 開き直した今の会話 (返事なし) → 200、wS:p1 に打つ" "$(ok1 "$(sb "$SB2" "$T")") $(head -1 "$TMP/hcalls")" "200 pane|send-text|wS:p1|/rmp $T|"
 check "本文: 大文字の sid (session_id は小文字の UUID) → 400" "$(ok1 "$(sb "$(echo "$SC" | tr a-f A-F)" "$T")")" 400
 
 # --- /clear・Claude 内の /resume・claude --resume の直後: state/prompt と history は前の会話のまま (hook は startup・依頼・返事の時しか書かない)。
@@ -192,7 +192,7 @@ check "herdr pane: pane に Claude が居ると herdr は言うが、その pane
 printf "$LIVE" > "$TMP/pids"
 check "確かめられない間: 端末に何も打たない" "$(typed)" 0
 
-# --- 許可待ち・質問のダイアログが出ている間は打たない (数字 1 打で選択肢が決まる。/abg 2026… の 2 が選ばれる) ---
+# --- 許可待ち・質問のダイアログが出ている間は打たない (数字 1 打で選択肢が決まる。/rmp 2026… の 2 が選ばれる) ---
 NOW="$(python3 -c 'import datetime; print(datetime.datetime.now(datetime.timezone.utc).isoformat())')"
 printf '{"id":"p1","tool":"Bash","detail":"rm x","ts":"%s","terminal":"term_a","session_id":"%s"}' "$NOW" "$SA2" > "$STATE/perm/term_a.json"
 check "Orca 端末: state/perm に許可待ち → 409 permission pending" "$(ok1 "$(sb "$SA2" "$T")") $(grep -c '^permission pending' "$TMP/body")" "409 1"
@@ -216,7 +216,7 @@ check "/sessions: 今走っていない pid の古い記録が waiting でも de
 pidsok
 check "許可待ちの間: 端末に何も打たない" "$(typed)" 0
 
-# --- 入力欄に書きかけ (履歴の呼び出しを含む) がある間は打たない。続けて打つと `書きかけ/abg <ticket>` が 1 つの依頼で送られる ---
+# --- 入力欄に書きかけ (履歴の呼び出しを含む) がある間は打たない。続けて打つと `書きかけ/rmp <ticket>` が 1 つの依頼で送られる ---
 reset
 printf 'out\n────\n❯\xc2\xa0この文を直して\n────\n  status\n' > "$TMP/hscreen"
 check "herdr pane: 入力欄に書きかけ → 409 draft、何も打たない" "$(ok1 "$(sb "$SC" "$T")") $(grep -c '^draft' "$TMP/body") $(typed)" "409 1 0"
@@ -236,7 +236,7 @@ check "入力欄が空に戻ると 200 (Orca 端末・herdr pane)" "$(ok1 "$(sb 
 pidj 101 "{\"pid\":101,\"sessionId\":\"$SN\",\"kind\":\"interactive\",\"parkedJobId\":\"job1\"}"
 pidj 901 "{\"pid\":901,\"sessionId\":\"$SA2\",\"kind\":\"bg\",\"jobId\":\"job1\"}"
 reset
-check "background: 端末の Claude がその bg の job を映している → 200、term_a に打つ" "$(ok1 "$(sb "$SA2" "$T")") $(head -1 "$TMP/calls")" "200 terminal|send|--terminal|term_a|--text|/abg $T|--json|"
+check "background: 端末の Claude がその bg の job を映している → 200、term_a に打つ" "$(ok1 "$(sb "$SA2" "$T")") $(head -1 "$TMP/calls")" "200 terminal|send|--terminal|term_a|--text|/rmp $T|--json|"
 pidj 101 "{\"pid\":101,\"sessionId\":\"$SN\",\"kind\":\"interactive\",\"parkedJobId\":\"job2\"}"
 reset
 check "background: 映している job が別 → 409 stale、何も打たない" "$(ok1 "$(sb "$SA2" "$T")") $(grep -c '^stale' "$TMP/body") $(typed)" "409 1 0"
@@ -270,7 +270,7 @@ check "キャッシュあり: /sessions で term_dead の会話が live に出�
 echo "$TA" > "$TMP/terms"; printf "$LIVE" > "$TMP/pids"
 check "キャッシュあり: 一覧を温めた直後に閉じた Orca 端末の会話 → 409" "$(dl "$P2" "$(sb "$SD" "$T")" -H "Origin: $EXT")" 409
 check "キャッシュあり: 同じフォルダの別の会話 (term_a) に何も打たない" "$(typed)" 0
-# 端末は開いたまま Claude だけ終えた (シェルに戻った) 場合も打たない: シェルに /abg と Enter が入る
+# 端末は開いたまま Claude だけ終えた (シェルに戻った) 場合も打たない: シェルに /rmp と Enter が入る
 # (P2 のキャッシュは上の送信で取り直した一覧に替わっているので、まっさらな server で温め直す)
 echo "$TA"',{"handle":"term_dead","worktreePath":"/x/a","connected":true,"writable":true,"lastOutputAt":2}' > "$TMP/terms"; printf "${LIVE}103 claude\n" > "$TMP/pids"
 P3="$(port)"; S3="$(serve "$P3" "$EXT" 60000)"
@@ -281,7 +281,7 @@ check "キャッシュあり: /sessions で term_dead の会話が live に出�
 printf "$LIVE" > "$TMP/pids"
 check "キャッシュあり: 端末は開いたまま Claude が終わった会話 → 409、何も打たない" "$(dl "$P3" "$(sb "$SD" "$T")" -H "Origin: $EXT") $(typed)" "409 0"
 reset
-check "キャッシュあり: 今の会話 (term_a) には今まで通り 200" "$(dl "$P3" "$(sb "$SA2" "$T")" -H "Origin: $EXT") $(head -1 "$TMP/calls")" "200 terminal|send|--terminal|term_a|--text|/abg $T|--json|"
+check "キャッシュあり: 今の会話 (term_a) には今まで通り 200" "$(dl "$P3" "$(sb "$SA2" "$T")" -H "Origin: $EXT") $(head -1 "$TMP/calls")" "200 terminal|send|--terminal|term_a|--text|/rmp $T|--json|"
 
 # 打つ直前の取り直しでは生きていて、/send の中で取り直した時には閉じていた: 同じフォルダの term_a (別の会話) へ差し替えずに 409
 DEAD='{"handle":"term_dead","worktreePath":"/x/a","connected":true,"writable":true,"lastOutputAt":2}'

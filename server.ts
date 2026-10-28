@@ -883,7 +883,7 @@ async function send(req: Request, opt: { exact?: boolean; check?: (t: SendTarget
   }
 }
 
-// POST /ext/deliver {sid, ticket}: 外部ツールから、Claude のセッションの端末へ合図 `/abg <ticket>` + Enter を打ち込む (opt-in、RMX_EXT_ORIGINS の origin だけ)。
+// POST /ext/deliver {sid, ticket}: 外部ツールから、Claude のセッションの端末へ合図 `/rmp <ticket>` + Enter を打ち込む (opt-in、RMX_EXT_ORIGINS の origin だけ)。
 // 外部ツールが渡すのはセッション ID と ticket だけ。打ち込む文字は ticket から rmv が組み立てる (自由な文字列・送り先の session キーは受け取らない)。
 // 送り先: session_id === sid の一番新しい本体の entry → その端末 (session) の今のセッション (curSid) が sid と違えば 409 stale (同じ pane / 端末で開き直した別の会話に打ち込まない)。
 // 端末の解決と打ち込みは /send をそのまま呼ぶ (herdr の pane の追跡・Orca の端末の解決・本文と Enter の分け送り)。focus: false 固定 (Mac の画面を勝手に切り替えない)。
@@ -918,7 +918,7 @@ async function extDeliver(req: Request): Promise<Response> {
     if (!h || (terms && !terms.some((t) => t.handle === h)) || (claude && !claude.has(h))) return new Response("session not live: 端末が閉じた、またはその端末の Claude が終わった", { status: 409 });
   }
   const own = `http://127.0.0.1:${PORT}`;
-  const r = await send(new Request(`${own}/send`, { method: "POST", headers: { origin: own, host: `127.0.0.1:${PORT}`, "content-type": "application/json" }, body: JSON.stringify({ name: e.name, text: `/abg ${ticket}`, focus: false, reset: false }) }), { exact: true, check: async (t) => (await extCheck(t, sid)) ?? aborted(req) });
+  const r = await send(new Request(`${own}/send`, { method: "POST", headers: { origin: own, host: `127.0.0.1:${PORT}`, "content-type": "application/json" }, body: JSON.stringify({ name: e.name, text: `/rmp ${ticket}`, focus: false, reset: false }) }), { exact: true, check: async (t) => (await extCheck(t, sid)) ?? aborted(req) });
   if (!r.ok) return r;
   return Response.json({ ok: true, via: e.session.includes("__") ? "herdr" : "orca" }, { headers: { "cache-control": "no-store" } });
 }
@@ -935,7 +935,7 @@ function aborted(req: Request): Response | null {
 //     Claude Code の非公開の形式) の sessionId と照らす。Claude Code は会話を切り替えるたびに (clear / resume を含む) この sessionId を書き換える (2.1.309 のバイナリから読んだ)。
 //     background セッションは、映している対話側の parkedJobId = bg 側の jobId で同じ会話とみなす (hooks/stop-to-fragment.py の terminal_ids と同じ対応)。
 //     fail closed: ps が失敗した・その端末の Claude の pid が見つからない・pid の記録が読めない時は打たない (unverified)。外部ツールは手で貼る道に戻れるので、誤配より打たない方を採る
-// (2) permission pending: 許可ダイアログに `/abg 2026…` が入ると、先頭の数字が選択肢として選ばれる (/approve は "1" 1 打で許可している)。
+// (2) permission pending: 許可ダイアログに `/rmp 2026…` が入ると、先頭の数字が選択肢として選ばれる (/approve は "1" 1 打で許可している)。
 //     state/perm (hooks/perm-state.py)・herdr の agent_status "blocked"・pid の記録の status "waiting" (許可待ちと質問の入力待ち) のどれかがあれば打たない
 async function extCheck(t: SendTarget, sid: string): Promise<Response | null> {
   const unverified = (why: string) => new Response(`unverified: ${why}。打ち込まない`, { status: 409 });
@@ -973,7 +973,7 @@ async function extCheck(t: SendTarget, sid: string): Promise<Response | null> {
   if (t.pane && (await herdrAgents(t.sock, 0))?.get(t.pane)?.status === "blocked") return pending("入力");
   const waiting = recs.find((r) => r.status === "waiting");
   if (waiting) return pending(waiting.waitingFor === "permission prompt" ? "許可" : "入力");
-  // (3) draft: 入力欄に書きかけ (履歴の呼び出しを含む) があると、続けて打った合図と Enter で `書きかけ/abg <ticket>` が 1 つの依頼として送られる (2026-10-25 user 赤ペン)
+  // (3) draft: 入力欄に書きかけ (履歴の呼び出しを含む) があると、続けて打った合図と Enter で `書きかけ/rmp <ticket>` が 1 つの依頼として送られる (2026-10-25 user 赤ペン)
   const draft = await inputDraft(t);
   if (draft === null) return unverified("端末の入力欄を読めず、書きかけがあるか確かめられない");
   if (draft) return new Response("draft: 宛先の端末の入力欄に書きかけがあるので打ち込まない (打つと書きかけと合図が 1 つの依頼で送られる)", { status: 409 });
