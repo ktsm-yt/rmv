@@ -231,6 +231,12 @@ echo '{"ok":true,"result":{"terminal":{"source":"screen-unavailable","tail":["st
 check "Orca 端末: 画面を描けない (screen-unavailable) → 409 unverified" "$(ok1 "$(sb "$SA2" "$T")") $(grep -c '^unverified' "$TMP/body")" "409 1"
 echo "$OEMPTY" > "$TMP/oscreen"
 check "入力欄が空に戻ると 200 (Orca 端末・herdr pane)" "$(ok1 "$(sb "$SA2" "$T")") $(ok1 "$(sb "$SC" "$T")")" "200 200"
+# herdr は色付き (--format ansi) で読む。新しい会話の入力欄に薄字 (SGR 2) で出る入力例は書きかけと数えない (2026-10-29 未会話のセッションへ『今すぐ』が届かなかった)
+printf 'out\n────\n\033[0m\033[38;2;153;153;153m❯\xc2\xa0\033[0m\033[2mTry "write a test for <filepath>"\033[22m\n────\n  status\n' > "$TMP/hscreen"
+check "herdr pane: 薄字の入力例だけの入力欄 → 200" "$(ok1 "$(sb "$SC" "$T")")" "200"
+printf 'out\n────\n\033[0m\033[38;2;153;153;153m❯\xc2\xa0\033[0m\033[38;2;255;255;255mこの文を直して\033[0m\n────\n  status\n' > "$TMP/hscreen"
+check "herdr pane: 色指定 (38;2;…) 付きの普通の文字は書きかけ → 409 draft" "$(ok1 "$(sb "$SC" "$T")") $(grep -c '^draft' "$TMP/body")" "409 1"
+printf '%s\n' "$HEMPTY" > "$TMP/hscreen"
 
 # --- background セッション: 端末の対話 Claude は別の sessionId で、parkedJobId = bg 側の jobId (hooks/stop-to-fragment.py の terminal_ids と同じ対応) ---
 pidj 101 "{\"pid\":101,\"sessionId\":\"$SN\",\"kind\":\"interactive\",\"parkedJobId\":\"job1\"}"
