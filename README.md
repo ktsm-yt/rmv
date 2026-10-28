@@ -6,6 +6,9 @@ Claude Code の返事を、[Orca](https://github.com/stablyai/orca) のフロー
 （chrome等でも見れますが、vimium等ショートカットの競合注意）
 
 macOS ネイティブの [RMV Float](float/README.md) も同梱しています。
+Tailscale で中継すれば、スマホからも同じ画面で返事を読み、赤ペンを返せます ([スマホなど別の端末から開く](docs/config.md#スマホなど別の端末から開く))。
+
+<img src="docs/mobile-redpen.png" alt="スマホで段をタップして赤ペンを付けたところ" width="300">
 
 ![rmv のデモ](docs/demo.gif)
 
@@ -149,6 +152,22 @@ AI には HTML を書かせません。
 常駐させたい時は `bash launchd/install.sh` を実行してください (launchd に登録し、ログイン時に自動で起動します。ログは `~/Library/Logs/harness-rmv.log`)。
 
 許可ボタン、依頼文の表示、スマホから開く、読み上げの声などの任意の機能は、[docs/config.md](docs/config.md) に入れ方があります。
+
+## rmp とつなぐ
+
+兄弟の [rmp (Red Marker Page)](https://github.com/ktsm-yt/rmp) は、見ているページや PDF に赤を入れて Claude Code へ送る Chrome 拡張です。
+rmv が『返事に赤を入れる』側、rmp が『ページに赤を入れる』側で、2 つを組むと、赤を入れる → 直る → 返事を見る → また赤を入れる、がブラウザの 1 画面で回ります。
+
+- rmp のサイドパネルに rmv が出ます。いま動いている全部のセッションが並ぶので、ページから離れずにどの agent の返事も読めて、注釈の宛先も選べます。
+- rmp で送った注釈は、rmv が宛先のセッションの端末に `/rmp <ticket>` を打ち込んで、その場で会話へ届きます (『今すぐ』)。
+
+![ページに赤を入れながら、サイドパネルの rmv で返事を読んでいるところ](docs/rmp-sidepanel.png)
+
+つなぐには、rmv の `state/env` に rmp の origin を 1 行書いて rmv を起動し直します (仕組みは次の節)。
+
+```sh
+RMX_EXT_ORIGINS=chrome-extension://kgdkanfbaiakfcncpfdllehhenoplheg
+```
 
 ## 外部ツールとつなぐ
 
