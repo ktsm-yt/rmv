@@ -6,14 +6,14 @@ Claude Code の返事を「見て分かる」形に描き、赤ペンでその�
 [Orca](https://github.com/stablyai/orca) のフローティングブラウザや [herdr](https://herdr.dev) の pane と組み合わせると、赤ペンも許可ボタンもその端末に直接届きます (Orca だけ・herdr だけでも動きます。詳しくは [外部ツールとつなぐ](#外部ツールとつなぐ))。
 （Chrome 等でも見れますが、vimium 等ショートカットの競合注意）
 
-macOS ネイティブの [RMV Float](float/README.md) も同梱しています。
+専用透過ブラウザ [RMV Float](float/README.md) (macOS ネイティブ) も同梱しています。
 Tailscale で中継すれば、スマホからも同じ画面で返事を読み、赤ペンを返せます ([スマホなど別の端末から開く](docs/config.md#スマホなど別の端末から開く))。
-
-<img src="docs/mobile-redpen.png" alt="スマホで段をタップして赤ペンを付けたところ" width="300">
 
 ![rmv のデモ](docs/demo.gif)
 
 [高画質の動画 (mp4)](docs/demo.mp4)
+
+<img src="docs/mobile-redpen.png" alt="スマホで段をタップして赤ペンを付けたところ" width="300">
 
 ## なぜ作ったか
 
@@ -167,7 +167,7 @@ rmv が『返事に赤を入れる』側、rmp が『ページに赤を入れる
 つなぐには、rmv の `state/env` に rmp の origin を 1 行書いて rmv を起動し直します (仕組みは次の節)。
 
 ```sh
-RMX_EXT_ORIGINS=chrome-extension://kgdkanfbaiakfcncpfdllehhenoplheg
+RMV_EXT_ORIGINS=chrome-extension://kgdkanfbaiakfcncpfdllehhenoplheg
 ```
 
 ## 外部ツールとつなぐ
@@ -175,7 +175,7 @@ RMX_EXT_ORIGINS=chrome-extension://kgdkanfbaiakfcncpfdllehhenoplheg
 ### Orca / herdr と組む
 
 - **Orca**: フローティングブラウザに rmv を開き、`cmd+J` で出し入れします。赤ペンと許可ボタンは Orca の端末へ届きます。
-- **herdr**: Orca の端末の中で herdr を使っている時も、Orca 無しで herdr だけの時も、herdr の pane で動く Claude が一覧に出て、赤ペン・許可ボタン・新規セッションがその pane に直接届きます。pane が閉じていたり Claude が居なければ、別の pane には送らずエラーにします (`herdr` コマンドが必要。場所を変えるなら `RMX_HERDR_BIN`)。
+- **herdr**: Orca の端末の中で herdr を使っている時も、Orca 無しで herdr だけの時も、herdr の pane で動く Claude が一覧に出て、赤ペン・許可ボタン・新規セッションがその pane に直接届きます。pane が閉じていたり Claude が居なければ、別の pane には送らずエラーにします (`herdr` コマンドが必要。場所を変えるなら `RMV_HERDR_BIN`)。
 - 細かい挙動 (pane ごとの一覧・題名・生死の取り方) は [docs/config.md](docs/config.md) にあります。
 
 ### 一覧を読む
@@ -189,18 +189,18 @@ curl -s http://127.0.0.1:4310/sessions
 - 1 セッション 1 行で、最新の返事のセッション ID・端末・フォルダ・herdr の pane 名・冒頭 40 字・状態・時刻と、その端末へ送れるかどうか (許可のダイアログや質問への答えを待っている間は送れない扱い) を返します。
 - 「🤖 ワーカー」側に出る会話 (foyer の画面・herdr の tab 2 以降) は載せません。
 - 依頼文は返しません。
-- 応答ヘッダの `x-rmx-live` が `unknown` の時は、Orca と herdr の一覧が取れず、生死を確かめられていません。
-- 他の口と同じく、Host が `127.0.0.1:4310` / `localhost:4310` (と `RMX_ORIGINS`) 以外なら 403 です。
+- 応答ヘッダの `x-rmv-live` が `unknown` の時は、Orca と herdr の一覧が取れず、生死を確かめられていません。
+- 他の口と同じく、Host が `127.0.0.1:4310` / `localhost:4310` (と `RMV_ORIGINS`) 以外なら 403 です。
   CORS のヘッダは付けないので、Web ページからは読めません。
 
 ### 端末へ合図を送る (opt-in)
 
 外部ツールから、上の一覧で選んだセッションの端末へ、受付番号の付いたスラッシュコマンド 1 行と Enter を打ち込めます。
-既定では閉じています。使う時は、許可するツールの origin を `RMX_EXT_ORIGINS` に書きます (複数はカンマ区切り)。
+既定では閉じています。使う時は、許可するツールの origin を `RMV_EXT_ORIGINS` に書きます (複数はカンマ区切り)。
 
 ```bash
 # launchd で常駐させている時は state/env に書く
-RMX_EXT_ORIGINS=chrome-extension://<拡張の ID>
+RMV_EXT_ORIGINS=chrome-extension://<拡張の ID>
 ```
 
 書いたら rmv を起動し直します (`launchctl kickstart -k gui/$(id -u)/com.ktsm.harness-rmv`)。
@@ -213,7 +213,7 @@ RMX_EXT_ORIGINS=chrome-extension://<拡張の ID>
 - 端末が閉じている、またはその端末の Claude が終わっている時も 409 で、同じフォルダの別の端末へは差し替えません。「🤖 ワーカー」側の会話も 409 です。端末への送信が失敗した時は 502 です。成功すると `{"ok": true, "via": "orca" | "herdr"}` を返します。
 - ツールが応答を待たずに接続を切った時は、打ち込む前に止めます (ツールが手で貼る道に回った後で、同じ合図が 2 回届かないように)。
 - 端末タブへの切り替えはしません。
-- `RMX_EXT_ORIGINS` は `RMX_ORIGINS` とは別物です。ここで許可した origin でも、赤ペンの送信やファイルを開くなどの他の口は使えません。未設定なら `/ext/` の口はすべて 403 です。
+- `RMV_EXT_ORIGINS` は `RMV_ORIGINS` とは別物です。ここで許可した origin でも、赤ペンの送信やファイルを開くなどの他の口は使えません。未設定なら `/ext/` の口はすべて 403 です。
 
 ## 注意
 
