@@ -1173,6 +1173,7 @@ Bun.serve({
     // DNS rebinding 対策: 他サイトが自分のドメインを 127.0.0.1 に向けても Host が違うので読ませない
     if (!HOSTS.has(req.headers.get("host") ?? "")) return new Response("forbidden host", { status: 403 });
     if (pathname === "/") return new Response(Bun.file(`${DIR}/index.html`), { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } }); // no-store: ブラウザが古い index.html を使い回さない
+    if (pathname === "/favicon.png") return new Response(Bun.file(`${DIR}/docs/favicon.png`), { headers: { "content-type": "image/png", "cache-control": "max-age=86400" } });
     if (pathname === "/font/mono") { // スマホには HackGen Console が無いので Mac のを配る。10MB あるので長く cache
       const f = Bun.file(MONO_FONT);
       return (await f.exists()) ? new Response(f, { headers: { "content-type": "font/ttf", "cache-control": "public, max-age=2592000" } }) : new Response("not found", { status: 404 });
