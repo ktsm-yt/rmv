@@ -263,6 +263,32 @@ rm -f "$TMP/psslow"
 reset
 check "切られなければ今まで通り 200 (対照)" "$(ok1 "$(sb "$SA2" "$T")") $(typed)" "200 2"
 
+# --- POST /switch (送信欄の model / effort プルダウン): viewer の origin から。打つ直前に /ext/deliver と同じ確認 (今の会話・許可待ち・書きかけ) を通す ---
+nm() { curl -s "http://127.0.0.1:$P1/history" | python3 -c 'import json,sys; print(next(x["name"] for x in json.load(sys.stdin) if x.get("sid")==sys.argv[1] and not x["agent"]))' "$1"; }
+sw() { curl -s -o "$TMP/body" -w '%{http_code}' -X POST -H "Origin: ${3:-http://127.0.0.1:$P1}" -H 'content-type: application/json' --data "$2" "http://127.0.0.1:$P1/switch"; }
+swb() { printf '{"name":"%s","cmd":"%s","value":"%s"}' "$1" "$2" "$3"; }
+NA2="$(nm "$SA2")"; NA="$(nm "$SA")"; NC="$(nm "$SC")"
+reset
+check "switch: 外部ツールの origin (RMV_EXT_ORIGINS) → 403" "$(sw x "$(swb "$NA2" model opus)" "$EXT")" 403
+for bad in '"cmd":"exit","value":"x"' '"cmd":"model","value":"opus; rm -rf /"' '"cmd":"model","value":"Opus"' '"cmd":"model","value":"opus\n"' '"cmd":"effort","value":"huge"' '"cmd":"model"' '"cmd":"toString","value":"x"'; do
+  check "switch: 不正な cmd / value {$bad} → 400" "$(sw x "{\"name\":\"$NA2\",$bad}")" 400
+done
+check "switch: 不正な name → 400" "$(sw x "$(swb ../x model opus)")" 400
+check "switch: 400 / 403 の間は端末に何も打たない" "$(typed)" 0
+check "switch: Orca 端末の今の会話へ model opus[1m] → 200" "$(sw x "$(swb "$NA2" model 'opus[1m]')")" 200
+check "switch: 打つのは /model opus[1m] と Enter の 2 回だけ、term_a へ" "$(cat "$TMP/calls")" "terminal|send|--terminal|term_a|--text|/model opus[1m]|--json|
+terminal|send|--terminal|term_a|--text|$(printf '\r')|--json|"
+reset
+check "switch: herdr pane の会話へ effort xhigh → 200、wS:p2 に打つ" "$(sw x "$(swb "$NC" effort xhigh)") $(head -1 "$TMP/hcalls")" "200 pane|send-text|wS:p2|/effort xhigh|"
+reset
+check "switch: 同じ端末で後から別の会話が開かれた前の返事 → 409 stale、何も打たない" "$(sw x "$(swb "$NA" model opus)") $(grep -c '^stale' "$TMP/body") $(typed)" "409 1 0"
+echo '{"ok":true,"result":{"terminal":{"source":"screen","tail":["out","────","❯\u00a0書きかけ","────","  status"]}}}' > "$TMP/oscreen"
+check "switch: 入力欄に書きかけ → 409 draft、何も打たない (v0.13.0 で外した理由)" "$(sw x "$(swb "$NA2" model opus)") $(grep -c '^draft' "$TMP/body") $(typed)" "409 1 0"
+echo "$OEMPTY" > "$TMP/oscreen"
+echo blocked > "$TMP/p2status"
+check "switch: herdr pane が許可待ち → 409 permission pending、何も打たない" "$(sw x "$(swb "$NC" effort low)") $(grep -c '^permission pending' "$TMP/body") $(typed)" "409 1 0"
+echo idle > "$TMP/p2status"
+
 # --- 実運用と同じくキャッシュあり (既定の LIVE_TTL は 5 秒。試験が遅くても温めたまま確かめるよう 60 秒) で、一覧を開いた直後に端末が閉じる ---
 # /sessions (外部ツールが一覧を開く時に叩く) で term_dead が live のキャッシュを温め、5 秒以内に term_dead を閉じて送る。
 # 同じフォルダ /x/a の term_a には別の会話 (SA2) の Claude が居る。そこへ打ってはいけない

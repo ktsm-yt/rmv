@@ -933,6 +933,23 @@ async function extDeliver(req: Request): Promise<Response> {
   return Response.json({ ok: true, via: e.session.includes("__") ? "herdr" : "orca" }, { headers: { "cache-control": "no-store" } });
 }
 
+// POST /switch {name, cmd, value}: 送信欄のプルダウンから、その返事の会話の端末へ `/model <value>` / `/effort <value>` + Enter を打つ。
+// 打つ直前に /ext/deliver と同じ extCheck (今の会話か・許可待ちか・入力欄に書きかけがあるか) を通す。v0.13.0 でプルダウンを外した理由
+// (書きかけの途中に `/model …` が連結された) をここで塞ぐ。端末で別の会話に切り替わっていたら打たない (表示している会話と違う会話のモデルが変わる)
+const SWITCH: Record<string, RegExp> = { model: /^[a-z][a-z0-9.-]{0,40}(\[1m\])?$/, effort: /^(low|medium|high|xhigh|max)$/ };
+async function switchTo(req: Request): Promise<Response> {
+  if (!ORIGINS.has(req.headers.get("origin") ?? "")) return new Response("forbidden origin", { status: 403 });
+  const { name, cmd, value } = (await req.json().catch(() => null)) ?? {};
+  if (typeof cmd !== "string" || !Object.hasOwn(SWITCH, cmd) || typeof value !== "string" || !SWITCH[cmd].test(value)) return new Response("bad cmd / value", { status: 400 });
+  if (typeof name !== "string" || !NAME.test(name)) return new Response("bad name", { status: 400 });
+  const { items, askSid } = await historyItems();
+  const e = items.find((x) => x.name === name);
+  const sid = !e ? null : "sid" in e && e.sid ? e.sid : e.name.startsWith("asking-") ? askSid.get(e.session) ?? null : null;
+  if (!sid) return new Response("unverified: この返事の会話 ID が分からず、端末の今の会話か確かめられない。打ち込まない", { status: 409 });
+  const own = `http://127.0.0.1:${PORT}`;
+  return send(new Request(`${own}/send`, { method: "POST", headers: { origin: own, host: `127.0.0.1:${PORT}`, "content-type": "application/json" }, body: JSON.stringify({ name, text: `/${cmd} ${value}`, focus: false, reset: false }) }), { exact: true, check: (t) => extCheck(t, sid) });
+}
+
 // 呼んだ側が先に切った (外部ツールの待ち時間切れ・タブを閉じた) なら打たない。外部ツールは「打てなかった」と見て手で貼る道に回るので、ここで打つと同じ合図が 2 回届く。
 // 確かめるのは打ち始める直前 (extCheck の後) の 1 回だけ。本文を打った後に切られても Enter までは送る (入力欄に合図を残すと、手で貼った分とつながる)
 function aborted(req: Request): Response | null {
@@ -1224,6 +1241,7 @@ Bun.serve({
       return new Response("not found", { status: 404 });
     }
     if (pathname === "/send" && req.method === "POST") return send(req);
+    if (pathname === "/switch" && req.method === "POST") return switchTo(req);
     if (pathname === "/approve" && req.method === "POST") return approve(req);
     if (pathname === "/paste" && req.method === "POST") return paste(req);
     if (pathname === "/open" && req.method === "POST") return open(req);

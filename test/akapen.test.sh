@@ -396,10 +396,13 @@ case "$ARGV" in
   *) ng "send: stub argv が想定外: $ARGV" ;;
 esac
 check "send: localhost Origin も 200" "$(post "http://localhost:$PORT" "$(body "$WITH" x)")" 200
-# model / effort は表示だけ (v0.13.0 でプルダウンを外した)。選択 UI は無く、表示用の #cnow が最下段 (#copt の後ろの #cbar) にある
+# model / effort のプルダウン (v0.20.0 で戻した。打つのは /switch、確認の試験は test/ext-deliver.test.sh)。送信と同じ最下段 (#copt の後ろの #cbar)
 rm -f "$TMP/argv"
-check "page: model / effort のプルダウンは無い (select.cpick / data-cmd が無い)" "$(curl -s "$BASE/" | grep -c 'class="cpick"\|data-cmd=')" 0
-check "page: 表示だけの #cnow が最下段にある (#copt の後ろに #cbar > #cnow)" "$(curl -s "$BASE/" | grep -c '<div id="copt"></div><div id="cbar"><span id="cnow"')" 1
+check "page: プルダウンは送信と同じ最下段 (#copt の後ろに #cbar)" "$(curl -s "$BASE/" | grep -c '<div id="copt"></div><div id="cbar"><select class="cpick" data-cmd="model"')" 1
+check "page: プルダウンは /send でなく /switch に送る" "$(curl -s "$BASE/" | grep -c 'fetch("/switch"')" 1
+printf '{"models": ["sonnet[1m]", "opus[1m]"]}' > "$STATE/keys.json"
+check "keys: models が /keys で返り、ページ側 (renderKeys) が候補の置き換えに読む" "$(curl -s "$BASE/keys" | python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)["models"]))') $(curl -s "$BASE/" | grep -c 'Array.isArray(m.models)')" "sonnet[1m],opus[1m] 1"
+rm -f "$STATE/keys.json"
 check "keys: keys.json 無し → {}" "$(curl -s "$BASE/keys")" "{}"
 check "page: context 使用量は送信欄の見出しの右" "$(curl -s "$BASE/" | grep -c '<span id="cto"></span><span id="cctx"></span></div>')" 1
 check "send: 別 Origin → 403" "$(post "https://evil.example" "$(body "$WITH" x)")" 403
