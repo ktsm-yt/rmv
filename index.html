@@ -362,6 +362,13 @@ document.addEventListener("pointerover", (e) => {
 });
 document.documentElement.addEventListener("pointerleave", () => document.body.classList.remove("proj-peek"));
 try { document.body.classList.toggle("chat-closed", localStorage.getItem("rmx.chat.open") === "0"); } catch {} // チャット欄の開閉 (既定は開)
+// 画面の拡大率 (Ctrl + / - / 0)。Chrome のサイドパネルでは Cmd +/- がタブ側の拡大に取られるので rmv 自身で持つ。localStorage "rmx.zoom" に覚える
+function setPageZoom(z) {
+  z = Math.min(2, Math.max(0.5, Math.round(z * 10) / 10)) || 1;
+  document.documentElement.style.zoom = z === 1 ? "" : z;
+  try { z === 1 ? localStorage.removeItem("rmx.zoom") : localStorage.setItem("rmx.zoom", z); } catch {}
+}
+try { setPageZoom(+localStorage.getItem("rmx.zoom") || 1); } catch {}
 // スマホ: 高さを実際に見えている範囲 (キーボードと下に置いたアドレスバーを除く) に合わせる。100dvh だけでは下のアドレスバーと赤ペンの送信が重なった
 if (isMobileUA && window.visualViewport) {
   const fit = () => document.documentElement.style.setProperty("--vvh", `${visualViewport.height}px`);
@@ -915,6 +922,7 @@ document.addEventListener("keydown", (ev) => {
     else if (ev.key.startsWith("Arrow")) ev.preventDefault();
     return;
   }
+  if (ev.ctrlKey && !ev.metaKey && !ev.altKey && /^[-=+;^0]$/.test(ev.key)) { ev.preventDefault(); return setPageZoom(ev.key === "0" ? 1 : (+document.documentElement.style.zoom || 1) + (ev.key === "-" ? -0.1 : 0.1)); } // Ctrl + / - / 0 = 拡大 / 縮小 / 戻す (JIS の ; ^ も +。Cmd +/- はブラウザの拡大のまま)
   if (ev.key === "Enter" && (ev.metaKey || ev.ctrlKey)) { ev.preventDefault(); return document.getElementById(ev.target === ctext ? "csend" : "send").click(); } // Cmd+Enter = 送信 (入力欄の中でも。チャット欄にいる時はチャット欄の送信)
   if (ev.code === "KeyR" && ev.shiftKey && !ev.altKey && !ev.ctrlKey && !ev.metaKey && !ev.target.closest?.("input, textarea, [contenteditable]")) return togglePause(); // Shift+R = 読み上げの一時停止 / 再開 (下の修飾キー除けより前で拾う。ev.key だと Caps Lock ON で "r" になるので物理キーで見る)
   if (ev.altKey || ev.ctrlKey || ev.metaKey || ev.shiftKey) return;
