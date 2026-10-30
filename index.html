@@ -32,8 +32,8 @@
   #newbtn > span:first-child { flex: none; width: 22px; text-align: center; } /* ＋ は畳み (幅 24 = 枠 22 + 線) と同じ位置に固定。広がってもずらさない */
   #newbtn .nl { display: none; font-size: 12px; }
   /* 列が広がっている時 (開いた状態 / 畳んだ列のホバー展開 / 一覧を開いて固定中) だけ ＋ の右にラベルを出す。細帯では隠す */
-  body:not(.proj-closed) #newbtn, html:not(.narrow) body.proj-closed #proj:hover #newbtn, body.proj-closed.proj-peek #newbtn, body.proj-closed.new-open #newbtn { width: auto; padding: 0 10px 0 0; }
-  body:not(.proj-closed) #newbtn .nl, html:not(.narrow) body.proj-closed #proj:hover #newbtn .nl, body.proj-closed.proj-peek #newbtn .nl, body.proj-closed.new-open #newbtn .nl { display: inline; }
+  body:not(.proj-closed) #newbtn, html:not(.narrow):not(.embedded) body.proj-closed #proj:hover #newbtn, body.proj-closed.proj-peek #newbtn, body.proj-closed.new-open #newbtn { width: auto; padding: 0 10px 0 0; }
+  body:not(.proj-closed) #newbtn .nl, html:not(.narrow):not(.embedded) body.proj-closed #proj:hover #newbtn .nl, body.proj-closed.proj-peek #newbtn .nl, body.proj-closed.new-open #newbtn .nl { display: inline; }
   #ptoggle, #newbtn, #ctoggle { display: block; font: inherit; font-size: 14px; line-height: 1; width: 24px; height: 24px; padding: 0; margin-bottom: 8px; color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; cursor: pointer; }
   /* ＋ 新規の一覧 (fixed): 開いている間は畳んだ列を広げたまま固定する (body.new-open)。行を押すと即 POST /new */
   body.proj-closed.new-open #proj { position: fixed; left: 0; top: 0; bottom: 0; width: 240px; padding: 8px 4px; overflow-y: auto; z-index: 20; box-shadow: 6px 0 18px rgb(0 0 0 / .18); }
@@ -52,9 +52,9 @@
   body.proj-closed #proj { overflow: hidden; }
   body.proj-closed #plist { display: none; }
   /* 畳んでいてもホバーで重ねて開く (離すと閉じる)。☰ で開きっぱなしにもできる (2026-09-29 user) */
-  /* 狭い幅 (サイドパネル) は帯を横切るだけで開いてしまうので、上の ☰ ＋ に乗った時だけ開く (proj-peek、2026-10-25 user) */
-  html:not(.narrow) body.proj-closed #proj:hover, body.proj-closed.proj-peek #proj { position: fixed; left: 0; top: 0; bottom: 0; width: 240px; padding: 8px 4px; overflow-y: auto; z-index: 20; box-shadow: 6px 0 18px rgb(0 0 0 / .18); }
-  html:not(.narrow) body.proj-closed #proj:hover #plist, body.proj-closed.proj-peek #plist { display: block; }
+  /* 狭い幅とサイドパネルの中 (html.embedded) は帯を横切るだけで開いてしまうので、上の ☰ ＋ に乗った時だけ開く (proj-peek、2026-10-25 / 10-30 user) */
+  html:not(.narrow):not(.embedded) body.proj-closed #proj:hover, body.proj-closed.proj-peek #proj { position: fixed; left: 0; top: 0; bottom: 0; width: 240px; padding: 8px 4px; overflow-y: auto; z-index: 20; box-shadow: 6px 0 18px rgb(0 0 0 / .18); }
+  html:not(.narrow):not(.embedded) body.proj-closed #proj:hover #plist, body.proj-closed.proj-peek #plist { display: block; }
   /* 狭い幅 (< 700px) とスマホ (mobile UA、幅は問わない) は html.narrow (head の script が付ける)。:where で詳細度を @media 版と同じに保つ */
   /* 狭い幅では開いても返事を押し潰さず、上に重ねる */
   :where(html.narrow) body { grid-template-columns: 32px minmax(0, 1fr); }
@@ -346,6 +346,9 @@
 // スマホ (mobile UA) は幅に関係なく狭い幅と同じ並びにする。ブラウザの「PC 版サイト」で UA が desktop になれば戻る。CSS 側は html.narrow
 const isMobileUA = navigator.userAgentData?.mobile || /Android|iPhone|iPad|Mobile/.test(navigator.userAgent);
 const isNarrow = () => document.documentElement.classList.contains("narrow");
+// 拡張のサイドパネル (rmp の iframe) の中。Zen のサイドバーは 700px を超えるので、幅に関係なく帯のホバーでは開かない (2026-10-30 user)
+const isEmbedded = window !== window.top;
+document.documentElement.classList.toggle("embedded", isEmbedded);
 function applyProjDefault() {
   let c = isMobileUA || matchMedia("(max-width: 699px)").matches;
   document.documentElement.classList.toggle("narrow", c);
@@ -357,7 +360,7 @@ applyProjDefault();
 // (この script は #proj より前にあるので document で受ける)
 document.addEventListener("pointerover", (e) => {
   const t = e.target instanceof Element ? e.target : null;
-  if (e.pointerType === "mouse" && isNarrow() && t?.closest("#phead")) document.body.classList.add("proj-peek");
+  if (e.pointerType === "mouse" && (isNarrow() || isEmbedded) && t?.closest("#phead")) document.body.classList.add("proj-peek");
   else if (!t?.closest("#proj")) document.body.classList.remove("proj-peek");
 });
 document.documentElement.addEventListener("pointerleave", () => document.body.classList.remove("proj-peek"));

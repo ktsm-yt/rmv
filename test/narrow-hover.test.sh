@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 狭い幅 (サイドパネル) では左の細帯を横切っても一覧が開かず、上の ☰ ＋ に乗った時だけ開くことの再現テスト (2026-10-25 user)。
+# 狭い幅 (サイドパネル) と幅の広いパネル (Zen のサイドバー) では左の細帯を横切っても一覧が開かず、上の ☰ ＋ に乗った時だけ開くことの再現テスト (2026-10-25 user)。
 # 広い幅は今まで通り、帯のどこに乗っても開く。本物の state は触らない (RMV_STATE_DIR を一時領域へ)。
 # 実行: bash rmv/test/narrow-hover.test.sh   (bun / uv / playwright の chromium が要る)
 #   RMV_DIR=<dir> で index.html の置き場を差し替えられる (旧 index.html に当てると FAIL = negative control)
@@ -59,8 +59,22 @@ with sync_playwright() as p:
     pg.mouse.move(600, 400); pg.mouse.move(10, 400); pg.wait_for_timeout(100)
     w = pg.evaluate(W)
     check("広い幅: 帯の真ん中でも今まで通り開く", w > 200, w)
+    pg.close()
+    # Zen のサイドバー: 700px を超える幅の iframe の中でも、帯を通るだけでは開かない (2026-10-30 user)
+    pg = b.new_page(viewport={"width": 1200, "height": 700})
+    pg.set_content(f'<body style="margin:0"><iframe src="{base}" style="border:0;width:900px;height:700px;display:block"></iframe>')
+    fr = pg.frames[1]
+    fr.wait_for_function("document.querySelector('main')?.innerText.includes('HOVER 行 40')", timeout=10000)
+    fr.evaluate("document.body.classList.add('proj-closed')")
+    pg.mouse.move(600, 400); pg.mouse.move(10, 400); pg.wait_for_timeout(100)
+    w = fr.evaluate(W)
+    check("パネル内の広い幅: 帯の真ん中を通っても開かない", w < 60, w)
+    box = fr.locator("#ptoggle").bounding_box()
+    pg.mouse.move(box["x"] + 5, box["y"] + 5); pg.wait_for_timeout(100)
+    w = fr.evaluate(W)
+    check("パネル内の広い幅: ☰ に乗ると開く", w > 200, w)
     b.close()
-print(f"scanned 5 checks, {fail} failed")
+print(f"scanned 7 checks, {fail} failed")
 sys.exit(1 if fail else 0)
 PY
 rc=$?
