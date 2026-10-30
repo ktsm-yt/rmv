@@ -128,6 +128,9 @@ check "設定済み: 自分の origin (viewer) → 403 (/ext/* は RMV_EXT_ORIGI
 check "設定済み: カンマ区切りの 2 つ目 (前後の空白は無視) → 403 でない" "$(dl "$P1" '{}' -H 'Origin: https://other.example')" 400
 check "設定済み: 外部ツールの origin でも Host が違えば 403 (DNS rebinding)" "$(dl "$P1" "$(sb "$SA2" "$T")" -H "Origin: $EXT" -H "Host: rebind:$P1")" 403
 check "設定済み: 外部ツールの origin は /send には使えない (403)" "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "Origin: $EXT" -H 'content-type: application/json' --data '{"name":"x.md","text":"x"}' "http://127.0.0.1:$P1/send")" 403
+check "設定済み: 外部ツールの origin の事前確認 (OPTIONS) → 204 で origin を返す" "$(curl -s -o /dev/null -w '%{http_code} %header{access-control-allow-origin}' -X OPTIONS -H "Origin: $EXT" "http://127.0.0.1:$P1/ext/deliver")" "204 $EXT"
+check "設定済み: 返事にも origin を返す (Firefox は無いと本文を捨てる)" "$(curl -s -o /dev/null -w '%{http_code} %header{access-control-allow-origin}' -X POST -H "Origin: $EXT" -H 'content-type: application/json' --data '{}' "http://127.0.0.1:$P1/ext/deliver")" "400 $EXT"
+check "設定済み: 別の origin の事前確認 → 403、origin は返さない" "$(curl -s -o /dev/null -w '%{http_code} [%header{access-control-allow-origin}]' -X OPTIONS -H 'Origin: https://evil.example' "http://127.0.0.1:$P1/ext/deliver")" "403 []"
 check "設定済み: /ext/ の他の口・GET は 404" "$(curl -s -o /dev/null -w '%{http_code}' -H "Origin: $EXT" "http://127.0.0.1:$P1/ext/deliver") $(curl -s -o /dev/null -w '%{http_code}' -X POST -H "Origin: $EXT" "http://127.0.0.1:$P1/ext/send")" "404 404"
 check "設定済み: 403 / 404 の間は端末に何も打たない" "$(typed)" 0
 

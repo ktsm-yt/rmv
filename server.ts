@@ -1236,9 +1236,15 @@ Bun.serve({
     if (pathname === "/sessions") return sessions();
     // 外部ツールの口: Origin が RMV_EXT_ORIGINS に無ければ (未設定なら全部) 本文を読む前に 403
     if (pathname.startsWith("/ext/")) {
-      if (!EXT_ORIGINS.has(req.headers.get("origin") ?? "")) return new Response("forbidden origin", { status: 403 });
-      if (pathname === "/ext/deliver" && req.method === "POST") return extDeliver(req);
-      return new Response("not found", { status: 404 });
+      const origin = req.headers.get("origin") ?? "";
+      if (!EXT_ORIGINS.has(origin)) return new Response("forbidden origin", { status: 403 });
+      // Firefox は拡張の fetch にも CORS をかける (2026-10-30 Zen で実測: 200 でも本文を捨てる)。許可した origin にだけ返し、JSON の事前確認に答える
+      const cors = { "access-control-allow-origin": origin, vary: "Origin" };
+      if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: { ...cors, "access-control-allow-methods": "POST", "access-control-allow-headers": "content-type", "access-control-max-age": "600" } });
+      const r = pathname === "/ext/deliver" && req.method === "POST" ? await extDeliver(req) : new Response("not found", { status: 404 });
+      const headers = new Headers(r.headers);
+      for (const [k, v] of Object.entries(cors)) headers.set(k, v);
+      return new Response(r.body, { status: r.status, statusText: r.statusText, headers });
     }
     if (pathname === "/send" && req.method === "POST") return send(req);
     if (pathname === "/switch" && req.method === "POST") return switchTo(req);
