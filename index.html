@@ -157,13 +157,13 @@
   html.narrow #chead:hover { background: color-mix(in srgb, var(--fg) 5%, transparent); border-radius: 6px; } /* 行全体が押せることを見せる */
   html.narrow #chead:hover #ctoggle { color: var(--fg); }
   html.narrow body.chat-closed #chead > #cto { display: block; }
-  @media (min-width: 900px) {
+  :where(html.wide) {
     body { grid-template-columns: 200px minmax(0, 1fr) 300px; }
     body.proj-closed { grid-template-columns: 32px minmax(0, 1fr) 300px; }
     body.chat-closed { grid-template-columns: 200px minmax(0, 1fr) 32px; }
     body.proj-closed.chat-closed { grid-template-columns: 32px minmax(0, 1fr) 32px; }
   }
-  @media (max-width: 899px) {
+  :where(html:not(.wide)) {
     body { grid-template-rows: auto minmax(0, 1fr); }
     #proj { grid-row: 1 / -1; }
     main { grid-row: 2; }
@@ -305,23 +305,21 @@
   #tray button:disabled { opacity: .35; cursor: default; }
   #sent { color: var(--green); }
   .pin > span:empty { display: none; }
-  @media (min-width: 900px) {
-    html:not(.narrow) main { position: relative; scrollbar-gutter: stable; }
-    html:not(.narrow) #margin { position: absolute; top: 0; left: calc(56px + var(--measure) + 20px); right: 16px; pointer-events: none; }
-    html:not(.narrow) #margin .pin { position: absolute; left: 0; right: 0; pointer-events: auto; grid-template-columns: auto minmax(0, 1fr) auto; gap: 4px; padding: 2px 6px; font-size: 13px; line-height: 1.3; background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--red); border-radius: 8px; box-shadow: 0 2px 8px rgb(0 0 0 / .08); }
-    html:not(.narrow) #margin .pin b { max-width: 7em; overflow: hidden; text-overflow: ellipsis; }
-    html:not(.narrow) #margin .pin::before { content: ""; position: absolute; left: -20px; top: 14px; width: 18px; border-top: 1px dashed color-mix(in srgb, var(--red) 60%, transparent); }
-    html:not(.narrow) #margin .pin[data-k] .q, html:not(.narrow) #margin .pin > span:empty { display: none; }
-    html:not(.narrow) #margin .pin textarea { min-height: 0; padding: 2px 6px; }
-    html:not(.narrow) #margin .pin button { font: inherit; border: 0; background: none; color: var(--muted); cursor: pointer; padding: 0 2px; }
-    html:not(.narrow) body.rp-margin #tray { grid-template-columns: minmax(0, 1fr) auto; align-items: center; padding: 6px 10px; }
-    html:not(.narrow) body.rp-margin #pins:empty { display: none; }
-    html:not(.narrow) body.rp-margin #free { min-height: calc(1lh + 8px); }
-    html:not(.narrow) body.rp-margin #tray .row { grid-column: 2; grid-row: 1; }
-    html:not(.narrow) body.rp-margin #tray #akmsg:empty { display: none; }
-    html:not(.narrow) body.rp-margin #fimgs { grid-column: 1 / -1; }
-  }
-  @media (max-width: 599px) {
+  html:where(.wide):not(.narrow) main { position: relative; scrollbar-gutter: stable; }
+  html:where(.wide):not(.narrow) #margin { position: absolute; top: 0; left: calc(56px + var(--measure) + 20px); right: 16px; pointer-events: none; }
+  html:where(.wide):not(.narrow) #margin .pin { position: absolute; left: 0; right: 0; pointer-events: auto; grid-template-columns: auto minmax(0, 1fr) auto; gap: 4px; padding: 2px 6px; font-size: 13px; line-height: 1.3; background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--red); border-radius: 8px; box-shadow: 0 2px 8px rgb(0 0 0 / .08); }
+  html:where(.wide):not(.narrow) #margin .pin b { max-width: 7em; overflow: hidden; text-overflow: ellipsis; }
+  html:where(.wide):not(.narrow) #margin .pin::before { content: ""; position: absolute; left: -20px; top: 14px; width: 18px; border-top: 1px dashed color-mix(in srgb, var(--red) 60%, transparent); }
+  html:where(.wide):not(.narrow) #margin .pin[data-k] .q, html:where(.wide):not(.narrow) #margin .pin > span:empty { display: none; }
+  html:where(.wide):not(.narrow) #margin .pin textarea { min-height: 0; padding: 2px 6px; }
+  html:where(.wide):not(.narrow) #margin .pin button { font: inherit; border: 0; background: none; color: var(--muted); cursor: pointer; padding: 0 2px; }
+  html:where(.wide):not(.narrow) body.rp-margin #tray { grid-template-columns: minmax(0, 1fr) auto; align-items: center; padding: 6px 10px; }
+  html:where(.wide):not(.narrow) body.rp-margin #pins:empty { display: none; }
+  html:where(.wide):not(.narrow) body.rp-margin #free { min-height: calc(1lh + 8px); }
+  html:where(.wide):not(.narrow) body.rp-margin #tray .row { grid-column: 2; grid-row: 1; }
+  html:where(.wide):not(.narrow) body.rp-margin #tray #akmsg:empty { display: none; }
+  html:where(.wide):not(.narrow) body.rp-margin #fimgs { grid-column: 1 / -1; }
+  :where(html.xs) {
     main { padding: 10px 10px 0; }
     #bar { gap: 6px; font-size: 12px; margin-bottom: 12px; }
     #bar button, #bar select { padding: 0 6px; }
@@ -349,13 +347,24 @@ const isNarrow = () => document.documentElement.classList.contains("narrow");
 // 拡張のサイドパネル (rmp の iframe) の中。Zen のサイドバーは 700px を超えるので、幅に関係なく帯のホバーでは開かない (2026-10-30 user)
 const isEmbedded = window !== window.top;
 document.documentElement.classList.toggle("embedded", isEmbedded);
+// 幅は Ctrl + の拡大率で割って測る。@media は html の zoom を見ないので、拡大すると狭いのに 3 列のままだった (2026-10-31 user、Zen のサイドバー)
+// CSS 側は html.wide (>= 900px) / html.xs (< 600px)
+const pageWidth = () => innerWidth / (+document.documentElement.style.zoom || 1);
 function applyProjDefault() {
-  let c = isMobileUA || matchMedia("(max-width: 699px)").matches;
+  let c = isMobileUA || pageWidth() < 700;
   document.documentElement.classList.toggle("narrow", c);
   if (!c) try { c = localStorage.getItem("rmx.proj") === "closed"; } catch {}
   document.body.classList.toggle("proj-closed", c);
 }
-applyProjDefault();
+function applyWidth(force) {
+  const h = document.documentElement.classList, w = pageWidth(), wide = h.contains("wide");
+  h.toggle("wide", w >= 900);
+  h.toggle("xs", w < 600);
+  if (force || isNarrow() !== (isMobileUA || w < 700)) applyProjDefault();
+  if (wide !== h.contains("wide")) document.dispatchEvent(new Event("rmx-wide"));
+}
+applyWidth(true);
+addEventListener("resize", () => applyWidth());
 // 狭い幅のホバー展開: ☰ ＋ (#phead) にマウスが乗ったら開き、広がった一覧から出たら閉じる。タッチは対象外 (☰ を押す)
 // (この script は #proj より前にあるので document で受ける)
 document.addEventListener("pointerover", (e) => {
@@ -370,6 +379,7 @@ function setPageZoom(z) {
   z = Math.min(2, Math.max(0.5, Math.round(z * 10) / 10)) || 1;
   document.documentElement.style.zoom = z === 1 ? "" : z;
   try { z === 1 ? localStorage.removeItem("rmx.zoom") : localStorage.setItem("rmx.zoom", z); } catch {}
+  applyWidth();
 }
 try { setPageZoom(+localStorage.getItem("rmx.zoom") || 1); } catch {}
 // スマホ: 高さを実際に見えている範囲 (キーボードと下に置いたアドレスバーを除く) に合わせる。100dvh だけでは下のアドレスバーと赤ペンの送信が重なった
@@ -1052,7 +1062,6 @@ function stackNotes(items, gap) {
 const pinNodes = new WeakMap();
 let marginFrame = 0, composingPin = false;
 const margin = document.getElementById("margin"), pinsEl = document.getElementById("pins"), mainEl = document.querySelector("main");
-const marginMedia = matchMedia("(min-width: 900px)");
 const marginResize = new ResizeObserver(() => scheduleMargin());
 const pinNode = (p, k, choice) => {
   let node = pinNodes.get(p);
@@ -1080,7 +1089,7 @@ const marginAnchor = (entry) => entry.choice
 const scheduleMargin = () => { if (!marginFrame) marginFrame = requestAnimationFrame(() => { marginFrame = 0; layoutMargin(); }); };
 function layoutMargin() {
   if (composingPin) return;
-  const d = drafts.get(curName()), desktop = marginMedia.matches && !document.documentElement.classList.contains("narrow");
+  const d = drafts.get(curName()), desktop = document.documentElement.classList.contains("wide") && !document.documentElement.classList.contains("narrow");
   if (margin.hidden === desktop) margin.hidden = !desktop;
   const available = desktop && margin.getBoundingClientRect().width >= 160;
   const entries = d ? [...d.choices].sort((a, b) => a[0] - b[0]).map(([k, p]) => ({ k: String(k), p, choice: true })).concat([...d.pins].map(([k, p]) => ({ k, p, choice: false }))) : [];
@@ -1198,7 +1207,7 @@ const pinClick = (ev) => {
 marginResize.observe(mainEl);
 ["bar", "chips", "ask", "reply"].forEach((id) => marginResize.observe(document.getElementById(id)));
 document.getElementById("ask").addEventListener("toggle", scheduleMargin);
-marginMedia.addEventListener("change", scheduleMargin);
+document.addEventListener("rmx-wide", scheduleMargin);
 document.fonts?.ready.then(scheduleMargin);
 document.fonts?.addEventListener("loadingdone", scheduleMargin);
 document.getElementById("reply").addEventListener("load", scheduleMargin, true);
@@ -1658,7 +1667,6 @@ document.getElementById("plist").addEventListener("click", async (ev) => {
 });
 
 // 列の開閉。狭い幅では毎回畳んだ状態から始め、覚えるのは広い幅での選択だけ。
-matchMedia("(max-width: 699px)").addEventListener("change", window.applyProjDefault);
 document.getElementById("ptoggle").onclick = () => {
   document.body.classList.remove("proj-peek"); // ホバーで開いた分は ☰ で閉じる
   const closed = document.body.classList.toggle("proj-closed");
