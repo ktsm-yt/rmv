@@ -84,11 +84,14 @@ with sync_playwright() as p:
     check("150% 拡大の 950px: 3 列にしない", cols < 3, cols)
     narrow = pg.evaluate("document.documentElement.classList.contains('narrow')")
     check("150% 拡大の 950px: 狭い幅の並びになる", narrow, narrow)
+    # html の zoom は 100dvh にも掛かる。割り戻さないと本文が枠より高くなり、外側にもスクロールが出て返事欄が上に残らない (2026-10-31 user、Zen)
+    over = pg.evaluate("document.scrollingElement.scrollHeight - innerHeight")
+    check("150% 拡大: ページ全体はスクロールしない (本文の中だけ)", over <= 1, over)
     pg.keyboard.press("Control+0"); pg.wait_for_timeout(100)
     cols = pg.evaluate("getComputedStyle(document.body).gridTemplateColumns.split(' ').length")
     check("拡大を戻すと 950px は 3 列に戻る", cols == 3, cols)
     b.close()
-print(f"scanned 10 checks, {fail} failed")
+print(f"scanned 11 checks, {fail} failed")
 sys.exit(1 if fail else 0)
 PY
 rc=$?

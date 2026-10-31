@@ -18,7 +18,7 @@
   }
   * { box-sizing: border-box; }
   body {
-    margin: 0; height: 100vh; height: 100dvh; height: var(--vvh, 100dvh); padding-bottom: env(safe-area-inset-bottom); display: grid; grid-template-columns: 200px minmax(0, 1fr);
+    margin: 0; height: 100vh; height: 100dvh; height: calc(var(--vvh, 100dvh) / var(--z, 1)); padding-bottom: env(safe-area-inset-bottom); display: grid; grid-template-columns: 200px minmax(0, 1fr);
     font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
     line-height: 1.8; background: var(--bg); color: var(--fg);
   }
@@ -378,6 +378,7 @@ try { document.body.classList.toggle("chat-closed", localStorage.getItem("rmx.ch
 function setPageZoom(z) {
   z = Math.min(2, Math.max(0.5, Math.round(z * 10) / 10)) || 1;
   document.documentElement.style.zoom = z === 1 ? "" : z;
+  document.documentElement.style.setProperty("--z", z); // html の zoom は 100dvh にも掛かり、本文が枠より高くなって外側にもスクロールが出ていた (2026-10-31 user、Zen / Chrome とも)
   try { z === 1 ? localStorage.removeItem("rmx.zoom") : localStorage.setItem("rmx.zoom", z); } catch {}
   applyWidth();
 }
