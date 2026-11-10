@@ -386,7 +386,8 @@ document.addEventListener("pointerover", (e) => {
   else if (!t?.closest("#proj")) document.body.classList.remove("proj-peek");
 });
 document.documentElement.addEventListener("pointerleave", () => document.body.classList.remove("proj-peek"));
-try { document.body.classList.toggle("chat-closed", localStorage.getItem("rmx.chat.open") === "0"); } catch {} // チャット欄の開閉 (既定は開)
+// チャット欄の開閉。スマホ (mobile UA) は毎回上に畳んで始める (返事を先に見せる、2026-11-11 user)。PC は細い幅でも覚えた開閉 (既定は開)
+try { document.body.classList.toggle("chat-closed", isMobileUA || localStorage.getItem("rmx.chat.open") === "0"); } catch {}
 // 画面の拡大率 (Ctrl + / - / 0)。Chrome のサイドパネルでは Cmd +/- がタブ側の拡大に取られるので rmv 自身で持つ。localStorage "rmx.zoom" に覚える
 function setPageZoom(z) {
   z = Math.min(2, Math.max(0.5, Math.round(z * 10) / 10)) || 1;
@@ -1562,11 +1563,11 @@ ctext.addEventListener("keydown", (ev) => {
   else if (ev.key === "Escape") { ev.preventDefault(); sugItems = []; sug.hidden = true; }
 });
 sug.addEventListener("mousedown", (ev) => { const d = ev.target.closest("[data-i]"); if (d) { ev.preventDefault(); pickSug(+d.dataset.i); } });
-// 開閉は幅を問わず localStorage "rmx.chat.open" に覚える。スマホはバー全体 (#chead) が押せる
+// 開閉は PC だけ localStorage "rmx.chat.open" に覚える (スマホは毎回畳んで始める)。狭い幅はバー全体 (#chead) が押せる
 document.getElementById("chead").onclick = (ev) => {
   if (!isNarrow() && !ev.target.closest("#ctoggle")) return;
   const closed = document.body.classList.toggle("chat-closed");
-  try { localStorage.setItem("rmx.chat.open", closed ? "0" : "1"); } catch {}
+  if (!isMobileUA) try { localStorage.setItem("rmx.chat.open", closed ? "0" : "1"); } catch {}
 };
 
 // セッション chip: 選択中プロジェクトの all (新しい順) で各セッションが最初に現れた entry = そのセッションの最新返事。並びも新しい順。
