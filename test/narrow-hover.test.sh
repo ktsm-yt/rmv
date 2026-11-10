@@ -65,6 +65,12 @@ with sync_playwright() as p:
     check("広い幅: 既定は畳んだ細帯", pg.evaluate(W) < 60, pg.evaluate(W))
     order = pg.evaluate("['main','#chat','#proj'].map(q => Math.round(document.querySelector(q).getBoundingClientRect().left))")
     check("広い幅: 左から 返事 | 送信欄 | 列 の順で 1 行", order[0] < order[1] < order[2] and pg.evaluate("document.querySelector('main').getBoundingClientRect().top") < 5, order)
+    pg.locator("#pside").click(); pg.mouse.move(600, 400); pg.wait_for_timeout(100)
+    order = pg.evaluate("['#proj','main','#chat'].map(q => Math.round(document.querySelector(q).getBoundingClientRect().left))")
+    check("⇆ で左へ: 左から 列 | 返事 | 送信欄 の順で 1 行", order[0] < order[1] < order[2] and pg.evaluate("document.querySelector('main').getBoundingClientRect().top") < 5, order)
+    pg.reload(); pg.wait_for_timeout(200); pg.mouse.move(600, 400); pg.mouse.move(10, 400); pg.wait_for_timeout(100)
+    w = pg.evaluate(W); l = pg.evaluate("document.getElementById('proj').getBoundingClientRect().left")
+    check("左に置いた選択は読み直しても残り、左端の帯で重ねて開く", w > 200 and l == 0, (w, l))
     pg.close()
     # Zen のサイドバー: 700px を超える幅の iframe の中でも、帯を通るだけでは開かない (2026-10-30 user)
     pg = b.new_page(viewport={"width": 1200, "height": 700})
@@ -97,7 +103,7 @@ with sync_playwright() as p:
     cols = pg.evaluate("getComputedStyle(document.body).gridTemplateColumns.split(' ').length")
     check("拡大を戻すと 950px は 3 列に戻る", cols == 3, cols)
     b.close()
-print(f"scanned 14 checks, {fail} failed")
+print(f"scanned 16 checks, {fail} failed")
 sys.exit(1 if fail else 0)
 PY
 rc=$?
