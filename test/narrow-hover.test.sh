@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 狭い幅 (サイドパネル) と幅の広いパネル (Zen のサイドバー) では左の細帯を横切っても一覧が開かず、上の ☰ ＋ に乗った時だけ開くことの再現テスト (2026-10-25 user)。
+# 狭い幅 (サイドパネル) と幅の広いパネル (Zen のサイドバー) では右端の細帯を横切っても一覧が開かず、上の ☰ ＋ に乗った時だけ開くことの再現テスト (2026-10-25 user)。
 # 広い幅は今まで通り、帯のどこに乗っても開く。本物の state は触らない (RMV_STATE_DIR を一時領域へ)。
 # 実行: bash rmv/test/narrow-hover.test.sh   (bun / uv / playwright の chromium が要る)
 #   RMV_DIR=<dir> で index.html の置き場を差し替えられる (旧 index.html に当てると FAIL = negative control)
@@ -37,7 +37,7 @@ with sync_playwright() as p:
     pg = b.new_page(viewport={"width": 400, "height": 700})
     pg.goto(base)
     pg.wait_for_function("document.querySelector('main')?.innerText.includes('HOVER 行 40')", timeout=10000)
-    pg.mouse.move(200, 400); pg.mouse.move(10, 400); pg.wait_for_timeout(100)
+    pg.mouse.move(200, 400); pg.mouse.move(390, 400); pg.wait_for_timeout(100)
     w = pg.evaluate(W)
     check("狭い幅: 帯の真ん中を通っても開かない", w < 60, w)
     if shots: pg.screenshot(path=f"{shots}/narrow-hover-1-strip.png")
@@ -45,20 +45,26 @@ with sync_playwright() as p:
     pg.mouse.move(box["x"] + 5, box["y"] + 5); pg.wait_for_timeout(100)
     w = pg.evaluate(W)
     check("狭い幅: ☰ に乗ると開く", w > 200, w)
-    pg.mouse.move(100, 400); pg.wait_for_timeout(100)
+    pg.mouse.move(300, 400); pg.wait_for_timeout(100)
     w = pg.evaluate(W)
     check("狭い幅: 開いた一覧の上を下へ動かしても開いたまま", w > 200, w)
     if shots: pg.screenshot(path=f"{shots}/narrow-hover-2-open.png")
-    pg.mouse.move(350, 400); pg.wait_for_timeout(100)
+    pg.mouse.move(50, 400); pg.wait_for_timeout(100)
     w = pg.evaluate(W)
     check("狭い幅: 一覧から返事へ出ると閉じる", w < 60, w)
     pg.close()
     pg = b.new_page(viewport={"width": 1200, "height": 700})
     pg.goto(base)
     pg.evaluate("document.body.classList.add('proj-closed')")
-    pg.mouse.move(600, 400); pg.mouse.move(10, 400); pg.wait_for_timeout(100)
+    pg.mouse.move(600, 400); pg.mouse.move(1190, 400); pg.wait_for_timeout(100)
     w = pg.evaluate(W)
     check("広い幅: 帯の真ん中でも今まで通り開く", w > 200, w)
+    r = pg.evaluate("document.getElementById('proj').getBoundingClientRect().right")
+    check("広い幅: 列は右端にあり、重ねて開く", r >= 1199 and pg.evaluate("getComputedStyle(document.getElementById('proj')).position") == "fixed", r)
+    pg.goto(base); pg.evaluate("localStorage.clear()"); pg.reload(); pg.wait_for_timeout(200)
+    check("広い幅: 既定は畳んだ細帯", pg.evaluate(W) < 60, pg.evaluate(W))
+    order = pg.evaluate("['main','#chat','#proj'].map(q => Math.round(document.querySelector(q).getBoundingClientRect().left))")
+    check("広い幅: 左から 返事 | 送信欄 | 列 の順で 1 行", order[0] < order[1] < order[2] and pg.evaluate("document.querySelector('main').getBoundingClientRect().top") < 5, order)
     pg.close()
     # Zen のサイドバー: 700px を超える幅の iframe の中でも、帯を通るだけでは開かない (2026-10-30 user)
     pg = b.new_page(viewport={"width": 1200, "height": 700})
@@ -66,7 +72,7 @@ with sync_playwright() as p:
     fr = pg.frames[1]
     fr.wait_for_function("document.querySelector('main')?.innerText.includes('HOVER 行 40')", timeout=10000)
     fr.evaluate("document.body.classList.add('proj-closed')")
-    pg.mouse.move(600, 400); pg.mouse.move(10, 400); pg.wait_for_timeout(100)
+    pg.mouse.move(600, 400); pg.mouse.move(890, 400); pg.wait_for_timeout(100)
     w = fr.evaluate(W)
     check("パネル内の広い幅: 帯の真ん中を通っても開かない", w < 60, w)
     box = fr.locator("#ptoggle").bounding_box()
@@ -91,7 +97,7 @@ with sync_playwright() as p:
     cols = pg.evaluate("getComputedStyle(document.body).gridTemplateColumns.split(' ').length")
     check("拡大を戻すと 950px は 3 列に戻る", cols == 3, cols)
     b.close()
-print(f"scanned 11 checks, {fail} failed")
+print(f"scanned 14 checks, {fail} failed")
 sys.exit(1 if fail else 0)
 PY
 rc=$?

@@ -18,27 +18,27 @@
   }
   * { box-sizing: border-box; }
   body {
-    margin: 0; height: 100vh; height: 100dvh; height: calc(var(--vvh, 100dvh) / var(--z, 1)); padding-bottom: env(safe-area-inset-bottom); display: grid; grid-template-columns: 200px minmax(0, 1fr);
+    margin: 0; height: 100vh; height: 100dvh; height: calc(var(--vvh, 100dvh) / var(--z, 1)); padding-bottom: env(safe-area-inset-bottom); display: grid; grid-template-columns: minmax(0, 1fr) 200px;
     font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
     line-height: 1.8; background: var(--bg); color: var(--fg);
   }
-  /* 左のプロジェクト列: 畳むと ☰ だけの細帯。開閉は広い幅でだけ localStorage "rmx.proj" に覚える */
-  #proj { overflow-y: auto; padding: 8px 4px; border-right: 1px solid var(--line); background: var(--bg); font-size: 13px; line-height: 1.5; }
+  /* 右端のプロジェクト列: 既定は畳んだ ☰ だけの細帯で、ホバーで返事の上に重ねて開く (2026-11-10 user: 左 → 右、重ねて開く)。☰ で列として開いた選択は広い幅でだけ localStorage "rmx.projR" に覚える */
+  #proj { grid-column: -2; overflow-y: auto; padding: 8px 4px; border-left: 1px solid var(--line); background: var(--bg); font-size: 13px; line-height: 1.5; }
   /* ☰ / ＋ の位置は畳んだ細帯 (32px = 4 + 24 + 4) に合わせて全状態で同じ。開いた時に動かさない。一覧だけ左右に余白を足す */
   #plist { padding: 4px 4px 0; }
-  #phead { display: flex; flex-direction: column; align-items: flex-start; } /* ☰ の真下に ＋ (開閉どちらでも縦) */
+  #phead { display: flex; flex-direction: column; align-items: flex-end; } /* ☰ の真下に ＋ (開閉どちらでも縦) */
   #phead #ptoggle { margin-bottom: 4px; }
-  #phead #newbtn { display: flex; align-items: center; gap: 8px; white-space: nowrap; } /* #phead 付き: 下の共通ボタン指定 (display: block) に負けないように */
+  #phead #newbtn { display: flex; flex-direction: row-reverse; align-items: center; gap: 8px; white-space: nowrap; } /* #phead 付き: 下の共通ボタン指定 (display: block) に負けないように */
   #newbtn > span:first-child { flex: none; width: 22px; text-align: center; } /* ＋ は畳み (幅 24 = 枠 22 + 線) と同じ位置に固定。広がってもずらさない */
   #newbtn .nl { display: none; font-size: 12px; }
-  /* 列が広がっている時 (開いた状態 / 畳んだ列のホバー展開 / 一覧を開いて固定中) だけ ＋ の右にラベルを出す。細帯では隠す */
-  body:not(.proj-closed) #newbtn, html:not(.narrow):not(.embedded) body.proj-closed #proj:hover #newbtn, body.proj-closed.proj-peek #newbtn, body.proj-closed.new-open #newbtn { width: auto; padding: 0 10px 0 0; }
+  /* 列が広がっている時 (開いた状態 / 畳んだ列のホバー展開 / 一覧を開いて固定中) だけ ＋ の左にラベルを出す。細帯では隠す */
+  body:not(.proj-closed) #newbtn, html:not(.narrow):not(.embedded) body.proj-closed #proj:hover #newbtn, body.proj-closed.proj-peek #newbtn, body.proj-closed.new-open #newbtn { width: auto; padding: 0 0 0 10px; }
   body:not(.proj-closed) #newbtn .nl, html:not(.narrow):not(.embedded) body.proj-closed #proj:hover #newbtn .nl, body.proj-closed.proj-peek #newbtn .nl, body.proj-closed.new-open #newbtn .nl { display: inline; }
   #ptoggle, #newbtn, #ctoggle { display: block; font: inherit; font-size: 14px; line-height: 1; width: 24px; height: 24px; padding: 0; margin-bottom: 8px; color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; cursor: pointer; }
   /* ＋ 新規の一覧 (fixed): 開いている間は畳んだ列を広げたまま固定する (body.new-open)。行を押すと即 POST /new */
-  body.proj-closed.new-open #proj { position: fixed; left: 0; top: 0; bottom: 0; width: 240px; padding: 8px 4px; overflow-y: auto; z-index: 20; box-shadow: 6px 0 18px rgb(0 0 0 / .18); }
+  body.proj-closed.new-open #proj { position: fixed; right: 0; top: 0; bottom: 0; width: 240px; padding: 8px 4px; overflow-y: auto; z-index: 20; box-shadow: -6px 0 18px rgb(0 0 0 / .18); }
   body.proj-closed.new-open #plist { display: block; }
-  #newpop { position: fixed; left: 4px; top: 72px; width: min(300px, 92vw); max-height: 70vh; overflow-y: auto; z-index: 30; padding: 6px; background: var(--panel); color: var(--fg); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 18px rgb(0 0 0 / .4); font-size: 13px; line-height: 1.5; }
+  #newpop { position: fixed; right: 4px; top: 72px; width: min(300px, 92vw); max-height: 70vh; overflow-y: auto; z-index: 30; padding: 6px; background: var(--panel); color: var(--fg); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 18px rgb(0 0 0 / .4); font-size: 13px; line-height: 1.5; }
   #newpop[hidden] { display: none; }
   #newpop .hd { font-size: 11px; color: var(--muted); padding: 2px 8px 4px; }
   #newpop .it { display: flex; justify-content: space-between; gap: 8px; align-items: center; width: 100%; min-height: 40px; box-sizing: border-box; padding: 5px 8px; font: inherit; text-align: left; color: var(--fg); background: none; border: 0; border-radius: 6px; cursor: pointer; }
@@ -48,17 +48,17 @@
   #newpop .it .k { font-size: 11px; color: var(--red); white-space: nowrap; }
   #newpop .it:disabled { opacity: .5; cursor: default; }
   #ptoggle.unread { border-color: var(--red); color: var(--red); }
-  body.proj-closed { grid-template-columns: 32px minmax(0, 1fr); }
+  body.proj-closed { grid-template-columns: minmax(0, 1fr) 32px; }
   body.proj-closed #proj { overflow: hidden; }
   body.proj-closed #plist { display: none; }
   /* 畳んでいてもホバーで重ねて開く (離すと閉じる)。☰ で開きっぱなしにもできる (2026-09-29 user) */
   /* 狭い幅とサイドパネルの中 (html.embedded) は帯を横切るだけで開いてしまうので、上の ☰ ＋ に乗った時だけ開く (proj-peek、2026-10-25 / 10-30 user) */
-  html:not(.narrow):not(.embedded) body.proj-closed #proj:hover, body.proj-closed.proj-peek #proj { position: fixed; left: 0; top: 0; bottom: 0; width: 240px; padding: 8px 4px; overflow-y: auto; z-index: 20; box-shadow: 6px 0 18px rgb(0 0 0 / .18); }
+  html:not(.narrow):not(.embedded) body.proj-closed #proj:hover, body.proj-closed.proj-peek #proj { position: fixed; right: 0; top: 0; bottom: 0; width: 240px; padding: 8px 4px; overflow-y: auto; z-index: 20; box-shadow: -6px 0 18px rgb(0 0 0 / .18); }
   html:not(.narrow):not(.embedded) body.proj-closed #proj:hover #plist, body.proj-closed.proj-peek #plist { display: block; }
   /* 狭い幅 (< 700px) とスマホ (mobile UA、幅は問わない) は html.narrow (head の script が付ける)。:where で詳細度を @media 版と同じに保つ */
   /* 狭い幅では開いても返事を押し潰さず、上に重ねる */
-  :where(html.narrow) body { grid-template-columns: 32px minmax(0, 1fr); }
-  :where(html.narrow) body:not(.proj-closed) #proj { position: fixed; left: 0; top: 0; bottom: 0; width: min(280px, 88vw); z-index: 20; box-shadow: 6px 0 18px rgb(0 0 0 / .18); }
+  :where(html.narrow) body { grid-template-columns: minmax(0, 1fr) 32px; }
+  :where(html.narrow) body:not(.proj-closed) #proj { position: fixed; right: 0; top: 0; bottom: 0; width: min(280px, 88vw); z-index: 20; box-shadow: -6px 0 18px rgb(0 0 0 / .18); }
   .prow { display: block; width: 100%; text-align: left; font: inherit; color: var(--fg); background: none; border: 0; border-radius: 6px; padding: 6px 8px; margin-bottom: 2px; cursor: pointer; }
   .prow:hover { background: color-mix(in srgb, var(--fg) 6%, transparent); }
   .prow.on { background: var(--fg); color: var(--bg); }
@@ -74,7 +74,7 @@
   #pdead { font: inherit; font-size: 11px; color: var(--muted); background: none; border: 0; padding: 6px 8px; cursor: pointer; text-decoration: underline; }
   .rc { flex: none; font-style: normal; font-size: 10px; margin-right: 4px; color: var(--rc); } /* repo 色の丸: プロジェクト列・上の chip で同じ色 = 同じ repo */
   .dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--red); }
-  main { grid-column: 2; overflow-y: auto; padding: 32px 56px; }
+  main { grid-column: 1; overflow-y: auto; padding: 32px 56px; }
   /* チャット欄: ピン無しで自由文を元の端末へ。幅 900px 以上は右の列、未満は返事の上の帯 (grid の 1 行目なので返事をスクロールしても隠れない) */
   #chat { display: flex; flex-direction: column; gap: 8px; min-height: 0; overflow: hidden; padding: 12px; border-left: 1px solid var(--line); background: var(--bg); font-size: 13px; line-height: 1.5; }
   #chead { display: flex; gap: 6px; align-items: center; }
@@ -158,10 +158,11 @@
   html.narrow #chead:hover #ctoggle { color: var(--fg); }
   html.narrow body.chat-closed #chead > #cto { display: block; }
   :where(html.wide) {
-    body { grid-template-columns: 200px minmax(0, 1fr) 300px; }
-    body.proj-closed { grid-template-columns: 32px minmax(0, 1fr) 300px; }
-    body.chat-closed { grid-template-columns: 200px minmax(0, 1fr) 32px; }
-    body.proj-closed.chat-closed { grid-template-columns: 32px minmax(0, 1fr) 32px; }
+    body { grid-template-columns: minmax(0, 1fr) 300px 200px; }
+    body.proj-closed { grid-template-columns: minmax(0, 1fr) 300px 32px; }
+    body.chat-closed { grid-template-columns: minmax(0, 1fr) 32px 200px; }
+    body.proj-closed.chat-closed { grid-template-columns: minmax(0, 1fr) 32px 32px; }
+    main, #chat, #proj { grid-row: 1; } /* 並び: 返事 | 送信欄 | プロジェクト列。#proj が DOM で先なので、行を決めないと返事が 2 行目へ回る */
   }
   :where(html:not(.wide)) {
     body { grid-template-rows: auto minmax(0, 1fr); }
@@ -172,7 +173,7 @@
     #cform, #cmsg { order: 1; }
     #tstat { order: 2; }
     #tstat .trow:not(.perm):not(:has(i.busy, i.bg, i.ng)), #tstat .trow:not(.perm):not(:has(i.busy, i.bg, i.ng)) + .task { display: none; } /* 裏で待ちも出す (2026-10-15 user: monitor / shell で待っている画面が見えなかった)。返事が要る (終了: NG) も出す (2026-10-23) */
-    #chat { grid-column: 2; grid-row: 1; gap: 4px; padding: 6px 12px; border-left: 0; border-bottom: 1px solid var(--line); }
+    #chat { grid-column: 1; grid-row: 1; gap: 4px; padding: 6px 12px; border-left: 0; border-bottom: 1px solid var(--line); }
     body.chat-closed #chat { padding: 4px 12px; }
     /* 返事の上の帯では、同じ行の真ん中に ▲ (上へ畳む) / ▼ (開く) を置く */
     #chead { position: relative; }
@@ -340,7 +341,7 @@
 </head>
 <body>
 <script>
-// 描画前に列の開閉を決める (ちらつき防止)。狭い幅 (< 700px) とスマホは畳む、広い幅は localStorage "rmx.proj" の選択 (既定は開く)。幅が変わった時も module 側がこれを呼ぶ
+// 描画前に列の開閉を決める (ちらつき防止)。狭い幅 (< 700px) とスマホは畳む、広い幅は localStorage "rmx.projR" の選択 (既定は畳む)。幅が変わった時も module 側がこれを呼ぶ
 // スマホ (mobile UA) は幅に関係なく狭い幅と同じ並びにする。ブラウザの「PC 版サイト」で UA が desktop になれば戻る。CSS 側は html.narrow
 const isMobileUA = navigator.userAgentData?.mobile || /Android|iPhone|iPad|Mobile/.test(navigator.userAgent);
 const isNarrow = () => document.documentElement.classList.contains("narrow");
@@ -353,7 +354,7 @@ const pageWidth = () => innerWidth / (+document.documentElement.style.zoom || 1)
 function applyProjDefault() {
   let c = isMobileUA || pageWidth() < 700;
   document.documentElement.classList.toggle("narrow", c);
-  if (!c) try { c = localStorage.getItem("rmx.proj") === "closed"; } catch {}
+  if (!c) try { c = localStorage.getItem("rmx.projR") !== "open"; } catch {}
   document.body.classList.toggle("proj-closed", c);
 }
 function applyWidth(force) {
@@ -1671,7 +1672,7 @@ document.getElementById("plist").addEventListener("click", async (ev) => {
 document.getElementById("ptoggle").onclick = () => {
   document.body.classList.remove("proj-peek"); // ホバーで開いた分は ☰ で閉じる
   const closed = document.body.classList.toggle("proj-closed");
-  if (!isNarrow()) try { localStorage.setItem("rmx.proj", closed ? "closed" : "open"); } catch {}
+  if (!isNarrow()) try { localStorage.setItem("rmx.projR", closed ? "closed" : "open"); } catch {}
 };
 renderFilter();
 
