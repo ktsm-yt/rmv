@@ -22,7 +22,7 @@
     font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
     line-height: 1.8; background: var(--bg); color: var(--fg);
   }
-  /* 右端のプロジェクト列: 既定は畳んだ ☰ だけの細帯で、ホバーで返事の上に重ねて開く (2026-11-10 user: 左 → 右、重ねて開く)。☰ で列として開いた選択は広い幅でだけ localStorage "rmx.projR" に覚える */
+  /* 右端のプロジェクト列: 既定は畳んだ ☰ だけの細帯で、ホバーで画面の上に重ねて開く (2026-11-10 user: 左 → 右、重ねて開く)。☰ で列として開いた選択は広い幅でだけ localStorage "rmx.projR" に覚える */
   #proj { grid-column: -2; overflow-y: auto; padding: 8px 4px; border-left: 1px solid var(--line); background: var(--bg); font-size: 13px; line-height: 1.5; }
   /* ☰ / ＋ の位置は畳んだ細帯 (32px = 4 + 24 + 4) に合わせて全状態で同じ。開いた時に動かさない。一覧だけ左右に余白を足す */
   #plist { padding: 4px 4px 0; }
