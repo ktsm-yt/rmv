@@ -1733,13 +1733,16 @@ newpop.addEventListener("click", async (ev) => {
   const b = ev.target.closest("[data-cwd]");
   if (!b) return;
   const say = document.getElementById("cmsg");
-  b.disabled = true;
+  // 押したらすぐ一覧と列を閉じる。/new は Claude の起動完了まで返らない (数秒) ので、待ってから閉じると開いたままに見えた (2026-11-11 user)。成否は送信欄の下に出す
+  const body = JSON.stringify({ cwd: b.dataset.cwd, near: chatTo()?.terminal ? chatTo().session : undefined }); // near = 送り先の pane (同じ session の socket で分割する)
+  closeNew();
+  document.body.classList.remove("proj-peek");
+  say.textContent = `起動中: ${b.textContent.replace(/^└ |選択中$/g, "")}`;
   try {
-    const r = await fetch("/new", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ cwd: b.dataset.cwd, near: chatTo()?.terminal ? chatTo().session : undefined }) }); // near = 送り先の pane (同じ session の socket で分割する)
+    const r = await fetch("/new", { method: "POST", headers: { "content-type": "application/json" }, body });
     if (!r.ok) throw new Error((await r.text()) || String(r.status));
     say.textContent = "";
-    closeNew();
-  } catch (e) { say.textContent = e.message ?? String(e); b.disabled = false; }
+  } catch (e) { say.textContent = e.message ?? String(e); }
 });
 document.addEventListener("click", () => { if (!newpop.hidden) closeNew(); });
 document.addEventListener("keydown", (ev) => { if (ev.code === "Escape" && !newpop.hidden) closeNew(); });
