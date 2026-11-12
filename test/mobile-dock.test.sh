@@ -104,7 +104,7 @@ MD
 last="$(ls "$STATE/history"/*.md | tail -1)"
 cp "$last" "$STATE/latest.html"; cp "${last%.md}.json" "$STATE/latest.json"
 
-RMV_STATE_DIR="$STATE" RMV_PORT="$PORT" RMV_ORCA_BIN=/usr/bin/true RMV_HERDR_BIN=/usr/bin/false RMV_PS_BIN=/usr/bin/false RMV_LIVE_TTL_MS=0 bun "$RMV_DIR/server.ts" >"$TMP/server.log" 2>&1 &
+RMV_STATE_DIR="$STATE" RMV_PORT="$PORT" RMV_ORCA_BIN=/usr/bin/true RMV_HERDR_BIN=/usr/bin/false RMV_PS_BIN=/usr/bin/false RMV_LIVE_TTL_MS=0 RMV_CC_SETTINGS="$TMP/none.json" RMV_PROJECTS_DIR="$TMP/projects" bun "$RMV_DIR/server.ts" >"$TMP/server.log" 2>&1 &
 SV=$!
 trap 'kill $SV 2>/dev/null' EXIT
 for _ in $(seq 1 50); do curl -sf "$BASE/history" >/dev/null 2>&1 && break; sleep 0.1; done
@@ -143,6 +143,17 @@ def page(b, w, h, ua=ANDROID, mobile=True, init=""):
     pg.wait_for_function("document.querySelector('#reply table') && document.querySelector('#reply pre')", timeout=10000)
     pg.evaluate("document.fonts.ready"); pg.wait_for_timeout(300)
     return pg
+def tap(pg, sel): # 見えていれば押す。無い・隠れている時は False (旧版で例外にしない)
+    try: pg.locator(sel).first.tap(timeout=1500); pg.wait_for_timeout(250); return True
+    except Exception: return False
+def open_sheet(pg): return tap(pg, "#dto:visible, #chead:visible") # 送信欄を開く (旧版は上の帯)
+def pin(pg, k): return tap(pg, f"#reply .blk[data-pin] >> nth={k} >> .num") # 段を押して赤ペンのピンを付ける / 外す
+def perm(on): # beta の端末に許可待ちを置く / 消す。画面は 2 秒ごとに読む
+    import os
+    f = f"{state}/perm/term_b.json"
+    if on: open(f, "w").write(json.dumps({"id": "p1", "tool": "Bash", "detail": "git status", "ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "terminal": "term_b"}))
+    elif os.path.exists(f): os.remove(f)
+FOCUS = "(() => { const a = document.activeElement; return a && a.matches('textarea') ? T.inView(a) : false; })()"
 def shot(pg, name):
     if shots: pg.screenshot(path=f"{shots}/{name}.png")
 def resize(pg, w, h):
@@ -175,11 +186,101 @@ with sync_playwright() as p:
         check(f"{w}×{h}: ⌘+Enter と定型キーの数字を出さない", "⌘" not in ph[0] and ph[1] == 0, ph)
         pg.context.close()
 
+    # ---- 段 2: 操作を下の 1 本に集める (360×860)
+    pg = page(b, 360, 860)
+    g = pg.evaluate("({ proj: T.r('#proj'), chat: T.r('#chat'), reply: T.r('#reply').w, over: document.documentElement.scrollWidth - innerWidth, ctext: T.r('#ctext') })")
+    check("360×860: 右端の帯が無く、返事は全幅 (340px)", g["proj"] is None and g["reply"] >= 338 and g["over"] <= 0, g)
+    check("360×860: 下の帯の上端は画面の下 1/4、下端は画面内。送信欄は畳んで始まる", g["chat"] and g["chat"]["t"] >= 860 * 0.75 and g["chat"]["b"] <= 860.5 and g["ctext"] is None, g)
+    shot(pg, "2a-top")
+    pg.evaluate("document.documentElement.style.setProperty('--vvh', (innerHeight - 80) + 'px')")
+    g = pg.evaluate("T.r('#chat')")
+    check("下に 80px のアドレスバーがある近似 (--vvh): 下の帯はその上に収まる", g and g["b"] <= 780.5 and g["t"] >= 600, g)
+    pg.evaluate("document.documentElement.style.setProperty('--vvh', innerHeight + 'px')")
+    # 入力中 (キーボードが出た近似 = 高さ 480)
+    open_sheet(pg)
+    tap(pg, "#ctext")
+    resize(pg, 360, 480)
+    g = pg.evaluate("({ reply: T.replyH(), send: T.inView('#csend'), at: T.r('#csend'), keys: [...document.querySelectorAll('#cact .q')].filter((e) => e.checkVisibility()).length, h: T.r('#ctext')?.h })")
+    check("360×480 で入力欄に焦点: 返事が 200px 以上見え、送信は画面内", g["reply"] >= 200 and g["send"], g)
+    check("入力中は定型キーを隠し、入力欄は 100px 以上", g["keys"] == 0 and (g["h"] or 0) >= 100, g)
+    pg.evaluate("T.toTop('#reply table[data-ptbl]')"); pg.wait_for_timeout(150); shot(pg, "2e-keyboard")
+    pg.evaluate("document.querySelector('#ctext').blur()"); pg.wait_for_timeout(150)
+    g2 = pg.evaluate("T.r('#csend')")
+    check("焦点が外れても送信の位置は動かない (押す指の下で並びが変わらない)", g2 and g["at"] and abs(g2["t"] - g["at"]["t"]) <= 1 and abs(g2["l"] - g["at"]["l"]) <= 1, (g["at"], g2))
+    resize(pg, 360, 860)
+    tap(pg, "#ctoggle")
+    perm(True)
+    try: pg.wait_for_selector("#tstat [data-approve]", state="visible", timeout=6000)
+    except Exception: pass
+    g = pg.evaluate("({ ok: T.inView('#tstat [data-approve]'), chat: T.r('#chat'), small: T.small(), ctext: T.r('#ctext'), wait: document.querySelector('#chat').innerText })")
+    check("許可待ちの行は、送信欄を閉じていても下の帯の上に出る", g["ok"] and g["ctext"] is None and g["chat"]["t"] >= 860 * 0.75 - 60, g)
+    check("下の帯に返事待ちの数が出る (alpha = 返事が要る、beta = 許可待ち)", "待ち 2" in g["wait"], g["wait"])
+    check("閉じた帯 + 許可待ち: 押せる物は 44px 以上", not g["small"], g["small"][:6])
+    opened = open_sheet(pg)
+    g = pg.evaluate("({ q: T.r('#cact .q'), ctext: T.r('#ctext'), send: T.r('#csend'), sel: [...document.querySelectorAll('#cact .cpick')].map((e) => Math.round(e.getBoundingClientRect().width)), perm: T.inView('#tstat [data-approve]'), small: T.small(), rows: document.querySelectorAll('#tstat .trow:not(.perm)').length, reply: T.replyH(), keys: [...document.querySelectorAll('#cact .q')].filter((e) => e.checkVisibility()).length })")
+    check("送り先を押すと下から送信欄が開く: 上から 定型キー → 入力欄 → 送信、どれも画面内", opened and g["q"] and g["ctext"] and g["send"] and g["q"]["t"] < g["ctext"]["t"] < g["send"]["t"] and g["send"]["b"] <= 860.5 and g["ctext"]["t"] > 430 and g["perm"], g)
+    check("開いた送信欄: モデル・エフォートは 70px 以上、押せる物は 44px 以上、返事は 250px 以上見える", min(g["sel"]) >= 70 and not g["small"] and g["reply"] >= 250, g)
+    pg.evaluate("T.toTop('#reply table[data-ptbl]')"); pg.wait_for_timeout(150); shot(pg, "2d-open")
+    tap(pg, "#cto")
+    g = pg.evaluate("({ chips: [...document.querySelectorAll('#cchips .chip')].filter((e) => e.checkVisibility()).length, twice: document.querySelectorAll('#tstat .trow:not(.perm)').length, small: T.small(), send: T.inView('#csend') })")
+    check("開いた送信欄の送り先を押すと送り先の一覧が出る (同じセッションを状態行に 2 回並べない)", g["chips"] >= 4 and g["twice"] == 0 and not g["small"] and g["send"], g)
+    shot(pg, "2d2-targets")
+    tap(pg, "#cto")
+    # 赤ペン: 下の欄は 1 つ (送信欄を開いたまま段を押す)
+    pinned = pin(pg, 5)
+    g = pg.evaluate("({ tray: T.r('#tray'), ctext: T.r('#ctext'), send: T.inView('#send'), perm: T.inView('#tstat [data-approve]'), small: T.small(), nav: !!document.querySelector('#prev')?.closest('#tray'), focus: " + FOCUS + " })")
+    check("赤ペン欄が出ている間、送信欄の入力欄は見えない (下の欄は 1 つ)", pinned and g["tray"] and g["ctext"] is None, g)
+    check("赤ペン欄: ひとこと欄に焦点、送信は画面内、許可待ちの行も残る、押せる物は 44px 以上", g["focus"] and g["send"] and g["perm"] and not g["small"], g)
+    check("赤ペン欄は画面の下端にあり、◀ ▶ は赤ペン欄の最下段に移る", g["tray"] and g["tray"]["b"] >= 800 and g["nav"], g)
+    pg.evaluate("T.toTop('#reply table[data-ptbl]')"); pg.wait_for_timeout(150); shot(pg, "2f-redpen")
+    resize(pg, 360, 480); pg.evaluate("T.toTop('#reply table[data-ptbl]')"); pg.wait_for_timeout(150); shot(pg, "2g-redpen-keyboard")
+    resize(pg, 360, 860)
+    pin(pg, 5)
+    g = pg.evaluate("({ tray: T.r('#tray'), ctext: T.r('#ctext'), nav: !!document.querySelector('#prev')?.closest('#tray') })")
+    check("ピンを全部外すと送信欄に戻る", g["tray"] is None and g["ctext"] and not g["nav"], g)
+    tap(pg, "#ctoggle")
+    perm(False)
+    # ☰ と ＋
+    tap(pg, "#ptoggle")
+    g = pg.evaluate("({ proj: T.r('#proj'), small: T.small() })")
+    check("☰ で一覧が返事の上に重なって開く (画面内、行は 44px 以上)", g["proj"] and g["proj"]["w"] > 200 and g["proj"]["b"] <= 860.5 and not g["small"], g)
+    shot(pg, "2h-list")
+    pg.touchscreen.tap(30, 300); pg.wait_for_timeout(250)
+    g = pg.evaluate("({ proj: T.r('#proj'), tray: T.r('#tray') })")
+    check("一覧の外を押すと閉じる (下の段にピンは付かない)", g["proj"] is None and g["tray"] is None, g)
+    tap(pg, "#newbtn")
+    g = pg.evaluate("({ pop: T.r('#newpop'), ok: T.inView('#newpop'), proj: T.r('#proj'), chat: T.r('#chat'), small: T.small() })")
+    check("＋ の一覧は下の帯のすぐ上に出る (列は開かない)", g["ok"] and g["proj"] is None and g["chat"] and 0 <= g["chat"]["t"] - g["pop"]["b"] <= 24 and not g["small"], g)
+    shot(pg, "2i-new")
+    tap(pg, "#stamp")
+    # 追加: ピンを 4 つ付けて最後のひとこと欄に焦点 → キーボードの近似で縮める
+    for k in (2, 3, 4, 5): pin(pg, k)
+    resize(pg, 360, 480)
+    g = pg.evaluate("({ focus: " + FOCUS + ", send: T.inView('#send'), reply: T.replyH(), pins: document.querySelectorAll('#pins .pin').length })")
+    check("360×480 でピン 4 つ: 焦点のひとこと欄と赤ペンの送信が画面内", g["pins"] == 4 and g["focus"] and g["send"], g)
+    check("360×480 でピン 4 つ: 返事も 150px 以上見える", g["reply"] >= 150, g)
+    shot(pg, "2j-redpen-4pins-keyboard")
+    pg.context.close()
+    # 追加 2: 開いた Fold の実寸 (約 630)。送信欄を開いた状態から段を押し、キーボードが出る (高さ 505)
+    pg = page(b, 630, 900)
+    open_sheet(pg)
+    pin(pg, 5)
+    resize(pg, 630, 505)
+    g = pg.evaluate("({ focus: " + FOCUS + ", send: T.inView('#send'), reply: T.replyH() })")
+    check("630×505 で送信欄を開いたまま段を押す: 焦点のひとこと欄・赤ペンの送信・返事 150px 以上が同時に見える", g["focus"] and g["send"] and g["reply"] >= 150, g)
+    pg.evaluate("T.toTop('#reply table[data-ptbl]')"); pg.wait_for_timeout(150); shot(pg, "3d-open-redpen-keyboard")
+    pg.context.close()
+    # 前に ⇆ で左を選んだ端末でも並びは同じ
+    pg = page(b, 360, 860, init="try { localStorage.setItem('rmx.side', 'left'); } catch {}")
+    g = pg.evaluate("({ proj: T.r('#proj'), chat: T.r('#chat'), reply: T.r('#reply').w, main: T.r('main').l })")
+    check("⇆ で左を覚えた端末でも、帯は出ず下の帯になる", g["proj"] is None and g["reply"] >= 338 and g["main"] == 0 and g["chat"]["t"] >= 860 * 0.75, g)
+    pg.context.close()
+
     # ---- PC の UA では何も変わらない
     for (w, h) in ((360, 860), (1280, 800)):
         pg = page(b, w, h, ua=None, mobile=False)
-        g = pg.evaluate("""() => ({ mob: document.documentElement.classList.contains('mob'), proj: T.r('#proj')?.w ?? 0, pre: getComputedStyle(document.querySelector('#reply pre')).fontSize, tr: getComputedStyle(document.querySelector('#reply table[data-ptbl] tbody tr')).display, ph: document.querySelector('#ctext').placeholder, pt: T.r('#ptoggle')?.w })""")
-        check(f"PC {w}×{h}: スマホ用の印が付かず、帯・表・図・ボタンは元のまま", not g["mob"] and g["proj"] >= 30 and g["pre"] == "14px" and g["tr"] == "table-row" and "⌘" in g["ph"] and g["pt"] == 24, g)
+        g = pg.evaluate("""() => ({ mob: document.documentElement.classList.contains('mob'), chat: T.r('#chat').t, tray: !!document.querySelector('main > #tray'), nav: !!document.querySelector('#bar > #prev'), proj: T.r('#proj')?.w ?? 0, pre: getComputedStyle(document.querySelector('#reply pre')).fontSize, tr: getComputedStyle(document.querySelector('#reply table[data-ptbl] tbody tr')).display, ph: document.querySelector('#ctext').placeholder, pt: T.r('#ptoggle')?.w })""")
+        check(f"PC {w}×{h}: スマホ用の印が付かず、帯・表・図・ボタンは元のまま", not g["mob"] and g["chat"] < 5 and g["tray"] and g["nav"] and g["proj"] >= 30 and g["pre"] == "14px" and g["tr"] == "table-row" and "⌘" in g["ph"] and g["pt"] == 24, g)
         pg.context.close()
     b.close()
 print(f"scanned {n} checks, {fail} failed")

@@ -351,8 +351,6 @@
   /* 押す物は 44px 角以上 (24px の ☰ ＋ ◀ ▶ と高さ 21px の chip は指で外した) */
   html.mob :is(button, select, .chip) { min-width: 44px; min-height: 44px; }
   html.mob #newpop .it, html.mob #cact :is(.q, .cpick) { min-width: 44px; min-height: 44px; }
-  html.mob body, html.mob.wide body.proj-closed.chat-closed { grid-template-columns: minmax(0, 1fr) 52px; } /* 帯は 44px のボタンが入る幅に */
-  html.mob.wide body.proj-closed { grid-template-columns: minmax(0, 1fr) 300px 52px; }
   html.mob .chip { padding-inline: 12px; }
   html.mob :is(.cpbtn, .mmzoom) { display: grid; place-items: start end; background: none; border-color: transparent; } /* 図の右上の ⧉ ⤢: 押せる範囲だけ広げ、下の字は隠さない */
   html.mob .cimg button { top: -10px; right: -10px; width: 44px; height: 44px; border: 0; border-radius: 0; padding: 0 0 22px 22px; background: radial-gradient(circle at 33px 11px, var(--panel) 9px, transparent 10px); }
@@ -390,6 +388,75 @@
   html.mob #reply table.cards tr.pinned > td.ck { background: var(--red); color: #fff; }
   /* 罫線図・コード: 幅を超えたら fitPre が --pf で字を小さくする */
   html.mob #reply pre, html.mob #reply pre code { font-size: var(--pf, 14px); }
+  /* 操作は下の 1 本に集める: 右端の帯は出さず、#chat を画面の下端の欄にする。高さは今までどおり body の --vvh (見えている範囲) の中なので、下に置いたアドレスバーにも隠れない。
+     ふだん (chat-closed) は 1 本の帯 #dock = ☰ / 送り先 / ◀ ▶ / ＋。送り先を押すと送信欄が開く。赤ペン中 (body.pen) は同じ場所を赤ペン欄 #tray に入れ替える (下の欄は 1 つ)。
+     許可待ちの行 (#tstat) と ＋・許可の失敗 (#cmsg) は、閉じていても赤ペン中でも帯のすぐ上に出す */
+  html.mob body { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }
+  html.mob main { grid-column: 1; grid-row: 1; }
+  html.mob body.proj-closed #proj, html.mob #phead { display: none; } /* 一覧は ☰ で返事の上に重ねて開く (重ね方は狭い幅と同じ)。外を押すか行を選ぶと閉じる */
+  html.mob #proj { bottom: auto; height: var(--vvh, 100dvh); }
+  html.mob body:not(.proj-closed)::before { content: ""; position: fixed; inset: 0; z-index: 19; background: rgb(0 0 0 / .25); } /* 外を押して閉じる時に、下の段へピンが付かないよう幕で受ける */
+  html.mob #chat { grid-column: 1; grid-row: 2; gap: 6px; padding: 6px 8px; border: 0; border-top: 1px solid var(--line); font-size: 14px; max-height: calc(var(--vvh, 100dvh) - 96px); overflow-y: auto; }
+  html.mob body.chat-closed #chat > #chead, html.mob body:not(.chat-closed) #dock, html.mob body:not(.to-open) #cchips { display: none; }
+  html.mob body.chat-closed #chat > #dock { display: flex; }
+  html.mob body.chat-closed #chat > #tstat:not(:empty) { display: grid; }
+  html.mob body.chat-closed #chat > #cmsg:not(:empty) { display: block; }
+  html.mob body.pen #chat > :not(#tray, #tstat, #cmsg) { display: none; }
+  html.mob body.pen #chat > #tray { display: flex; }
+  html.mob body.pen #chat { border-top: 3px solid var(--red); max-height: calc(var(--vvh, 100dvh) * .62); } /* 赤ペン中も返事を 4 割は見せる。ピンが増えたらピンの段だけスクロールする */
+  html.mob #tstat { order: -3; }
+  html.mob #cmsg { order: 2; } /* 開いている時は送信の近く (最下段のすぐ下) */
+  html.mob body:is(.chat-closed, .pen) #cmsg { order: -2; }
+  html.mob #cwhy { order: 1; }
+  html.mob #cform { order: 0; }
+  /* 下の帯 */
+  html.mob #dock { gap: 6px; align-items: center; }
+  html.mob #dock > button { flex: none; display: grid; place-items: center; width: 44px; height: 44px; margin: 0; padding: 0; font: inherit; font-size: 16px; color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 10px; cursor: pointer; }
+  html.mob #dock > button:disabled { opacity: .35; }
+  html.mob #dock #ptoggle.unread { border-color: var(--red); color: var(--red); }
+  html.mob #dock #newbtn .nl, html.mob :is(#dock, #tray) .lbl { display: none; }
+  html.mob #dock #dto { flex: 1 1 0; display: flex; gap: 6px; width: auto; min-width: 0; padding: 0 8px; font-size: 14px; white-space: nowrap; overflow: hidden; }
+  html.mob #dname { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
+  html.mob #dwait { flex: none; margin-left: auto; font-size: 12px; color: var(--muted); }
+  html.mob #dwait::after { content: " ▲"; }
+  html.mob #dwait span { display: none; } /* 動作中の数は 2 列の時だけ */
+  html.mob #dto i { flex: none; width: 10px; height: 10px; border-radius: 50%; box-sizing: border-box; border: 2px solid var(--line); } /* 状態の点は送り先の一覧と同じ見た目 */
+  html.mob #dto i:is(.wait, .ng) { border: 0; background: #e5a50a; box-shadow: 0 0 0 3px rgb(229 165 10 / .25); }
+  html.mob #dto i.perm { border: 0; background: #e01b24; box-shadow: 0 0 0 3px rgb(224 27 36 / .25); }
+  html.mob #dto i.ok { border: 0; background: #2ec27e; }
+  html.mob #dto i.busy { border-top-color: var(--fg); animation: tspin .8s linear infinite; }
+  html.mob #dto i.bg { border-color: #e5a50a; animation: tblink 1.6s ease-in-out infinite; }
+  /* 開いた送信欄の 1 行目: 送り先 (押すと送り先の一覧) と文脈量、右端の ▼ で畳む */
+  html.mob #chead, html.mob #chead:hover { order: -1; flex: none; gap: 8px; min-height: 44px; padding-left: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+  html.mob #cto { flex: 1 1 0; max-width: none; }
+  html.mob #cto::after { content: " ▾"; color: var(--muted); }
+  html.mob body.to-open #cto::after { content: " ▴"; }
+  html.mob #ctoggle { position: static; order: 3; transform: none; width: 44px; height: 44px; font-size: 14px; border-left: 1px solid var(--line); border-radius: 0; }
+  html.mob #ctoggle::before { content: "▼"; }
+  /* 送り先の一覧 (下の状態行と 2 回並べない): 1 行目 = 名前と時刻、2 行目 = 今の状態か最新の返事の冒頭 */
+  html.mob #cchips { gap: 6px; max-height: 38vh; overflow-y: auto; padding: 0; }
+  html.mob #cchips .chip { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 0 8px; padding: 4px 10px; border-radius: 10px; border-left: 4px solid var(--rc, var(--line)); font-size: 13px; line-height: 1.4; }
+  html.mob #cchips .chip i { margin: 0; }
+  html.mob #cchips .chip b { overflow: hidden; text-overflow: ellipsis; }
+  html.mob #cchips .chip span { grid-column: 2 / -1; font-size: 12px; color: var(--muted); }
+  html.mob #cchips .chip.on span { color: inherit; opacity: .7; }
+  /* 許可待ちの行 */
+  html.mob #tstat { gap: 6px; font-size: 13px; color: var(--fg); }
+  html.mob #tstat .trow { align-items: center; padding: 3px 4px 3px 10px; border: 1px solid #e01b24; border-radius: 10px; }
+  html.mob #tstat i { margin: 0; }
+  html.mob #tstat button { padding: 0 12px; font: inherit; font-size: 14px; color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+  /* 入力中 (キーボードが出ている間) は定型キーと送り先の一覧を隠し、入力欄を高くする。返事を画面の上半分に残す */
+  html.mob.kbd :is(#cact .q, #cchips) { display: none; }
+  html.mob.kbd #ctext { min-height: 112px; }
+  /* 赤ペン欄: 下の欄の中に置く (返事の末尾に貼り付けない)。ピンの段だけがスクロールし、ひとこと・コピー・送信は常に見える */
+  html.mob #tray { position: static; flex: 0 1 auto; flex-direction: column; gap: 6px; min-height: 0; max-width: none; margin: 0; padding: 0; background: none; border: 0; border-radius: 0; box-shadow: none; }
+  html.mob #pins { flex: 0 1 auto; min-height: 0; overflow-y: auto; display: grid; gap: 4px; }
+  html.mob #pins:empty { display: none; }
+  html.mob #tray :is(#free, #fimgs, .row) { flex: none; }
+  html.mob #tray textarea { font-size: 16px; }
+  html.mob #tray button { border-radius: 10px; }
+  /* ＋ の一覧: 下の帯のすぐ上 (下端は --vvh から測る。fixed の bottom は下に置いたアドレスバーに隠れる) */
+  html.mob #newpop { top: calc(var(--vvh, 100dvh) - 62px); right: 8px; left: auto; transform: translateY(-100%); max-height: calc(var(--vvh, 100dvh) - 80px); }
   .foot { margin-top: 20px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 12px; line-height: 1.6; color: var(--muted); }
 </style>
 </head>
@@ -407,7 +474,7 @@ document.documentElement.classList.toggle("embedded", isEmbedded);
 // 幅は Ctrl + の拡大率で割って測る。@media は html の zoom を見ないので、拡大すると狭いのに 3 列のままだった (2026-10-31 user、Zen のサイドバー)
 // CSS 側は html.wide (>= 900px) / html.xs (< 600px)
 const pageWidth = () => innerWidth / (+document.documentElement.style.zoom || 1);
-try { document.documentElement.classList.toggle("proj-left", localStorage.getItem("rmx.side") === "left"); } catch {} // 列の左右 (⇆)
+try { document.documentElement.classList.toggle("proj-left", !isMobileUA && localStorage.getItem("rmx.side") === "left"); } catch {} // 列の左右 (⇆)。スマホは帯ごと出さないので、前に覚えた左も使わない
 function applyProjDefault() {
   let c = isMobileUA || pageWidth() < 700;
   document.documentElement.classList.toggle("narrow", c);
@@ -416,7 +483,7 @@ function applyProjDefault() {
 }
 function applyWidth(force) {
   const h = document.documentElement.classList, w = pageWidth(), wide = h.contains("wide");
-  h.toggle("wide", w >= 900);
+  h.toggle("wide", !isMobileUA && w >= 900); // スマホは幅が広くても PC の 3 列にしない (並びは html.mob の規則だけで決める)
   h.toggle("xs", w < 600);
   if (force || isNarrow() !== (isMobileUA || w < 700)) applyProjDefault();
   if (wide !== h.contains("wide")) document.dispatchEvent(new Event("rmx-wide"));
@@ -444,7 +511,18 @@ function setPageZoom(z) {
 try { setPageZoom(+localStorage.getItem("rmx.zoom") || 1); } catch {}
 // スマホ: 高さを実際に見えている範囲 (キーボードと下に置いたアドレスバーを除く) に合わせる。100dvh だけでは下のアドレスバーと赤ペンの送信が重なった
 if (isMobileUA && window.visualViewport) {
-  const fit = () => document.documentElement.style.setProperty("--vvh", `${visualViewport.height}px`);
+  // キーボードが出て高さが縮んだ後、書いている欄 (赤ペンのひとこと・送信欄) が下の欄の中で隠れていたら見える所へ送る (2026-11-13 user)
+  // html.kbd = キーボードが出ている: 欄に焦点があり、見えている高さがこの幅で見た最大より 120px 以上低い (アドレスバーの出入りは 60px 前後)。
+  // 焦点 (:focus) だけで並びを変えると、送信や 📎 を押す指で焦点が外れた瞬間に並びが動く。高さで見れば、戻るボタンでキーボードだけ閉じた時にも元に戻る
+  let maxH = 0, lastW = 0;
+  const fit = () => {
+    const vv = visualViewport;
+    if (vv.width !== lastW) { lastW = vv.width; maxH = 0; }
+    maxH = Math.max(maxH, vv.height);
+    document.documentElement.classList.toggle("kbd", vv.height < maxH - 120 && !!document.activeElement?.matches?.("textarea, input"));
+    document.documentElement.style.setProperty("--vvh", `${visualViewport.height}px`);
+    requestAnimationFrame(() => { const a = document.activeElement; if (a?.matches?.("textarea, input") && a.closest("#chat")) a.scrollIntoView({ block: "nearest" }); });
+  };
   visualViewport.addEventListener("resize", fit);
   fit();
 }
@@ -481,6 +559,26 @@ if (isMobileUA && window.visualViewport) {
   <div id="tstat"></div>
   <div id="cmedia"></div>
 </aside>
+<script>
+// スマホ: 操作を画面の下端の 1 本 (#dock) に集める。☰ ＋ ◀ ▶ と赤ペン欄 (#tray) を #chat の中へ移し、#chat を下の欄にする (2026-11-13 user)。
+// 押した時の処理は id で付くので、移しても変わらない。mermaid の CDN を待つ module より前に済ませ、読み込み中に並びが跳ねないようにする
+function placeNav() { // ◀ ▶ の置き場: 赤ペン中は赤ペン欄の最下段 / それ以外は下の帯 (＋ の左)
+  const $ = (id) => document.getElementById(id), prev = $("prev"), next = $("next");
+  const to = document.body.classList.contains("pen") ? $("tray").querySelector(".row") : $("dock");
+  if (prev.parentElement === to) return;
+  if (to.id === "dock") $("newbtn").before(prev, next); else to.prepend(prev, next);
+}
+if (isMobileUA) {
+  const $ = (id) => document.getElementById(id);
+  const dock = Object.assign(document.createElement("div"), { id: "dock" });
+  dock.innerHTML = '<button id="dto" title="送信欄を開く"><i></i><span id="dname"></span><small id="dwait"></small></button>';
+  dock.prepend($("ptoggle"));
+  dock.append($("newbtn"));
+  $("chat").prepend(dock);
+  $("chat").append($("tray"));
+  placeNav();
+}
+</script>
 <div id="mmzoom" hidden><button class="zx" title="閉じる (Esc)">×</button><span><b class="hd">ホイール / ピンチ = 拡大縮小 · ドラッグ = 移動 · ダブルクリック = 全体</b><b class="ht">2 本指 = 拡大縮小 · ドラッグ = 移動 · ダブルタップ = 全体 · 左右スワイプ = 前後</b></span><div id="zbar" class="solo"><button class="zp" title="前の画像 (←)">◀</button><button class="zc" title="閉じる (Esc)">✕</button><button class="zn" title="次の画像 (→)">▶</button></div></div>
 <script src="https://cdn.jsdelivr.net/npm/marked@14.1.2/lib/marked.umd.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/dompurify@3.4.16/dist/purify.min.js"></script>
@@ -1221,6 +1319,7 @@ function renderTray() {
   const d = drafts.get(curName());
   const tray = document.getElementById("tray");
   tray.hidden = !d || (!d.pins.size && !d.choices.size);
+  if (isMobileUA) { document.body.classList.toggle("pen", !tray.hidden); placeNav(); } // スマホ: 赤ペン中は下の欄を赤ペン欄に入れ替える (送信欄と 2 段に積まない)
   scheduleMargin();
   const free = document.getElementById("free");
   if (free.value !== (d?.free ?? "")) free.value = d?.free ?? "";
@@ -1412,11 +1511,24 @@ function renderChat() {
   // 各行 = 時刻 + 最新返事の冒頭。同じ repo の chip は時刻だけでは見分けられない (2026-09-29 user)
   // 時刻の左に下の一覧と同じ丸、時刻の色も状態で変える (作業中 = 明るく太字 / 黄 = 返事が要る / 緑 = 閉じてよい / 灰 = 静か・終了)。2026-10-25 user
   const row = (e) => { const st = e.live ? stOf(e).st : "dead"; return `<i class="${st}"></i><time class="${st}">${esc(hhmm(new Date(e.ts)))}</time><span>${esc(agentTag(e) + (e.head || ""))}</span>`; };
+  // スマホ: 送り先の一覧は 1 回だけ出す。下の状態行に出していた依頼文・裏の待ちは 2 行目に載せる
+  const mobRow = (e) => {
+    const { st, bg } = e.live ? stOf(e) : { st: "dead" };
+    const sub = e.perm ? `${e.perm.tool} 許可待ち` : e.asking ? (e.asking.waiting ? "待機中" : "依頼: " + e.asking.prompt.replace(/\s+/g, " ").slice(0, 60)) : bg ? "裏で待ち: " + bgSum(bg) : agentTag(e) + (e.head || "");
+    return `<i class="${st}"></i><b>${esc(chipLabels.get(e.session) ?? (e.repo || "?"))}</b><time class="${st}">${esc(hhmm(new Date(e.ts)))}</time><span>${esc(sub)}</span>`;
+  };
   const shown = [...chipEntries.values()].filter((e) => e.live || showDead || e.session === pin).slice(0, 5);
   // 許可待ちはプロジェクトの絞り込みと 5 件の枠に関係なく先頭に出す (別 repo の foyer の画面の許可待ちが見えなかった、2026-10-15)
   const perms = [...new Map(all.filter((e) => e.session && e.live && e.perm).map((e) => [e.session, e])).values()];
-  renderTstat([...perms, ...shown.filter((e) => e.live && !perms.some((p) => p.session === e.session))]);
-  let html = chipBtn("", !pin, "追従", "表示中の返事の端末へ送る") + shown.map((e) => chipBtn(e.session, e.session === pin, row(e), `送り先をここに固定: ${chipLabels.get(e.session)}`, true, e.repo)).join("");
+  renderTstat(isMobileUA ? perms : [...perms, ...shown.filter((e) => e.live && !perms.some((p) => p.session === e.session))]);
+  if (isMobileUA) { // 下の帯: 送り先の名前と状態の点、返事を待っているセッションの数 (閉じていても分かるように)
+    const sts = [...new Map([...perms, ...chipEntries.values()].filter((e) => e.live).map((e) => [e.session, stOf(e).st])).values()];
+    const wait = sts.filter((x) => x === "ng" || x === "wait" || x === "perm").length, run = sts.filter((x) => x === "busy" || x === "bg").length;
+    document.getElementById("dname").textContent = lbl ? (pin ? "📌 " : "") + lbl : "送り先なし"; // 幅が無いので矢印は付けない (点が送り先の印)
+    document.querySelector("#dto i").className = to?.live ? stOf(to).st : "";
+    document.getElementById("dwait").innerHTML = (wait ? `待ち ${wait}` : "") + (run ? `<span>${wait ? " / " : ""}動作中 ${run}</span>` : "");
+  }
+  let html = chipBtn("", !pin, "追従", "表示中の返事の端末へ送る") + shown.map((e) => chipBtn(e.session, e.session === pin, (isMobileUA ? mobRow : row)(e), `送り先をここに固定: ${chipLabels.get(e.session)}`, true, e.repo)).join("");
   if (pin && !chipLabels.has(pin)) html += chipBtn(pin, true, "固定中 (返事なし)", pin);
   if (html === cchipsHtml) return; // 毎 poll 描き直すと横スクロール位置が飛ぶ
   cchipsHtml = html;
@@ -1439,13 +1551,14 @@ function stOf(e) {
   const st = (st1 === "wait" || st1 === "idle") && e.end ? e.end : st1;
   return { st, wait, perm, bg };
 }
+const bgSum = (bg) => [...bg.reduce((m, t) => m.set(t.type, (m.get(t.type) ?? 0) + 1), new Map()).entries()].map(([k, n]) => `${k} ${n}`).join(" "); // 裏で走っている物を種類ごとに数える ("shell 1 subagent 1")
 function renderTstat(list) {
   tstatList = list;
   const ago = (t) => { const m = Math.max(0, Math.floor((Date.now() - t) / 60000)); return m > 60 ? `${Math.floor(m / 60)} 時間` : `${m} 分`; };
   const html = list.map((e) => {
     const { st, wait, perm, bg } = stOf(e);
     const stTitle = { perm: "許可待ち", wait: "入力待ち", busy: "作業中", idle: "静か", bg: "裏で待ち", ok: "閉じてよい", ng: "返事が要る" }[st];
-    const bgText = bg ? " · 裏で待ち: " + [...bg.reduce((m, t) => m.set(t.type, (m.get(t.type) ?? 0) + 1), new Map()).entries()].map(([k, n]) => `${k} ${n}`).join(" ") : "";
+    const bgText = bg ? " · 裏で待ち: " + bgSum(bg) : "";
     const ask = e.asking?.prompt ?? e.prompt; // 返事待ちの依頼、無ければ最新の返事を引き出した依頼
     if (perm) return `<div class="trow perm" data-s="${esc(e.session)}" style="--rc:${repoColor(e.repo)}" title="許可待ち"><i class="perm"></i><span>${esc(e.repo || "?")} · ${esc(perm.tool)} 許可待ち · ${esc(perm.detail)}</span><button data-approve="${esc(e.session)}" data-id="${esc(perm.id)}" title="許可する (y)">許可<sup>y</sup></button></div>`;
     return `<div class="trow${st === "ng" || (wait && st !== "ok") ? " wait" : ""}" data-s="${esc(e.session)}" style="--rc:${repoColor(e.repo)}" title="${stTitle}${bg ? " · " + esc(bg.map((t) => t.description).join(" / ")) : ""} · 押すと依頼文を開き、この端末を送り先にする"><i class="${st}"></i><span>${esc(hhmm(new Date(e.ts)))} ${esc(e.repo || "?")}${esc(bgText)} · ${e.asking ? esc(e.asking.waiting ? "待機中" : "依頼: " + e.asking.prompt.replace(/\s+/g, " ").slice(0, 60)) : esc(e.head || "")}</span><time>${e.lastOutputAt ? ago(e.lastOutputAt) : ""}</time></div>` + (openAsk.has(e.session) && ask ? `<div class="task">${esc(ask)}</div>` : "");
@@ -1477,7 +1590,7 @@ tstat.addEventListener("click", async (ev) => {
     b.disabled = false;
   }
 });
-cchips.addEventListener("click", (ev) => { const b = ev.target.closest("[data-s]"); if (b) pickChip(b.dataset.s); });
+cchips.addEventListener("click", (ev) => { const b = ev.target.closest("[data-s]"); if (b) { document.body.classList.remove("to-open"); pickChip(b.dataset.s); } }); // to-open = スマホの送り先の一覧。選んだら畳む
 async function pickChip(s) {
   if (s) chatPins[REPO.toLowerCase()] = s; else delete chatPins[REPO.toLowerCase()];
   try { localStorage.setItem("rmx.chat.pin", JSON.stringify(chatPins)); } catch {}
@@ -1647,10 +1760,15 @@ ctext.addEventListener("keydown", (ev) => {
 sug.addEventListener("mousedown", (ev) => { const d = ev.target.closest("[data-i]"); if (d) { ev.preventDefault(); pickSug(+d.dataset.i); } });
 // 開閉は PC だけ localStorage "rmx.chat.open" に覚える (スマホは毎回畳んで始める)。狭い幅はバー全体 (#chead) が押せる
 document.getElementById("chead").onclick = (ev) => {
+  if (isMobileUA && !ev.target.closest("#ctoggle")) return void document.body.classList.toggle("to-open"); // スマホ: 行 = 送り先の一覧の開閉、畳むのは右端の ▼
   if (!isNarrow() && !ev.target.closest("#ctoggle")) return;
   const closed = document.body.classList.toggle("chat-closed");
+  document.body.classList.remove("to-open");
   if (!isMobileUA) try { localStorage.setItem("rmx.chat.open", closed ? "0" : "1"); } catch {}
 };
+// スマホ: 下の帯の送り先を押すと送信欄が開く。送信を押しても入力欄の焦点を外さない (外れるとキーボードが引っ込み、定型キーが戻って並びが動く)
+document.getElementById("dto")?.addEventListener("click", () => document.body.classList.remove("chat-closed"));
+if (isMobileUA) csend.addEventListener("mousedown", (ev) => ev.preventDefault());
 
 // セッション chip: 選択中プロジェクトの all (新しい順) で各セッションが最初に現れた entry = そのセッションの最新返事。並びも新しい順。
 // 同じ repo のセッションが 2 つ以上なら HH:MM を添えて見分ける。
@@ -1773,6 +1891,7 @@ document.getElementById("pside").onclick = () => {
   const left = document.documentElement.classList.toggle("proj-left");
   try { localStorage.setItem("rmx.side", left ? "left" : "right"); } catch {}
 };
+if (isMobileUA) document.addEventListener("click", (ev) => { if (!ev.target.closest("#proj, #ptoggle")) document.body.classList.add("proj-closed"); }); // スマホ: 重ねた一覧は外を押すと閉じる
 renderFilter();
 
 // ＋ 新規: GET /worktrees の path を一覧にし、行を押したら即 POST /new (許可する cwd の判定は server だけ)。
