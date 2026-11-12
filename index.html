@@ -347,6 +347,49 @@
     .pin { grid-template-columns: auto minmax(0, 1fr) auto; row-gap: 4px; }
     .pin textarea { grid-column: 1 / -1; grid-row: 2; }
   }
+  /* ここから下はスマホ (mobile UA = html.mob) だけ。PC は細い幅でも変えない (2026-11-13 user: スマホでも使いやすく) */
+  /* 押す物は 44px 角以上 (24px の ☰ ＋ ◀ ▶ と高さ 21px の chip は指で外した) */
+  html.mob :is(button, select, .chip) { min-width: 44px; min-height: 44px; }
+  html.mob #newpop .it, html.mob #cact :is(.q, .cpick) { min-width: 44px; min-height: 44px; }
+  html.mob body, html.mob.wide body.proj-closed.chat-closed { grid-template-columns: minmax(0, 1fr) 52px; } /* 帯は 44px のボタンが入る幅に */
+  html.mob.wide body.proj-closed { grid-template-columns: minmax(0, 1fr) 300px 52px; }
+  html.mob .chip { padding-inline: 12px; }
+  html.mob :is(.cpbtn, .mmzoom) { display: grid; place-items: start end; background: none; border-color: transparent; } /* 図の右上の ⧉ ⤢: 押せる範囲だけ広げ、下の字は隠さない */
+  html.mob .cimg button { top: -10px; right: -10px; width: 44px; height: 44px; border: 0; border-radius: 0; padding: 0 0 22px 22px; background: radial-gradient(circle at 33px 11px, var(--panel) 9px, transparent 10px); }
+  html.mob #cact .q sup, html.mob #tstat sup { display: none; } /* 数字キーの案内はキーボードが無いので出さない */
+  /* 送信欄の中: 定型キーを 3 列、入力欄、最下段に 📎・モデル・エフォート・送信。モデルとエフォートは名前が切れない幅で出す (184px の列では『fa』『h』に切れた) */
+  html.mob #cform { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+  html.mob #cact, html.mob #copt { display: contents; }
+  html.mob #cact .q { grid-column: auto; order: 1; font-size: 14px; padding: 0 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  html.mob #ctext { grid-column: 1 / -1; order: 2; min-height: 66px; max-height: 40vh; font-size: 16px; }
+  html.mob #cbar { grid-column: 1 / -1; order: 3; position: static; gap: 6px; }
+  html.mob #cattach { margin-right: 0; padding: 0; }
+  html.mob #cact .cpick { flex: 0 1 auto; font-size: 14px; padding: 0 4px; }
+  html.mob #csend { margin-left: auto; padding: 0 18px; font-weight: 700; }
+  /* 案表 (『これにする』が付く表) は行ごとのカード。8 列の表は幅 659px で、推奨 (Tier) と理由が横スクロールの先にあった。
+     DOM は表のまま (ピン・採用の処理を変えない)。役割の class と data-th は decorate の cardify が付ける。他の表は横スクロールのまま */
+  html.mob #reply table.cards, html.mob #reply table.cards tbody { display: block; }
+  html.mob #reply table.cards thead { display: none; }
+  html.mob #reply table.cards tr { display: flex; flex-wrap: wrap; align-items: center; gap: 3px 8px; margin: 8px 0; padding: 10px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+  html.mob #reply table.cards tr::before, html.mob #reply table.cards tr::after { content: ""; flex-basis: 100%; } /* 行の切れ目: 1 行目 (記号・題・印) | 2 行目 (見出しつきの値) | 3 行目 (理由と『これにする』) */
+  html.mob #reply table.cards tr::before { order: 2; }
+  html.mob #reply table.cards tr::after { order: 4; }
+  html.mob #reply table.cards td { display: block; min-width: 0; border: 0; padding: 0; white-space: normal; box-shadow: none; }
+  html.mob #reply table.cards td.ck { order: 0; flex: none; display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: var(--link); color: var(--bg); font-size: 13px; font-weight: 700; }
+  html.mob #reply table.cards td.ck::before { content: none; } /* ピンの印は枠の色で見せる (丸の中に『表 A』は入らない) */
+  html.mob #reply table.cards td.ct { order: 1; flex: 1 1 0; font-size: 15px; font-weight: 700; }
+  html.mob #reply table.cards td.cb { order: 1; flex: none; min-width: 28px; text-align: center; font-size: 12px; font-weight: 700; padding: 1px 8px; border: 1px solid var(--line); border-radius: 999px; }
+  html.mob #reply table.cards td.cm { order: 3; font-size: 12px; color: var(--muted); white-space: nowrap; }
+  html.mob #reply table.cards td.cm::before { content: attr(data-th) " "; }
+  html.mob #reply table.cards td.cr { order: 5; flex: 1 1 100%; font-size: 13px; }
+  html.mob #reply table.cards td:has(> .pick) { display: flex; align-items: center; gap: 8px; }
+  html.mob #reply table.cards .pick { flex: none; margin-left: auto; padding: 0 16px; font-size: 14px; border-radius: 8px; background: var(--bg); }
+  html.mob #reply table.cards .pick.on { background: var(--red); }
+  html.mob #reply table.cards tr.chosen { background: color-mix(in srgb, var(--red) 8%, var(--panel)); }
+  html.mob #reply table.cards tr.pinned { border-color: var(--red); box-shadow: inset 3px 0 0 var(--red); }
+  html.mob #reply table.cards tr.pinned > td.ck { background: var(--red); color: #fff; }
+  /* 罫線図・コード: 幅を超えたら fitPre が --pf で字を小さくする */
+  html.mob #reply pre, html.mob #reply pre code { font-size: var(--pf, 14px); }
   .foot { margin-top: 20px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 12px; line-height: 1.6; color: var(--muted); }
 </style>
 </head>
@@ -356,6 +399,8 @@
 // スマホ (mobile UA) は幅に関係なく狭い幅と同じ並びにする。ブラウザの「PC 版サイト」で UA が desktop になれば戻る。CSS 側は html.narrow
 const isMobileUA = navigator.userAgentData?.mobile || /Android|iPhone|iPad|Mobile/.test(navigator.userAgent);
 const isNarrow = () => document.documentElement.classList.contains("narrow");
+// スマホだけの並び・大きさは html.mob で分ける。html.narrow は PC の細い幅 (サイドパネル) と共用なので、スマホ用の直しを載せると PC も変わる (2026-11-13 user)
+document.documentElement.classList.toggle("mob", !!isMobileUA);
 // 拡張のサイドパネル (rmp の iframe) の中。Zen のサイドバーは 700px を超えるので、幅に関係なく帯のホバーでは開かない (2026-10-30 user)
 const isEmbedded = window !== window.top;
 document.documentElement.classList.toggle("embedded", isEmbedded);
@@ -604,6 +649,7 @@ async function show(md, entry) {
   document.getElementById("sent").textContent = "";
   document.getElementById("akmsg").textContent = "";
   decorate(el);
+  fitPre();
   refresh();
   try { await mermaid.run({ nodes: el.querySelectorAll("pre.mermaid") }); }
   finally { decorateDiagrams(el); refresh(); scheduleMargin(); } // 図のノードは描画後にしか無い。同じ返事の描き直しでもピンの赤枠を戻す
@@ -1006,6 +1052,38 @@ const textOf = (el) => {
 };
 const hhmm = (d) => d.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit", hour12: false });
 
+// スマホ: 案表を行ごとのカードにする。DOM は表のまま、列ごとの役割の class と見出しの文字 (data-th) を足して CSS で並べる。
+// 列名は決め打ちしない (人によって違う): 1 列目 = 記号 / 2 列目 = 題 / 3 列目以降で値が全部 SS・S・A〜D の列 = 右上の印 / それ以外の最後の列 = 理由 / 残りは見出しつきで 2 行目
+const GRADE = /^(SS|[SABCD])[+-]?$/;
+function cardify(t) {
+  const heads = [...(t.tHead?.rows[0]?.cells ?? [])].map((c) => c.textContent.trim()), rows = [...t.tBodies[0].rows], n = heads.length;
+  let badge = -1;
+  for (let j = n - 1; j >= 2 && badge < 0; j--) if (rows.every((r) => GRADE.test(r.cells[j]?.textContent.trim() ?? ""))) badge = j;
+  const reason = [n - 1, n - 2].find((j) => j >= 2 && j !== badge) ?? -1;
+  t.classList.add("cards");
+  rows.forEach((r) => {
+    [...r.cells].forEach((c, j) => { c.className = j === 0 ? "ck" : j === 1 ? "ct" : j === badge ? "cb" : j === reason ? "cr" : "cm"; c.dataset.th = heads[j] ?? ""; });
+    const pick = r.querySelector(".pick");
+    if (pick) r.cells[Math.max(reason, Math.min(1, r.cells.length - 1))].append(pick); // 『これにする』は理由の右 (理由の列が無ければ題の右)
+  });
+}
+// スマホ: 幅を超える罫線図・コードは、収まるまで字を小さくする (下限 9px)。下限でも収まらない物は元の大きさで横スクロールのまま (長い 1 行のコードを 9px にしても読めない)
+// 幅が変わった時 (Fold の開閉) とフォントが届いた時にも測り直す
+function fitPre() {
+  if (!isMobileUA) return;
+  for (const p of document.querySelectorAll("#reply pre:not(.mermaid)")) {
+    p.style.removeProperty("--pf");
+    if (p.scrollWidth <= p.clientWidth) continue;
+    const cs = getComputedStyle(p), pad = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
+    let f = Math.floor(parseFloat(cs.fontSize) * (p.clientWidth - pad) / (p.scrollWidth - pad) * 10) / 10;
+    for (; f >= 9; f = Math.round((f - 0.3) * 10) / 10) { p.style.setProperty("--pf", f + "px"); if (p.scrollWidth <= p.clientWidth) break; }
+    if (f < 9) p.style.removeProperty("--pf");
+  }
+}
+addEventListener("resize", fitPre);
+document.fonts?.ready.then(fitPre);
+document.fonts?.addEventListener("loadingdone", fitPre);
+
 // 描画後の DOM に錨を付ける: data-anchor = 表示名 (2 / 2-ⅱ / 表 A)、data-pin = 返事内の通し番号 (本文は不変なので番号で同定できる)
 function decorate(el) {
   el.querySelectorAll(".blk").forEach((b) => {
@@ -1026,6 +1104,7 @@ function decorate(el) {
     tr.dataset.anchor = `表 ${cut(first, 12)}`;
     if (isPickRow(tr)) tr.cells[0].insertAdjacentHTML("beforeend", `<button class="pick" data-pick="${first}">これにする</button>`);
   });
+  if (isMobileUA) pickTbls.forEach(cardify);
   el.querySelectorAll("[data-anchor]").forEach((x, i) => { x.dataset.pin = String(i); x.classList.add("pinable"); });
 }
 
@@ -1268,6 +1347,7 @@ document.getElementById("send").onclick = async () => {
 // チャット欄: ピン無しで自由文を送る。送り先は赤ペンと同じ (表示中 entry の name → server がその entry の terminal へ)。
 // focus:false = 端末タブへ切り替えず viewer に留まる。送信済みの履歴は持たない (2026-09-29 user: 再入力の用途が薄い)。
 const chat = document.getElementById("chat"), ctext = document.getElementById("ctext"), csend = document.getElementById("csend");
+if (isMobileUA) ctext.placeholder = "端末へ送る"; // ⌘+Enter はキーボードが無いので出さない
 let chipLabels = new Map(), chatBusy = false;
 // 送り先の固定: プロジェクト列の選択 (repo 小文字、"すべて" は "") → session key を localStorage "rmx.chat.pin" に。無ければ追従 (表示中の返事の端末)。
 // 固定中に送る entry = /history 一覧 (all、新しい順) でそのセッションの最新。表示中の返事が切り替わっても変わらない。
