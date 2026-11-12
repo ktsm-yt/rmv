@@ -129,7 +129,7 @@ window.T = {
   // 押せる物 (button / select / chip) のうち、描かれていて 44px に足りない物
   small: () => [...document.querySelectorAll('button, select, .chip')].filter((e) => !e.closest('#mmzoom') && e.checkVisibility()).map((e) => [e, e.getBoundingClientRect()]).filter(([, b]) => b.width && b.height && (b.width < 43.5 || b.height < 43.5)).map(([e, b]) => `${e.tagName.toLowerCase()}${e.id ? '#' + e.id : ''}.${e.className} ${Math.round(b.width)}x${Math.round(b.height)}`),
   // 返事の本文までスクロールして、main の枠と画面の中に見えている返事の高さ
-  replyH: () => { const m = document.querySelector('main'), e = document.querySelector('#reply'); m.scrollTop += e.getBoundingClientRect().top - m.getBoundingClientRect().top; const a = e.getBoundingClientRect(), c = m.getBoundingClientRect(); return Math.max(0, Math.min(a.bottom, c.bottom, innerHeight) - Math.max(a.top, c.top, 0)); },
+  replyH: () => { const m = document.querySelector('main'), e = document.querySelector('#reply'); m.scrollTop += e.getBoundingClientRect().top - m.getBoundingClientRect().top; const a = e.getBoundingClientRect(), c = m.getBoundingClientRect(), t = m.querySelector('#tray:not([hidden])')?.getBoundingClientRect(); return Math.max(0, Math.min(a.bottom, c.bottom, innerHeight, t ? t.top : Infinity) - Math.max(a.top, c.top, 0)); }, // 返事の上に貼り付く赤ペン欄 (旧版) に隠れた分は数えない
   // 返事 (main) と送信欄 (#chat) が左右に並び、どちらも画面の縦いっぱい
   SIDE: () => { const m = T.r('main'), c = T.r('#chat'); return !!m && !!c && c.l >= m.r - 1 && c.t <= 1 && m.t <= 1 && c.b >= innerHeight - 1 && m.b >= innerHeight - 1 && c.r <= innerWidth + 0.5; },
   toTop: (q) => { const m = document.querySelector('main'), e = document.querySelector(q); m.scrollTop += e.getBoundingClientRect().top - m.getBoundingClientRect().top - 8; },

@@ -1550,7 +1550,7 @@ function renderChat() {
   // スマホ: 送り先の一覧は 1 回だけ出す。下の状態行に出していた依頼文・裏の待ちは 2 行目に載せる
   const mobRow = (e) => {
     const { st, bg } = e.live ? stOf(e) : { st: "dead" };
-    const sub = e.perm ? `${e.perm.tool} 許可待ち` : e.asking ? (e.asking.waiting ? "待機中" : "依頼: " + e.asking.prompt.replace(/\s+/g, " ").slice(0, 60)) : bg ? "裏で待ち: " + bgSum(bg) : agentTag(e) + (e.head || "");
+    const sub = e.perm ? `${e.perm.tool} 許可待ち` : e.asking ? askText(e) : bg ? "裏で待ち: " + bgSum(bg) : agentTag(e) + (e.head || "");
     return `<i class="${st}"></i><b>${esc(chipLabels.get(e.session) ?? (e.repo || "?"))}</b><time class="${st}">${esc(hhmm(new Date(e.ts)))}</time><span>${esc(sub)}</span>`;
   };
   const shown = [...chipEntries.values()].filter((e) => e.live || showDead || e.session === pin).slice(0, isMobileUA ? 12 : 5); // スマホは一覧がスクロールするので多めに出す (2 列では上の chip の代わり)
@@ -1587,6 +1587,7 @@ function stOf(e) {
   const st = (st1 === "wait" || st1 === "idle") && e.end ? e.end : st1;
   return { st, wait, perm, bg };
 }
+const askText = (e) => e.asking.waiting ? "待機中" : "依頼: " + e.asking.prompt.replace(/\s+/g, " ").slice(0, 60); // 返事待ちの依頼の 1 行 (起動直後で依頼が無ければ『待機中』)
 const bgSum = (bg) => [...bg.reduce((m, t) => m.set(t.type, (m.get(t.type) ?? 0) + 1), new Map()).entries()].map(([k, n]) => `${k} ${n}`).join(" "); // 裏で走っている物を種類ごとに数える ("shell 1 subagent 1")
 function renderTstat(list) {
   tstatList = list;
@@ -1597,7 +1598,7 @@ function renderTstat(list) {
     const bgText = bg ? " · 裏で待ち: " + bgSum(bg) : "";
     const ask = e.asking?.prompt ?? e.prompt; // 返事待ちの依頼、無ければ最新の返事を引き出した依頼
     if (perm) return `<div class="trow perm" data-s="${esc(e.session)}" style="--rc:${repoColor(e.repo)}" title="許可待ち"><i class="perm"></i><span>${esc(e.repo || "?")} · ${esc(perm.tool)} 許可待ち · ${esc(perm.detail)}</span><button data-approve="${esc(e.session)}" data-id="${esc(perm.id)}" title="許可する (y)">許可<sup>y</sup></button></div>`;
-    return `<div class="trow${st === "ng" || (wait && st !== "ok") ? " wait" : ""}" data-s="${esc(e.session)}" style="--rc:${repoColor(e.repo)}" title="${stTitle}${bg ? " · " + esc(bg.map((t) => t.description).join(" / ")) : ""} · 押すと依頼文を開き、この端末を送り先にする"><i class="${st}"></i><span>${esc(hhmm(new Date(e.ts)))} ${esc(e.repo || "?")}${esc(bgText)} · ${e.asking ? esc(e.asking.waiting ? "待機中" : "依頼: " + e.asking.prompt.replace(/\s+/g, " ").slice(0, 60)) : esc(e.head || "")}</span><time>${e.lastOutputAt ? ago(e.lastOutputAt) : ""}</time></div>` + (openAsk.has(e.session) && ask ? `<div class="task">${esc(ask)}</div>` : "");
+    return `<div class="trow${st === "ng" || (wait && st !== "ok") ? " wait" : ""}" data-s="${esc(e.session)}" style="--rc:${repoColor(e.repo)}" title="${stTitle}${bg ? " · " + esc(bg.map((t) => t.description).join(" / ")) : ""} · 押すと依頼文を開き、この端末を送り先にする"><i class="${st}"></i><span>${esc(hhmm(new Date(e.ts)))} ${esc(e.repo || "?")}${esc(bgText)} · ${e.asking ? esc(askText(e)) : esc(e.head || "")}</span><time>${e.lastOutputAt ? ago(e.lastOutputAt) : ""}</time></div>` + (openAsk.has(e.session) && ask ? `<div class="task">${esc(ask)}</div>` : "");
   }).join("");
   if (html === tstatHtml) return; // chip と同じ: 同じ内容なら書き直さない
   tstatHtml = html;
