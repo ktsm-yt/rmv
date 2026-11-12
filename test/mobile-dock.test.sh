@@ -130,6 +130,8 @@ window.T = {
   small: () => [...document.querySelectorAll('button, select, .chip')].filter((e) => !e.closest('#mmzoom') && e.checkVisibility()).map((e) => [e, e.getBoundingClientRect()]).filter(([, b]) => b.width && b.height && (b.width < 43.5 || b.height < 43.5)).map(([e, b]) => `${e.tagName.toLowerCase()}${e.id ? '#' + e.id : ''}.${e.className} ${Math.round(b.width)}x${Math.round(b.height)}`),
   // 返事の本文までスクロールして、main の枠と画面の中に見えている返事の高さ
   replyH: () => { const m = document.querySelector('main'), e = document.querySelector('#reply'); m.scrollTop += e.getBoundingClientRect().top - m.getBoundingClientRect().top; const a = e.getBoundingClientRect(), c = m.getBoundingClientRect(); return Math.max(0, Math.min(a.bottom, c.bottom, innerHeight) - Math.max(a.top, c.top, 0)); },
+  // 返事 (main) と送信欄 (#chat) が左右に並び、どちらも画面の縦いっぱい
+  SIDE: () => { const m = T.r('main'), c = T.r('#chat'); return !!m && !!c && c.l >= m.r - 1 && c.t <= 1 && m.t <= 1 && c.b >= innerHeight - 1 && m.b >= innerHeight - 1 && c.r <= innerWidth + 0.5; },
   toTop: (q) => { const m = document.querySelector('main'), e = document.querySelector(q); m.scrollTop += e.getBoundingClientRect().top - m.getBoundingClientRect().top - 8; },
 };
 """
@@ -240,6 +242,8 @@ with sync_playwright() as p:
     check("ピンを全部外すと送信欄に戻る", g["tray"] is None and g["ctext"] and not g["nav"], g)
     tap(pg, "#ctoggle")
     perm(False)
+    try: pg.wait_for_selector("#tstat [data-approve]", state="detached", timeout=6000)
+    except Exception: pass
     # ☰ と ＋
     tap(pg, "#ptoggle")
     g = pg.evaluate("({ proj: T.r('#proj'), small: T.small() })")
@@ -252,7 +256,7 @@ with sync_playwright() as p:
     g = pg.evaluate("({ pop: T.r('#newpop'), ok: T.inView('#newpop'), proj: T.r('#proj'), chat: T.r('#chat'), small: T.small() })")
     check("＋ の一覧は下の帯のすぐ上に出る (列は開かない)", g["ok"] and g["proj"] is None and g["chat"] and 0 <= g["chat"]["t"] - g["pop"]["b"] <= 24 and not g["small"], g)
     shot(pg, "2i-new")
-    tap(pg, "#stamp")
+    pg.touchscreen.tap(30, 300); pg.wait_for_timeout(250)
     # 追加: ピンを 4 つ付けて最後のひとこと欄に焦点 → キーボードの近似で縮める
     for k in (2, 3, 4, 5): pin(pg, k)
     resize(pg, 360, 480)
@@ -261,20 +265,62 @@ with sync_playwright() as p:
     check("360×480 でピン 4 つ: 返事も 150px 以上見える", g["reply"] >= 150, g)
     shot(pg, "2j-redpen-4pins-keyboard")
     pg.context.close()
-    # 追加 2: 開いた Fold の実寸 (約 630)。送信欄を開いた状態から段を押し、キーボードが出る (高さ 505)
-    pg = page(b, 630, 900)
-    open_sheet(pg)
+    pg = page(b, 360, 860)
     pin(pg, 5)
-    resize(pg, 630, 505)
-    g = pg.evaluate("({ focus: " + FOCUS + ", send: T.inView('#send'), reply: T.replyH() })")
-    check("630×505 で送信欄を開いたまま段を押す: 焦点のひとこと欄・赤ペンの送信・返事 150px 以上が同時に見える", g["focus"] and g["send"] and g["reply"] >= 150, g)
-    pg.evaluate("T.toTop('#reply table[data-ptbl]')"); pg.wait_for_timeout(150); shot(pg, "3d-open-redpen-keyboard")
+    resize(pg, 630, 900)
+    g = pg.evaluate("({ side: T.SIDE(), tray: T.inView('#tray'), ctext: T.r('#ctext'), focus: " + FOCUS + " })")
+    check("赤ペン中に 360 → 630 (Fold を開く): 2 列になり、赤ペン欄は画面内で焦点もそのまま", g["side"] and g["tray"] and g["ctext"] is None and g["focus"], g)
+    resize(pg, 360, 860)
+    g = pg.evaluate("({ tray: T.r('#tray'), ok: T.inView('#tray'), ctext: T.r('#ctext'), focus: " + FOCUS + " })")
+    check("630 → 360 (Fold を閉じる): 赤ペン欄は下端に戻る", g["ok"] and g["tray"]["b"] >= 800 and g["ctext"] is None and g["focus"], g)
+    pin(pg, 5)
+    resize(pg, 630, 900); resize(pg, 360, 860)
+    g = pg.evaluate("({ chat: T.r('#chat'), ctext: T.r('#ctext'), nav: document.querySelector('#prev').parentElement.id })")
+    check("読み直さずに 360 → 630 → 360: 下の帯に戻り、送信欄は畳まれ、◀ ▶ も帯に戻る", g["chat"]["t"] >= 860 * 0.75 and g["ctext"] is None and g["nav"] == "dock", g)
     pg.context.close()
-    # 前に ⇆ で左を選んだ端末でも並びは同じ
     pg = page(b, 360, 860, init="try { localStorage.setItem('rmx.side', 'left'); } catch {}")
     g = pg.evaluate("({ proj: T.r('#proj'), chat: T.r('#chat'), reply: T.r('#reply').w, main: T.r('main').l })")
     check("⇆ で左を覚えた端末でも、帯は出ず下の帯になる", g["proj"] is None and g["reply"] >= 338 and g["main"] == 0 and g["chat"]["t"] >= 860 * 0.75, g)
     pg.context.close()
+
+    # ---- 段 3: 開いた画面は左右 2 列 (630×900 = 実機に近い値、720×860 = 仮の値、1000×700 = 横向き・タブレット)
+    for (w, h) in ((630, 900), (720, 860), (1000, 700)):
+        pg = page(b, w, h)
+        g = pg.evaluate("({ side: T.SIDE(), main: T.r('main'), chat: T.r('#chat'), reply: T.r('#reply').w, ctext: T.inView('#ctext'), send: T.inView('#csend'), proj: T.r('#proj'), over: document.documentElement.scrollWidth - innerWidth, small: T.small(), sel: [...document.querySelectorAll('#cact .cpick')].map((e) => Math.round(e.getBoundingClientRect().width)), wait: document.querySelector('#chat').innerText.includes('待ち 1') })")
+        check(f"{w}×{h}: 左に返事・右に列が並び、送信欄は出たまま (帯は無し、横にはみ出さない)", g["side"] and g["ctext"] and g["send"] and g["proj"] is None and g["over"] <= 0 and g["reply"] >= 340, g)
+        check(f"{w}×{h}: 右の列に返事待ちの数、モデル・エフォートは 70px 以上、押せる物は 44px 以上", g["wait"] and min(g["sel"]) >= 70 and not g["small"], g)
+        if w == 630:
+            shot(pg, "3a-open-read")
+            pg.evaluate("T.toTop('#reply table[data-ptbl]')"); pg.wait_for_timeout(150); shot(pg, "3b-open-table")
+            tap(pg, "#newbtn")
+            g = pg.evaluate("({ ok: T.inView('#newpop'), small: T.small() })")
+            check("630×900: ＋ の一覧は画面内に出る", g["ok"] and not g["small"], g)
+            pg.touchscreen.tap(20, 300); pg.wait_for_timeout(200)
+            g = pg.evaluate("({ pop: T.r('#newpop'), tray: T.r('#tray') })")
+            check("630×900: ＋ の一覧の外を押すと閉じる (下の段にピンは付かない)", g["pop"] is None and g["tray"] is None, g)
+            tap(pg, "#ptoggle")
+            g = pg.evaluate("T.r('#proj')")
+            check("630×900: ☰ で一覧が開く", g and g["w"] > 200 and g["b"] <= h + 0.5, g)
+            pg.touchscreen.tap(20, 300); pg.wait_for_timeout(200)
+        if w != 1000:
+            tap(pg, "#ctext")
+            resize(pg, w, 420)
+            g = pg.evaluate("({ reply: T.replyH(), send: T.inView('#csend'), keys: [...document.querySelectorAll('#cact .q')].filter((e) => e.checkVisibility()).length, to: T.inView('#cto'), chips: T.r('#cchips'), h: T.r('#ctext')?.h })")
+            check(f"{w}×420 で入力欄に焦点: 返事は 380px 以上見える (左は縦いっぱい)", g["reply"] >= 380, g)
+            check(f"{w}×420 で入力欄に焦点: 右の列は 送り先 1 行・定型キー・入力欄 (60px 以上)・送信", g["to"] and g["keys"] >= 5 and g["chips"] is None and (g["h"] or 0) >= 60 and g["send"], g)
+            if w == 630: pg.evaluate("T.toTop('#reply table[data-ptbl]')"); pg.wait_for_timeout(150); shot(pg, "3c-open-keyboard")
+        pg.context.close()
+    # 追加 2: 開いた Fold の実寸 (約 630)。送信欄が出た状態から段を押し、キーボードが出る (高さ 505)
+    pg = page(b, 630, 900)
+    pg.evaluate("document.body.classList.remove('chat-closed')") # 旧版は畳んで始まるので開く (実機の画面は開いた状態だった)
+    pin(pg, 5)
+    resize(pg, 630, 505)
+    g = pg.evaluate("({ focus: " + FOCUS + ", send: T.inView('#send'), reply: T.replyH(), ctext: T.r('#ctext'), tray: T.r('#tray'), main: T.r('main') })")
+    check("630×505 で送信欄を出したまま段を押す: 焦点のひとこと欄・赤ペンの送信・返事 150px 以上が同時に見える", g["focus"] and g["send"] and g["reply"] >= 150, g)
+    check("630×505: 赤ペン中は右の列が赤ペン欄に入れ替わる (送信欄と積まない)", g["tray"] and g["ctext"] is None and g["tray"]["l"] >= g["main"]["r"] - 1, g)
+    pg.evaluate("T.toTop('#reply table[data-ptbl]')"); pg.wait_for_timeout(150); shot(pg, "3d-open-redpen-keyboard")
+    pg.context.close()
+    # Fold の開閉 (読み直さずに幅が変わる) と、前に ⇆ で左を選んだ端末
 
     # ---- PC の UA では何も変わらない
     for (w, h) in ((360, 860), (1280, 800)):
