@@ -303,6 +303,9 @@ with sync_playwright() as p:
             check("630×900: ☰ で一覧が開く", g and g["w"] > 200 and g["b"] <= h + 0.5, g)
             pg.touchscreen.tap(20, 300); pg.wait_for_timeout(200)
         if w != 1000:
+            tap(pg, "#cto")
+            g = pg.evaluate("({ chips: T.r('#cchips'), to: T.r('#chead') })")
+            check(f"{w}×{h}: 送り先の行を押しても一覧は出たまま、行の上にある", g["chips"] and g["to"] and g["chips"]["b"] <= g["to"]["t"] + 1 and g["chips"]["h"] > 100, g)
             tap(pg, "#ctext")
             resize(pg, w, 420)
             g = pg.evaluate("({ reply: T.replyH(), send: T.inView('#csend'), keys: [...document.querySelectorAll('#cact .q')].filter((e) => e.checkVisibility()).length, to: T.inView('#cto'), chips: T.r('#cchips'), h: T.r('#ctext')?.h })")

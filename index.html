@@ -482,6 +482,7 @@
   html.mob.split #cbar { grid-row: 6; flex-wrap: wrap; }
   html.mob.split #cact .cpick { order: -2; flex: 1 1 45%; min-width: 0; } /* モデルとエフォートで 1 行、その下に 📎 と送信 */
   html.mob.split #tray { margin-top: auto; }
+  @media (min-width: 900px) { html.mob.split:not(.kbd) #cmedia:not(:empty) { display: grid; flex: 0 1 28%; order: 3; } } /* 横向き・タブレット: 使った画像と PDF の一覧を列の下に残す (幅 900px 以上では今までも出ていた) */
   html.mob.split #newpop { top: 60px; transform: none; max-height: calc(var(--vvh, 100dvh) - 76px); }
   .foot { margin-top: 20px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 12px; line-height: 1.6; color: var(--muted); }
 </style>
@@ -1797,7 +1798,7 @@ ctext.addEventListener("keydown", (ev) => {
 sug.addEventListener("mousedown", (ev) => { const d = ev.target.closest("[data-i]"); if (d) { ev.preventDefault(); pickSug(+d.dataset.i); } });
 // 開閉は PC だけ localStorage "rmx.chat.open" に覚える (スマホは毎回畳んで始める)。狭い幅はバー全体 (#chead) が押せる
 document.getElementById("chead").onclick = (ev) => {
-  if (isMobileUA && !ev.target.closest("#ctoggle")) return void document.body.classList.toggle("to-open"); // スマホ: 行 = 送り先の一覧の開閉、畳むのは右端の ▼
+  if (isMobileUA && !ev.target.closest("#ctoggle")) return void (document.documentElement.classList.contains("split") || document.body.classList.toggle("to-open")); // スマホ: 行 = 送り先の一覧の開閉、畳むのは右端の ▼ (2 列の時は一覧も送信欄も出したまま)
   if (!isNarrow() && !ev.target.closest("#ctoggle")) return;
   const closed = document.body.classList.toggle("chat-closed");
   document.body.classList.remove("to-open");
