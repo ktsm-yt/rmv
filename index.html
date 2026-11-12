@@ -418,7 +418,13 @@
   html.mob #dock #dto { flex: 1 1 0; display: flex; gap: 6px; width: auto; min-width: 0; padding: 0 8px; font-size: 14px; white-space: nowrap; overflow: hidden; }
   html.mob #dname { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
   html.mob #dwait { flex: none; margin-left: auto; font-size: 12px; color: var(--muted); }
-  html.mob #dwait::after { content: " ▲"; }
+  html.mob #dwait b { font-weight: inherit; }
+  @media (min-width: 360px) { html.mob #dwait::after { content: " ▲"; } }
+  @media (max-width: 359px) { /* 狭い端末では送り先の名前に幅を回す: 返事待ちは数だけを黄の丸に入れ、間隔を詰める */
+    html.mob #dock { gap: 4px; }
+    html.mob #dwait b { display: none; }
+    html.mob #dwait:not(:empty) { padding: 0 7px; border-radius: 999px; background: rgb(229 165 10 / .25); color: var(--fg); font-weight: 700; }
+  }
   html.mob #dwait span { display: none; } /* 動作中の数は 2 列の時だけ */
   html.mob #dto i { flex: none; width: 10px; height: 10px; border-radius: 50%; box-sizing: border-box; border: 2px solid var(--line); } /* 状態の点は送り先の一覧と同じ見た目 */
   html.mob #dto i:is(.wait, .ng) { border: 0; background: #e5a50a; box-shadow: 0 0 0 3px rgb(229 165 10 / .25); }
@@ -440,6 +446,7 @@
   html.mob #cchips .chip b { overflow: hidden; text-overflow: ellipsis; }
   html.mob #cchips .chip span { grid-column: 2 / -1; font-size: 12px; color: var(--muted); }
   html.mob #cchips .chip.on span { color: inherit; opacity: .7; }
+  html.mob #cchips .chip .task { grid-column: 1 / -1; max-height: 30vh; overflow: auto; padding-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere; }
   /* 許可待ちの行 */
   html.mob #tstat { gap: 6px; font-size: 13px; color: var(--fg); }
   html.mob #tstat .trow { align-items: center; padding: 3px 4px 3px 10px; border: 1px solid #e01b24; border-radius: 10px; }
@@ -1548,11 +1555,12 @@ function renderChat() {
   // 各行 = 時刻 + 最新返事の冒頭。同じ repo の chip は時刻だけでは見分けられない (2026-09-29 user)
   // 時刻の左に下の一覧と同じ丸、時刻の色も状態で変える (作業中 = 明るく太字 / 黄 = 返事が要る / 緑 = 閉じてよい / 灰 = 静か・終了)。2026-10-25 user
   const row = (e) => { const st = e.live ? stOf(e).st : "dead"; return `<i class="${st}"></i><time class="${st}">${esc(hhmm(new Date(e.ts)))}</time><span>${esc(agentTag(e) + (e.head || ""))}</span>`; };
-  // スマホ: 送り先の一覧は 1 回だけ出す。下の状態行に出していた依頼文・裏の待ちは 2 行目に載せる
+  // スマホ: 送り先の一覧は 1 回だけ出す。下の状態行に出していた物は一覧の行に載せる: 2 行目 = 依頼文の冒頭・裏の待ち・経過時間、行を押すと依頼文の全文 (もう一度押すと畳む)
   const mobRow = (e) => {
     const { st, bg } = e.live ? stOf(e) : { st: "dead" };
-    const sub = e.perm ? `${e.perm.tool} 許可待ち` : e.asking ? askText(e) : bg ? "裏で待ち: " + bgSum(bg) : agentTag(e) + (e.head || "");
-    return `<i class="${st}"></i><b>${esc(chipLabels.get(e.session) ?? (e.repo || "?"))}</b><time class="${st}">${esc(hhmm(new Date(e.ts)))}</time><span>${esc(sub)}</span>`;
+    const sub = (e.perm ? `${e.perm.tool} 許可待ち` : e.asking ? askText(e) : bg ? "裏で待ち: " + bgSum(bg) : agentTag(e) + (e.head || "")) + (e.live && e.lastOutputAt ? ` · ${ago(e.lastOutputAt)}` : "");
+    const ask = openAsk.has(e.session) && (e.asking?.prompt ?? e.prompt);
+    return `<i class="${st}"></i><b>${esc(chipLabels.get(e.session) ?? (e.repo || "?"))}</b><time class="${st}">${esc(hhmm(new Date(e.ts)))}</time><span>${esc(sub)}</span>${ask ? `<span class="task">${esc(ask)}</span>` : ""}`;
   };
   const shown = [...chipEntries.values()].filter((e) => e.live || showDead || e.session === pin).slice(0, isMobileUA ? 12 : 5); // スマホは一覧がスクロールするので多めに出す (2 列では上の chip の代わり)
   // 許可待ちはプロジェクトの絞り込みと 5 件の枠に関係なく先頭に出す (別 repo の foyer の画面の許可待ちが見えなかった、2026-10-15)
@@ -1563,7 +1571,7 @@ function renderChat() {
     const wait = sts.filter((x) => x === "ng" || x === "wait" || x === "perm").length, run = sts.filter((x) => x === "busy" || x === "bg").length;
     document.getElementById("dname").textContent = lbl ? (pin ? "📌 " : "") + lbl : "送り先なし"; // 幅が無いので矢印は付けない (点が送り先の印)
     document.querySelector("#dto i").className = to?.live ? stOf(to).st : "";
-    document.getElementById("dwait").innerHTML = (wait ? `待ち ${wait}` : "") + (run ? `<span>${wait ? " / " : ""}動作中 ${run}</span>` : "");
+    document.getElementById("dwait").innerHTML = (wait ? `<b>待ち </b>${wait}` : "") + (run ? `<span>${wait ? " / " : ""}動作中 ${run}</span>` : "");
   }
   let html = chipBtn("", !pin, "追従", "表示中の返事の端末へ送る") + shown.map((e) => chipBtn(e.session, e.session === pin, (isMobileUA ? mobRow : row)(e), `送り先をここに固定: ${chipLabels.get(e.session)}`, true, e.repo)).join("");
   if (pin && !chipLabels.has(pin)) html += chipBtn(pin, true, "固定中 (返事なし)", pin);
@@ -1588,11 +1596,11 @@ function stOf(e) {
   const st = (st1 === "wait" || st1 === "idle") && e.end ? e.end : st1;
   return { st, wait, perm, bg };
 }
+const ago = (t) => { const m = Math.max(0, Math.floor((Date.now() - t) / 60000)); return m > 60 ? `${Math.floor(m / 60)} 時間` : `${m} 分`; }; // 最後の出力からの経過
 const askText = (e) => e.asking.waiting ? "待機中" : "依頼: " + e.asking.prompt.replace(/\s+/g, " ").slice(0, 60); // 返事待ちの依頼の 1 行 (起動直後で依頼が無ければ『待機中』)
 const bgSum = (bg) => [...bg.reduce((m, t) => m.set(t.type, (m.get(t.type) ?? 0) + 1), new Map()).entries()].map(([k, n]) => `${k} ${n}`).join(" "); // 裏で走っている物を種類ごとに数える ("shell 1 subagent 1")
 function renderTstat(list) {
   tstatList = list;
-  const ago = (t) => { const m = Math.max(0, Math.floor((Date.now() - t) / 60000)); return m > 60 ? `${Math.floor(m / 60)} 時間` : `${m} 分`; };
   const html = list.map((e) => {
     const { st, wait, perm, bg } = stOf(e);
     const stTitle = { perm: "許可待ち", wait: "入力待ち", busy: "作業中", idle: "静か", bg: "裏で待ち", ok: "閉じてよい", ng: "返事が要る" }[st];
@@ -1628,7 +1636,12 @@ tstat.addEventListener("click", async (ev) => {
     b.disabled = false;
   }
 });
-cchips.addEventListener("click", (ev) => { const b = ev.target.closest("[data-s]"); if (b) { document.body.classList.remove("to-open"); pickChip(b.dataset.s); } }); // to-open = スマホの送り先の一覧。選んだら畳む
+cchips.addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-s]");
+  if (!b) return;
+  if (isMobileUA && b.dataset.s) openAsk.has(b.dataset.s) ? openAsk.delete(b.dataset.s) : openAsk.add(b.dataset.s); // スマホ: 行を押すと依頼文の全文も開く (状態行と同じ)
+  pickChip(b.dataset.s);
+});
 async function pickChip(s) {
   if (s) chatPins[REPO.toLowerCase()] = s; else delete chatPins[REPO.toLowerCase()];
   try { localStorage.setItem("rmx.chat.pin", JSON.stringify(chatPins)); } catch {}
@@ -1929,7 +1942,7 @@ document.getElementById("pside").onclick = () => {
   const left = document.documentElement.classList.toggle("proj-left");
   try { localStorage.setItem("rmx.side", left ? "left" : "right"); } catch {}
 };
-if (isMobileUA) document.addEventListener("click", (ev) => { if (!ev.target.closest("#proj, #ptoggle")) document.body.classList.add("proj-closed"); }); // スマホ: 重ねた一覧は外を押すと閉じる
+if (isMobileUA) document.addEventListener("click", (ev) => { if (!ev.composedPath().some((n) => n.id === "proj" || n.id === "ptoggle")) document.body.classList.add("proj-closed"); }); // スマホ: 重ねた一覧は外を押すと閉じる (『終了したものも表示』は押すと描き直されて DOM から外れるので、closest でなく通った経路で見る)
 renderFilter();
 
 // ＋ 新規: GET /worktrees の path を一覧にし、行を押したら即 POST /new (許可する cwd の判定は server だけ)。

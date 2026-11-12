@@ -110,7 +110,7 @@ trap 'kill $SV 2>/dev/null' EXIT
 for _ in $(seq 1 50); do curl -sf "$BASE/history" >/dev/null 2>&1 && break; sleep 0.1; done
 
 uv run --with playwright python - "$BASE" "${SHOTS:-}" "$STATE" <<'PY'
-import json, sys, time
+import json, re, sys, time
 from playwright.sync_api import sync_playwright
 base, shots, state = sys.argv[1], sys.argv[2], sys.argv[3]
 ANDROID = "Mozilla/5.0 (Linux; Android 16; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36"
@@ -132,15 +132,27 @@ window.T = {
   replyH: () => { const m = document.querySelector('main'), e = document.querySelector('#reply'); m.scrollTop += e.getBoundingClientRect().top - m.getBoundingClientRect().top; const a = e.getBoundingClientRect(), c = m.getBoundingClientRect(), t = m.querySelector('#tray:not([hidden])')?.getBoundingClientRect(); return Math.max(0, Math.min(a.bottom, c.bottom, innerHeight, t ? t.top : Infinity) - Math.max(a.top, c.top, 0)); }, // 返事の上に貼り付く赤ペン欄 (旧版) に隠れた分は数えない
   // 返事 (main) と送信欄 (#chat) が左右に並び、どちらも画面の縦いっぱい
   SIDE: () => { const m = T.r('main'), c = T.r('#chat'); return !!m && !!c && c.l >= m.r - 1 && c.t <= 1 && m.t <= 1 && c.b >= innerHeight - 1 && m.b >= innerHeight - 1 && c.r <= innerWidth + 0.5; },
+  // モデル・エフォートの欄: 選んでいる名前の字幅を引いた残り (矢印と余白の分 = 20px 以上あれば切れていない)
+  selRoom: () => [...document.querySelectorAll('#cact .cpick')].map((e) => { const c = document.createElement('canvas').getContext('2d'); c.font = getComputedStyle(e).font; return Math.round(e.clientWidth - c.measureText(e.selectedOptions[0]?.text ?? '').width); }),
+  // 返事の上を指で横に払う (dx > 0 = 右へ = 前の返事)
+  swipe: (q, dx) => { const e = document.querySelector(q), b = e.getBoundingClientRect(), x = b.left + b.width / 2, y = b.top + b.height / 2; const t = (cx) => new Touch({ identifier: 1, target: e, clientX: cx, clientY: y }); e.dispatchEvent(new TouchEvent('touchstart', { bubbles: true, touches: [t(x)], changedTouches: [t(x)] })); e.dispatchEvent(new TouchEvent('touchend', { bubbles: true, touches: [], changedTouches: [t(x + dx)] })); },
   toTop: (q) => { const m = document.querySelector('main'), e = document.querySelector(q); m.scrollTop += e.getBoundingClientRect().top - m.getBoundingClientRect().top - 8; },
 };
 """
-def page(b, w, h, ua=ANDROID, mobile=True, init=""):
+def live_ok(route): # 生死を判定できた時の一覧: gamma を終了扱いにする (『終了したものも表示』を出す)
+    r = route.fetch(); items = r.json()
+    for e in items: e["live"] = e["repo"] != "gamma"
+    route.fulfill(response=r, headers={**r.headers, "x-rmv-live": "ok"}, body=json.dumps(items))
+def page(b, w, h, ua=ANDROID, mobile=True, init="", dead=False):
     c = b.new_context(viewport={"width": w, "height": h}, user_agent=ua, has_touch=mobile, is_mobile=mobile, device_scale_factor=2)
     c.add_init_script(LIB + init)
     pg = c.new_page()
     pg.route("**/worktrees", lambda r: r.fulfill(status=200, body=json.dumps(["/tmp/rmv-fixture/alpha", "/tmp/rmv-fixture/alpha/.worktrees/try", "/tmp/rmv-fixture/beta"]), content_type="application/json"))
     pg.route("**/new", lambda r: r.abort())  # 万一押しても端末を作らない
+    # 送り先の今の値: 実機で切れていたモデル名と文脈量。使った画像の一覧も 1 件返す (幅 900px 以上でだけ出る)
+    pg.route(re.compile(r"/now\?"), lambda r: r.fulfill(status=200, body=json.dumps({"model": "fable[1m]", "effort": "medium", "ctx": {"used": 271000, "limit": 1000000}}), content_type="application/json"))
+    pg.route(re.compile(r"/media\?"), lambda r: r.fulfill(status=200, body=json.dumps([{"p": "/tmp/rmv-fixture/shot.png", "t": 1}]), content_type="application/json"))
+    if dead: pg.route(re.compile(r"/history$"), live_ok)
     pg.goto(base)
     pg.wait_for_function("document.querySelector('#reply table') && document.querySelector('#reply pre')", timeout=10000)
     pg.evaluate("document.fonts.ready"); pg.wait_for_timeout(300)
@@ -221,12 +233,18 @@ with sync_playwright() as p:
     opened = open_sheet(pg)
     g = pg.evaluate("({ q: T.r('#cact .q'), ctext: T.r('#ctext'), send: T.r('#csend'), sel: [...document.querySelectorAll('#cact .cpick')].map((e) => Math.round(e.getBoundingClientRect().width)), perm: T.inView('#tstat [data-approve]'), small: T.small(), rows: document.querySelectorAll('#tstat .trow:not(.perm)').length, reply: T.replyH(), keys: [...document.querySelectorAll('#cact .q')].filter((e) => e.checkVisibility()).length })")
     check("送り先を押すと下から送信欄が開く: 上から 定型キー → 入力欄 → 送信、どれも画面内", opened and g["q"] and g["ctext"] and g["send"] and g["q"]["t"] < g["ctext"]["t"] < g["send"]["t"] and g["send"]["b"] <= 860.5 and g["ctext"]["t"] > 430 and g["perm"], g)
-    check("開いた送信欄: モデル・エフォートは 70px 以上、押せる物は 44px 以上、返事は 250px 以上見える", min(g["sel"]) >= 70 and not g["small"] and g["reply"] >= 250, g)
+    check("開いた送信欄: 押せる物は 44px 以上、返事は 250px 以上見える", not g["small"] and g["reply"] >= 250, g)
+    g = pg.evaluate("({ room: T.selRoom(), names: [...document.querySelectorAll('#cact .cpick')].map((e) => e.value), ctx: T.r('#cctx'), to: T.r('#cto'), text: document.querySelector('#cctx').textContent })")
+    check("開いた送信欄: モデル (fable[1m])・エフォート (medium) の名前が切れず、文脈量は送り先の右", g["names"] == ["fable[1m]", "medium"] and min(g["room"]) >= 20 and g["ctx"] and g["ctx"]["l"] >= g["to"]["l"] + 40 and "271k" in g["text"], g)
     pg.evaluate("T.toTop('#reply table[data-ptbl]')"); pg.wait_for_timeout(150); shot(pg, "2d-open")
     tap(pg, "#cto")
     g = pg.evaluate("({ chips: [...document.querySelectorAll('#cchips .chip')].filter((e) => e.checkVisibility()).length, twice: document.querySelectorAll('#tstat .trow:not(.perm)').length, small: T.small(), send: T.inView('#csend') })")
     check("開いた送信欄の送り先を押すと送り先の一覧が出る (同じセッションを状態行に 2 回並べない)", g["chips"] >= 4 and g["twice"] == 0 and not g["small"] and g["send"], g)
     shot(pg, "2d2-targets")
+    tap(pg, "#cchips .chip >> nth=1")
+    g = pg.evaluate("({ task: document.querySelector('#cchips .chip .task')?.textContent, on: document.querySelector('#cchips .chip.on b')?.textContent, send: T.inView('#csend') })")
+    check("送り先の一覧の行を押すと送り先がそこに固定され、依頼文の全文が開く", g["task"] == "スマホの画面を確かめて" and g["on"] and g["send"], g)
+    tap(pg, "#cchips .chip >> nth=0")
     tap(pg, "#cto")
     # 赤ペン: 下の欄は 1 つ (送信欄を開いたまま段を押す)
     pinned = pin(pg, 5)
@@ -257,6 +275,12 @@ with sync_playwright() as p:
     check("＋ の一覧は下の帯のすぐ上に出る (列は開かない)", g["ok"] and g["proj"] is None and g["chat"] and 0 <= g["chat"]["t"] - g["pop"]["b"] <= 24 and not g["small"], g)
     shot(pg, "2i-new")
     pg.touchscreen.tap(30, 300); pg.wait_for_timeout(250)
+    # 変えない物: 返事の上の左右スワイプで前後へ (カードにした表の上でも)
+    before = pg.evaluate("document.querySelector('#pos').textContent")
+    pg.evaluate("T.swipe('#reply table.cards td.ct, #reply table td', 120)"); pg.wait_for_timeout(400)
+    after = pg.evaluate("document.querySelector('#pos').textContent")
+    check("返事の上を右へ払うと前の返事に移る (案表の上でも)", before == "4 / 4" and after == "3 / 4", (before, after))
+    tap(pg, "#next")
     # 追加: ピンを 4 つ付けて最後のひとこと欄に焦点 → キーボードの近似で縮める
     for k in (2, 3, 4, 5): pin(pg, k)
     resize(pg, 360, 480)
@@ -283,12 +307,31 @@ with sync_playwright() as p:
     check("⇆ で左を覚えた端末でも、帯は出ず下の帯になる", g["proj"] is None and g["reply"] >= 338 and g["main"] == 0 and g["chat"]["t"] >= 860 * 0.75, g)
     pg.context.close()
 
-    # ---- 段 3: 開いた画面は左右 2 列 (630×900 = 実機に近い値、720×860 = 仮の値、1000×700 = 横向き・タブレット)
-    for (w, h) in ((630, 900), (720, 860), (1000, 700)):
+    # 360 より狭い端末 (閉じた Fold の幅は実測していない)
+    for (w, h) in ((320, 700), (344, 800)):
         pg = page(b, w, h)
-        g = pg.evaluate("({ side: T.SIDE(), main: T.r('main'), chat: T.r('#chat'), reply: T.r('#reply').w, ctext: T.inView('#ctext'), send: T.inView('#csend'), proj: T.r('#proj'), over: document.documentElement.scrollWidth - innerWidth, small: T.small(), sel: [...document.querySelectorAll('#cact .cpick')].map((e) => Math.round(e.getBoundingClientRect().width)), wait: document.querySelector('#chat').innerText.includes('待ち 1') })")
+        g = pg.evaluate("({ over: document.documentElement.scrollWidth - innerWidth, chat: T.inView('#chat'), small: T.small(), name: Math.round(T.r('#dname')?.w ?? 0) })")
+        open_sheet(pg)
+        g2 = pg.evaluate("({ send: T.inView('#csend'), room: T.selRoom(), small: T.small(), over: document.documentElement.scrollWidth - innerWidth })")
+        check(f"{w}×{h}: 帯も開いた送信欄も横にはみ出さず画面内、送り先の名前 (alpha = 37px) が切れず、モデル名も切れない", g["over"] <= 0 and g["chat"] and not g["small"] and g["name"] >= 37 and g2["send"] and g2["over"] <= 0 and not g2["small"] and min(g2["room"]) >= 20, (g, g2))
+        pg.context.close()
+    # ☰ の一覧の中の『終了したものも表示』は、押しても一覧が閉じない (押した物が描き直しで DOM から外れる)
+    pg = page(b, 360, 860, dead=True)
+    tap(pg, "#ptoggle")
+    n0 = pg.evaluate("document.querySelectorAll('#plist .prow[data-r]:not([data-m])').length")
+    ok = tap(pg, "#pdead")
+    g = pg.evaluate("({ proj: T.r('#proj'), rows: document.querySelectorAll('#plist .prow[data-r]:not([data-m])').length })")
+    check("☰ の一覧で『終了したものも表示』を押すと、一覧は開いたまま行が増える", ok and g["proj"] and g["rows"] == n0 + 1, (n0, g))
+    pg.context.close()
+
+    # ---- 段 3: 開いた画面は左右 2 列 (630×900 = 実機に近い値、720×860 = 仮の値、1000×700 = 横向き・タブレット)
+    for (w, h) in ((600, 900), (630, 900), (720, 860), (1000, 700)):
+        pg = page(b, w, h)
+        g = pg.evaluate("({ side: T.SIDE(), main: T.r('main'), chat: T.r('#chat'), reply: T.r('#reply').w, ctext: T.inView('#ctext'), send: T.inView('#csend'), proj: T.r('#proj'), over: document.documentElement.scrollWidth - innerWidth, small: T.small(), room: T.selRoom(), ctx: T.inView('#cctx'), wait: document.querySelector('#chat').innerText.includes('待ち 1'), media: T.r('#cmedia'), send2: T.r('#csend') })")
         check(f"{w}×{h}: 左に返事・右に列が並び、送信欄は出たまま (帯は無し、横にはみ出さない)", g["side"] and g["ctext"] and g["send"] and g["proj"] is None and g["over"] <= 0 and g["reply"] >= 340, g)
-        check(f"{w}×{h}: 右の列に返事待ちの数、モデル・エフォートは 70px 以上、押せる物は 44px 以上", g["wait"] and min(g["sel"]) >= 70 and not g["small"], g)
+        check(f"{w}×{h}: 右の列に返事待ちの数と文脈量、モデル・エフォートの名前は切れず、押せる物は 44px 以上", g["wait"] and g["ctx"] and min(g["room"]) >= 20 and not g["small"], g)
+        if w == 1000: check("1000×700: 使った画像の一覧は列の下に残る (幅 900px 以上)", g["media"] and g["media"]["t"] >= g["send2"]["b"] - 1 and g["media"]["b"] <= h + 0.5, g)
+        else: check(f"{w}×{h}: 幅 900px 未満では画像の一覧は出さない (今までどおり)", g["media"] is None, g)
         if w == 630:
             shot(pg, "3a-open-read")
             pg.evaluate("T.toTop('#reply table[data-ptbl]')"); pg.wait_for_timeout(150); shot(pg, "3b-open-table")
@@ -302,7 +345,7 @@ with sync_playwright() as p:
             g = pg.evaluate("T.r('#proj')")
             check("630×900: ☰ で一覧が開く", g and g["w"] > 200 and g["b"] <= h + 0.5, g)
             pg.touchscreen.tap(20, 300); pg.wait_for_timeout(200)
-        if w != 1000:
+        if w in (630, 720):
             tap(pg, "#cto")
             g = pg.evaluate("({ chips: T.r('#cchips'), to: T.r('#chead') })")
             check(f"{w}×{h}: 送り先の行を押しても一覧は出たまま、行の上にある", g["chips"] and g["to"] and g["chips"]["b"] <= g["to"]["t"] + 1 and g["chips"]["h"] > 100, g)
