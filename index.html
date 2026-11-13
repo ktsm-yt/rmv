@@ -522,11 +522,10 @@ function applyProjDefault() {
 }
 // スマホで左に返事・右に送信欄の 2 列にする幅 (html.split)。Fold を開いた幅 (実機の画面から約 630px) に合わせた仮の値で、変えるのはここだけ
 const MOB_SPLIT_MIN = 600;
-// 形も見る: 幅 600 以上でも縦に細長い画面は 2 列にしない。screen は端末の寸法なので、キーボードが出ても変わらない
-// 実測 (2026-11-13、Fold 実機・Soul): 閉じた画面は幅 554・screen 555x877 (縦横比 0.63) で、1 列になるのは幅 600 未満だから。この縦横比の条件は閉じた Fold には効いていない
-const MOB_SPLIT_RATIO = 0.6;
+// 幅は端末の画面 (screen.width) でも測り、狭い方を使う。ブラウザが『PC 版サイト』で開くと viewport の指定が無視され、
+// 閉じた Fold (screen 555) でも幅 980 として描いて 2 列になっていた (2026-11-13、Fold 実機の Soul で実測: inner 980 / screen 555 / 縮小 0.57)
 function applyWidth(force) {
-  const h = document.documentElement.classList, w = pageWidth(), wide = h.contains("wide"), split = isMobileUA && w >= MOB_SPLIT_MIN && screen.width / screen.height >= MOB_SPLIT_RATIO;
+  const h = document.documentElement.classList, w = pageWidth(), wide = h.contains("wide"), split = isMobileUA && Math.min(w, screen.width) >= MOB_SPLIT_MIN;
   h.toggle("wide", !isMobileUA && w >= 900); // スマホは幅が広くても PC の 3 列にしない (並びは html.mob の規則だけで決める)
   h.toggle("xs", isMobileUA || w < 600); // スマホは 2 列の時も余白を狭い幅と同じに詰める
   if (split !== h.contains("split")) { // Fold の開閉: 2 列では送信欄を出したまま、1 列に戻ったら下の帯に畳む
