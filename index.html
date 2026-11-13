@@ -404,6 +404,10 @@
   html.mob body.chat-closed #chat > #cmsg:not(:empty) { display: block; }
   html.mob body.pen #chat > :not(#tray, #tstat, #cmsg) { display: none; }
   html.mob body.pen #chat > #tray { display: flex; }
+  /* 赤ペン欄を畳む (▼): 書いた分は残したまま元の帯・送信欄に戻し、帯の赤い『赤ペン N』で戻る (ピンを全部消さないと戻れなかった、2026-11-13 user) */
+  #pfold { display: none; } html.mob #pfold { display: block; }
+  html.mob body:not(.pen) #chat > #tray, html.mob #dock > #dpen[hidden] { display: none; }
+  html.mob #dock > #dpen { display: flex; align-items: center; gap: 4px; width: auto; padding: 0 10px; white-space: nowrap; color: #fff; background: var(--red); border-color: var(--red); }
   html.mob body.pen #chat { border-top: 3px solid var(--red); max-height: calc(var(--vvh, 100dvh) * .62); } /* 赤ペン中も返事を 4 割は見せる。ピンが増えたらピンの段だけスクロールする */
   html.mob #tstat { order: -3; }
   html.mob #cmsg { order: 2; } /* 開いている時は送信の近く (最下段のすぐ下) */
@@ -591,7 +595,7 @@ if (isMobileUA && window.visualViewport) {
     <div id="pins"></div>
     <textarea id="free" rows="2" placeholder="全体へのひとこと (任意)"></textarea>
     <div id="fimgs" hidden></div>
-    <div class="row"><button id="fattach" title="写真・動画を選んで添付">📎</button><input id="ffile" type="file" accept="image/*,video/*" multiple hidden><span id="akmsg"></span><button id="copy">コピー</button><button id="send">送信</button></div>
+    <div class="row"><button id="fattach" title="写真・動画を選んで添付">📎</button><input id="ffile" type="file" accept="image/*,video/*" multiple hidden><button id="pfold" title="赤ペン欄を畳んで元の帯に戻る (書いた分は残る)">▼</button><span id="akmsg"></span><button id="copy">コピー</button><button id="send">送信</button></div>
   </div>
 </main>
 <aside id="chat">
@@ -619,7 +623,7 @@ function placeNav() { // ◀ ▶ の置き場: 2 列の時は上の行 (元の�
 if (isMobileUA) {
   const $ = (id) => document.getElementById(id);
   const dock = Object.assign(document.createElement("div"), { id: "dock" });
-  dock.innerHTML = '<button id="dto" title="送信欄を開く"><i></i><span id="dname"></span><small id="dwait"></small></button>';
+  dock.innerHTML = '<button id="dto" title="送信欄を開く"><i></i><span id="dname"></span><small id="dwait"></small></button><button id="dpen" hidden title="畳んだ赤ペン欄に戻る">赤ペン <b></b></button>';
   dock.prepend($("ptoggle"));
   dock.append($("newbtn"));
   $("chat").prepend(dock);
@@ -1363,11 +1367,17 @@ function layoutMargin() {
   margin.hidden = !placed.length;
 }
 
+let penFold = false; // スマホ: 赤ペン欄を畳んでいる
 function renderTray() {
   const d = drafts.get(curName());
   const tray = document.getElementById("tray");
   tray.hidden = !d || (!d.pins.size && !d.choices.size);
-  if (isMobileUA) { document.body.classList.toggle("pen", !tray.hidden); placeNav(); } // スマホ: 赤ペン中は下の欄を赤ペン欄に入れ替える (送信欄と 2 段に積まない)
+  if (isMobileUA) { // 畳んでいる間 (penFold) は帯に『赤ペン N』を出す。赤ペンが空になったら畳みも解く
+    if (tray.hidden) penFold = false;
+    document.body.classList.toggle("pen", !tray.hidden && !penFold);
+    const dpen = document.getElementById("dpen"); dpen.hidden = !penFold; dpen.querySelector("b").textContent = d ? d.pins.size + d.choices.size : "";
+    placeNav();
+  } // スマホ: 赤ペン中は下の欄を赤ペン欄に入れ替える (送信欄と 2 段に積まない)
   scheduleMargin();
   const free = document.getElementById("free");
   if (free.value !== (d?.free ?? "")) free.value = d?.free ?? "";
@@ -1406,7 +1416,7 @@ document.getElementById("reply").addEventListener("click", (ev) => {
   if (pick) {
     const t = +pick.closest("table").dataset.ptbl;
     if (d.choices.get(t)?.letter === pick.dataset.pick) d.choices.delete(t);
-    else d.choices.set(t, { label: pick.closest("table").dataset.plabel, letter: pick.dataset.pick });
+    else { d.choices.set(t, { label: pick.closest("table").dataset.plabel, letter: pick.dataset.pick }); penFold = false; }
     return refresh();
   }
   const mm = ev.target.closest("pre.mermaid");
@@ -1416,7 +1426,7 @@ document.getElementById("reply").addEventListener("click", (ev) => {
   if (!t) return;
   const k = t.dataset.pin;
   if (d.pins.has(k)) d.pins.delete(k);
-  else d.pins.set(k, { anchor: t.dataset.anchor, quote: cut(textOf(t), 30), comment: "" });
+  else { d.pins.set(k, { anchor: t.dataset.anchor, quote: cut(textOf(t), 30), comment: "" }); penFold = false; } // 新しく付けたら畳んだ欄も開く
   refresh();
   const p = d.pins.get(k);
   if (p) requestAnimationFrame(() => { if (drafts.get(curName())?.pins.get(k) === p) pinNode(p, k, false).querySelector("textarea")?.focus(); });
@@ -1718,6 +1728,8 @@ addEventListener("dragover", (ev) => { if (draggedFiles(ev)) ev.preventDefault()
 addEventListener("drop", (ev) => { if (draggedFiles(ev)) ev.preventDefault(); });
 const droppedImages = (ev) => [...(ev.dataTransfer?.files ?? [])].filter(isMedia);
 ctext.addEventListener("drop", (ev) => addImages(droppedImages(ev), pending, renderImgs, document.getElementById("cmsg")));
+document.getElementById("pfold").onclick = () => { penFold = true; document.activeElement?.blur(); refresh(); };
+if (isMobileUA) document.getElementById("dpen").onclick = () => { penFold = false; refresh(); };
 const ffile = document.getElementById("ffile");
 document.getElementById("fattach").onclick = () => ffile.click();
 ffile.onchange = () => { addImages([...ffile.files].filter(isMedia), draftOf(curName()).imgs, refresh, document.getElementById("akmsg")); ffile.value = ""; };
