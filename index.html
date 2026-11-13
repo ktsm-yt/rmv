@@ -98,9 +98,11 @@
   #tstat .trow { display: flex; gap: 8px; overflow: hidden; white-space: nowrap; cursor: pointer; border-left: 3px solid var(--rc, var(--line)); padding-left: 6px; }
   #tstat .trow span { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; }
   #tstat .trow.wait { color: inherit; font-weight: 700; }
-  /* 状態アイコン (文字でなく絵で。2026-09-29 user): 作業中 = 上だけ濃いリング / 待ち = 目立つ点 / 静か = 薄い丸。動かさない: 回転・明滅は止まっていても毎秒 60 回の描き直しになり、サイドバーに常駐させると Mac 全体の描画 (WindowServer) を詰まらせた (2026-11-13 実測 10 秒で 600 回) */
+  /* 状態アイコン (文字でなく絵で。2026-09-29 user): 作業中 = 1 秒で 4 コマ回るリング / 待ち = 目立つ点 / 静か = 薄い丸。なめらかな回転・明滅は止まっていても毎秒 60 回の描き直しになり、サイドバーに常駐させると Mac 全体の描画 (WindowServer) を詰まらせた (2026-11-13 実測 10 秒で 600 回)。steps(4) なら 10 秒 40 回。止めると動いているか不安になる (同日 user) ので、コマ送りで回す */
   #cchips .chip i, #tstat i { flex: none; width: 10px; height: 10px; margin-top: 4px; border-radius: 50%; box-sizing: border-box; }
-  #cchips .chip i.busy, #tstat i.busy { border: 2px solid var(--line); border-top-color: var(--fg); }
+  #cchips .chip i.busy, #tstat i.busy { border: 2px solid var(--line); border-top-color: var(--fg); animation: tspin 1s steps(4) infinite; }
+  @keyframes tspin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { #cchips .chip i.busy, #tstat i.busy { animation: none; } }
   #cchips .chip i.wait, #tstat i.wait { background: #e5a50a; box-shadow: 0 0 0 3px rgb(229 165 10 / .25); }
   #cchips .chip i.perm, #tstat i.perm { background: #e01b24; box-shadow: 0 0 0 3px rgb(224 27 36 / .25); }
   #tstat .trow.perm { color: inherit; font-weight: 700; }
