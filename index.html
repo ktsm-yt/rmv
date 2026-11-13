@@ -98,9 +98,9 @@
   #tstat .trow { display: flex; gap: 8px; overflow: hidden; white-space: nowrap; cursor: pointer; border-left: 3px solid var(--rc, var(--line)); padding-left: 6px; }
   #tstat .trow span { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; }
   #tstat .trow.wait { color: inherit; font-weight: 700; }
-  /* 状態アイコン (文字でなく絵で。2026-09-29 user): 作業中 = 1 秒で 4 コマ回るリング / 待ち = 目立つ点 / 静か = 薄い丸。なめらかな回転・明滅は止まっていても毎秒 60 回の描き直しになり、サイドバーに常駐させると Mac 全体の描画 (WindowServer) を詰まらせた (2026-11-13 実測 10 秒で 600 回)。steps(4) なら 10 秒 40 回。止めると動いているか不安になる (同日 user) ので、コマ送りで回す */
+  /* 状態アイコン (文字でなく絵で。2026-09-29 user): 作業中 = 1 秒で 12 コマ回るリング / 待ち = 目立つ点 / 静か = 薄い丸。なめらかな回転・明滅は止まっていても毎秒 60 回の描き直しになり、サイドバーに常駐させると Mac 全体の描画 (WindowServer) を詰まらせた (2026-11-13 実測 10 秒で 600 回)。止めると動いているか不安になる (同日 user) ので、コマ送りで回す。4 コマでは遅く見えて不安 (2026-11-14 user) なので 12 コマ (10 秒 約 130 回、headless 実測)。印が何個あっても同じ瞬間に描き直すよう syncSpin で回転をそろえる */
   #cchips .chip i, #tstat i { flex: none; width: 10px; height: 10px; margin-top: 4px; border-radius: 50%; box-sizing: border-box; }
-  #cchips .chip i.busy, #tstat i.busy { border: 2px solid var(--line); border-top-color: var(--fg); animation: tspin 1s steps(4) infinite; }
+  #cchips .chip i.busy, #tstat i.busy { border: 2px solid var(--line); border-top-color: var(--fg); animation: tspin 1s steps(12) infinite; }
   @keyframes tspin { to { transform: rotate(360deg); } }
   @media (prefers-reduced-motion: reduce) { #cchips .chip i.busy, #tstat i.busy { animation: none; } }
   #cchips .chip i.wait, #tstat i.wait { background: #e5a50a; box-shadow: 0 0 0 3px rgb(229 165 10 / .25); }
@@ -1629,6 +1629,7 @@ function renderChat() {
   if (html === cchipsHtml) return; // 毎 poll 描き直すと横スクロール位置が飛ぶ
   cchipsHtml = html;
   cchips.innerHTML = html;
+  syncSpin(cchips);
 }
 // 端末ごとの待ち状態: title 先頭 ◑◐◓◒ = 作業中 / ✳ = 入力待ち (Claude Code が tab 題名に付ける)。行を押すと chip と同じ (pickChip)
 const tstat = document.getElementById("tstat");
@@ -1647,6 +1648,8 @@ function stOf(e) {
   const st = (st1 === "wait" || st1 === "idle") && e.end ? e.end : st1;
   return { st, wait, perm, bg };
 }
+// 書き直しで回転が 0 コマ目に戻らないよう、全部の印を同じ時計 (ページを開いた時刻) に合わせる。印ごとにずれると描き直しが印の数だけ増える
+const syncSpin = (el) => el.getAnimations({ subtree: true }).forEach((a) => { a.startTime = 0; });
 const ago = (t) => { const m = Math.max(0, Math.floor((Date.now() - t) / 60000)); return m > 60 ? `${Math.floor(m / 60)} 時間` : `${m} 分`; }; // 最後の出力からの経過
 const askText = (e) => e.asking.waiting ? "待機中" : "依頼: " + e.asking.prompt.replace(/\s+/g, " ").slice(0, 60); // 返事待ちの依頼の 1 行 (起動直後で依頼が無ければ『待機中』)
 const bgSum = (bg) => [...bg.reduce((m, t) => m.set(t.type, (m.get(t.type) ?? 0) + 1), new Map()).entries()].map(([k, n]) => `${k} ${n}`).join(" "); // 裏で走っている物を種類ごとに数える ("shell 1 subagent 1")
@@ -1663,6 +1666,7 @@ function renderTstat(list) {
   if (html === tstatHtml) return; // chip と同じ: 同じ内容なら書き直さない
   tstatHtml = html;
   tstat.innerHTML = html;
+  syncSpin(tstat);
 }
 tstat.addEventListener("click", async (ev) => {
   const b = ev.target.closest("[data-approve]");
