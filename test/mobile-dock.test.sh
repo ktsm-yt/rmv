@@ -356,6 +356,10 @@ with sync_playwright() as p:
             check(f"{w}×420 で入力欄に焦点: 右の列は 送り先 1 行・定型キー・入力欄 (60px 以上)・送信", g["to"] and g["keys"] >= 5 and g["chips"] is None and (g["h"] or 0) >= 60 and g["send"], g)
             if w == 630: pg.evaluate("T.toTop('#reply table[data-ptbl]')"); pg.wait_for_timeout(150); shot(pg, "3c-open-keyboard")
         pg.context.close()
+    # 追加: 閉じた Fold でも『画面のズーム』を小さくすると幅が 600 を超える (実機の画面から約 640)。細長い画面は幅に関係なく 1 列
+    pg = page(b, 640, 1500)
+    check("640×1500 (細長い): 幅 600 以上でも 2 列にしない", not pg.evaluate("T.SIDE()"), pg.evaluate("[screen.width, screen.height]"))
+    pg.context.close()
     # 追加 2: 開いた Fold の実寸 (約 630)。送信欄が出た状態から段を押し、キーボードが出る (高さ 505)
     pg = page(b, 630, 900)
     pg.evaluate("document.body.classList.remove('chat-closed')") # 旧版は畳んで始まるので開く (実機の画面は開いた状態だった)

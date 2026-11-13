@@ -517,8 +517,11 @@ function applyProjDefault() {
 }
 // スマホで左に返事・右に送信欄の 2 列にする幅 (html.split)。Fold を開いた幅 (実機の画面から約 630px) に合わせた仮の値で、変えるのはここだけ
 const MOB_SPLIT_MIN = 600;
+// 形も見る: 閉じた Fold は端末の『画面のズーム』次第で幅 600 を超え、細長いのに 2 列になった (2026-11-13 user)。
+// 開いた画面は縦横比 約 0.9、閉じた画面は約 0.45。screen は端末の寸法なので、キーボードが出ても変わらない
+const MOB_SPLIT_RATIO = 0.6;
 function applyWidth(force) {
-  const h = document.documentElement.classList, w = pageWidth(), wide = h.contains("wide"), split = isMobileUA && w >= MOB_SPLIT_MIN;
+  const h = document.documentElement.classList, w = pageWidth(), wide = h.contains("wide"), split = isMobileUA && w >= MOB_SPLIT_MIN && screen.width / screen.height >= MOB_SPLIT_RATIO;
   h.toggle("wide", !isMobileUA && w >= 900); // スマホは幅が広くても PC の 3 列にしない (並びは html.mob の規則だけで決める)
   h.toggle("xs", isMobileUA || w < 600); // スマホは 2 列の時も余白を狭い幅と同じに詰める
   if (split !== h.contains("split")) { // Fold の開閉: 2 列では送信欄を出したまま、1 列に戻ったら下の帯に畳む
@@ -563,7 +566,7 @@ if (isMobileUA && window.visualViewport) {
     maxH = Math.max(maxH, vv.height);
     document.documentElement.classList.toggle("kbd", vv.height < maxH - 120 && !!document.activeElement?.matches?.("textarea, input"));
     document.documentElement.style.setProperty("--vvh", `${visualViewport.height}px`);
-    requestAnimationFrame(() => { const a = document.activeElement; if (a?.matches?.("textarea, input") && a.closest("#chat")) a.scrollIntoView({ block: "nearest" }); });
+    requestAnimationFrame(() => { const a = document.activeElement; if (a?.matches?.("textarea, input") && a.closest("#chat")) { a.closest("#tray")?.querySelector(".row")?.scrollIntoView({ block: "nearest" }); a.scrollIntoView({ block: "nearest" }); } }); // 赤ペン欄は欄の下の『コピー / 送信』も見せる (欄だけ送るとボタンがキーボードの裏に残った、2026-11-13 user)。狭くて両方入らない時は書いている欄を優先
   };
   visualViewport.addEventListener("resize", fit);
   fit();
