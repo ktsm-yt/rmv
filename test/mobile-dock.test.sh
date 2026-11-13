@@ -320,7 +320,7 @@ with sync_playwright() as p:
     # 360 より狭い端末 (閉じた Fold の幅は実測していない)
     for (w, h) in ((320, 700), (344, 800)):
         pg = page(b, w, h)
-        g = pg.evaluate("({ over: document.documentElement.scrollWidth - innerWidth, chat: T.inView('#chat'), small: T.small(), name: Math.round(T.r('#dname')?.w ?? 0) })")
+        g = pg.evaluate("({ over: document.documentElement.scrollWidth - innerWidth, chat: T.inView('#chat'), small: T.small(), name: Math.round(T.r('#cto')?.w ?? 0) })")
         open_sheet(pg)
         g2 = pg.evaluate("({ send: T.inView('#csend'), room: T.selRoom(), small: T.small(), over: document.documentElement.scrollWidth - innerWidth })")
         check(f"{w}×{h}: 帯も開いた送信欄も横にはみ出さず画面内、送り先の名前 (alpha = 37px) が切れず、モデル名も切れない", g["over"] <= 0 and g["chat"] and not g["small"] and g["name"] >= 37 and g2["send"] and g2["over"] <= 0 and not g2["small"] and min(g2["room"]) >= 20, (g, g2))
@@ -328,10 +328,10 @@ with sync_playwright() as p:
     # 帯の送り先と、開いた送信欄の『▼ 送り先』は同じ幅・同じ位置 (開いて閉じる間に指を動かさない)
     for (w, h) in ((360, 860), (554, 690)):
         pg = page(b, w, h)
-        a = pg.evaluate("T.r('#dto')"); shot(pg, f"2l-{w}-dock")
+        a = pg.evaluate("T.r('#chead')"); shot(pg, f"2l-{w}-dock")
         open_sheet(pg)
         c = pg.evaluate("T.r('#chead')"); shot(pg, f"2l-{w}-open")
-        check(f"{w}×{h}: 帯の送り先と送信欄の『▼ 送り先』は同じ幅・同じ位置", a and c and abs(a["l"] - c["l"]) <= 2 and abs(a["r"] - c["r"]) <= 2 and abs(a["t"] - c["t"]) <= 4, (a, c))
+        check(f"{w}×{h}: 送り先は帯でも送信欄でも同じ部品で、同じ幅・同じ位置", a and c and abs(a["l"] - c["l"]) <= 2 and abs(a["r"] - c["r"]) <= 2 and abs(a["t"] - c["t"]) <= 4, (a, c))
         pg.context.close()
     # 閉じた Fold の実寸 (Soul: 554×690): 送り先・文脈量・▼ がモデル・エフォートと送信の間に 1 行で入る
     pg = page(b, 554, 690)
