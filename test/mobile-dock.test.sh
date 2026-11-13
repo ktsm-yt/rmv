@@ -325,6 +325,14 @@ with sync_playwright() as p:
         g2 = pg.evaluate("({ send: T.inView('#csend'), room: T.selRoom(), small: T.small(), over: document.documentElement.scrollWidth - innerWidth })")
         check(f"{w}×{h}: 帯も開いた送信欄も横にはみ出さず画面内、送り先の名前 (alpha = 37px) が切れず、モデル名も切れない", g["over"] <= 0 and g["chat"] and not g["small"] and g["name"] >= 37 and g2["send"] and g2["over"] <= 0 and not g2["small"] and min(g2["room"]) >= 20, (g, g2))
         pg.context.close()
+    # 帯の送り先と、開いた送信欄の『▼ 送り先』は同じ幅・同じ位置 (開いて閉じる間に指を動かさない)
+    for (w, h) in ((360, 860), (554, 690)):
+        pg = page(b, w, h)
+        a = pg.evaluate("T.r('#dto')"); shot(pg, f"2l-{w}-dock")
+        open_sheet(pg)
+        c = pg.evaluate("T.r('#chead')"); shot(pg, f"2l-{w}-open")
+        check(f"{w}×{h}: 帯の送り先と送信欄の『▼ 送り先』は同じ幅・同じ位置", a and c and abs(a["l"] - c["l"]) <= 2 and abs(a["r"] - c["r"]) <= 2 and abs(a["t"] - c["t"]) <= 4, (a, c))
+        pg.context.close()
     # 閉じた Fold の実寸 (Soul: 554×690): 送り先・文脈量・▼ がモデル・エフォートと送信の間に 1 行で入る
     pg = page(b, 554, 690)
     open_sheet(pg)
@@ -365,8 +373,7 @@ with sync_playwright() as p:
         if w in (630, 720):
             tap(pg, "#cto")
             g = pg.evaluate("({ chips: T.r('#cchips'), to: T.r('#chead'), inBar: !!document.querySelector('#cbar > #chead') })")
-            g2 = pg.evaluate("({ at: T.r('#cattach'), to: T.r('#chead'), send: T.r('#csend') })")
-            check(f"{w}×{h}: 送り先の行は 1 列と同じく最下段で、📎・送り先・送信が 1 行 (上の横長の行は無い)", g["inBar"] and abs(g2["at"]["t"] - g2["to"]["t"]) <= 2 and abs(g2["send"]["t"] - g2["to"]["t"]) <= 2, (g, g2))
+            check(f"{w}×{h}: 2 列の送り先の行は上 (一覧の下) のまま", not g["inBar"], g)
             check(f"{w}×{h}: 送り先の行を押しても一覧は出たまま、行の上にある", g["chips"] and g["to"] and g["chips"]["b"] <= g["to"]["t"] + 1 and g["chips"]["h"] > 100, g)
             tap(pg, "#ctext")
             resize(pg, w, 420)
