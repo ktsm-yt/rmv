@@ -382,14 +382,14 @@
   html.mob :is(#cbar, #dock) > #chead > :is(#cctx, #dwait):empty { display: none; }
   html.mob #cbar > #csend { order: 1; margin-left: 0; }
   /* 1 列: 送り先の部品は帯でも送信欄の最下段でも同じ幅・同じ位置 (開いて閉じる間に指を動かさない、2026-11-13 user)。
-     最下段の他の部品の幅を決め打ちし (📎 44 / モデル 68 / エフォート 44 / 送信 56)、送り先は残り全部。帯も右端の ☰ を 56 にして、送り先を同じ幅で右寄せ。
+     最下段の他の部品の幅を決め打ちし (📎 44 / モデル 56 / エフォート 44 / 送信 56)、送り先は残り全部。帯も右端の ☰ を 56 にして、送り先を同じ幅で右寄せ。
      モデルとエフォートは略して (fab / opu / son、h / m / xh) 幅 360 でも 1 行に入れる */
   html.mob:not(.split) :is(#cbar, #dock) { --g: 6px; gap: var(--g); flex-wrap: nowrap; }
   @media (max-width: 400px) { html.mob:not(.split) :is(#cbar, #dock) { --g: 4px; } }
-  html.mob:not(.split) :is(#cbar, #dock) > #chead { flex: 0 0 calc(100% - 212px - 4 * var(--g)); }
+  html.mob:not(.split) :is(#cbar, #dock) > #chead { flex: 0 0 calc(100% - 200px - 4 * var(--g)); }
   html.mob:not(.split) #dock > #chead { flex-shrink: 1; margin-left: auto; } /* ☰ の一覧を開いて ＋ が出た間だけ縮む (一覧の幕の下) */
   html.mob:not(.split) #dock > #dto { display: none; }
-  html.mob:not(.split) #cbar > .cpick[data-cmd=model] { flex: 0 0 68px; }
+  html.mob:not(.split) #cbar > .cpick[data-cmd=model] { flex: 0 0 56px; }
   html.mob:not(.split) #cbar > .cpick[data-cmd=effort] { flex: 0 0 44px; }
   html.mob:not(.split) #cbar > #cattach { flex: 0 0 44px; }
   html.mob:not(.split) :is(#cbar > #csend, #dock > #ptoggle) { flex: none; width: 56px; padding: 0; }
@@ -1781,9 +1781,9 @@ document.getElementById("cact").addEventListener("click", (ev) => { const b = ev
 const MODELS_DEFAULT = ["sonnet", "opus", "haiku", "fable"];
 const PICKS = { model: MODELS_DEFAULT, effort: ["low", "medium", "high", "xhigh", "max"] };
 const nowVal = { model: null, effort: null }; // 表示する今の値。候補に無ければ候補の先頭に足す
-// スマホ: 最下段を 1 行に収めるため、モデルは頭 3 文字 (+ [1m] なら 1m)、エフォートは頭文字で出す (送る値は元のまま、2026-11-13 user「fab, opu, son / h m xh」)
+// スマホ: 最下段を 1 行に収めるため、モデルは頭 3 文字、エフォートは頭文字で出す (送る値は元のまま、2026-11-13 user「fab, opu, son / h m xh」。[1m] の印は「ほぼ無用」で出さない)
 const EFFORT_ABBR = { low: "l", medium: "m", high: "h", xhigh: "xh", max: "max" };
-const pickAbbr = (c, x) => c === "effort" ? EFFORT_ABBR[x] ?? x : x.replace(/^([a-z]{3})[a-z]*(?:\[(\w+)\])?.*$/i, (_, h, w) => h + (w ?? ""));
+const pickAbbr = (c, x) => c === "effort" ? EFFORT_ABBR[x] ?? x : x.slice(0, 3);
 function fillPick(sel) {
   const c = sel.dataset.cmd, v = nowVal[c], l = PICKS[c];
   sel.replaceChildren(sel.firstElementChild, ...(v && !l.includes(v) ? [v, ...l] : l).map((x) => new Option(isMobileUA ? pickAbbr(c, x) : x, x)));

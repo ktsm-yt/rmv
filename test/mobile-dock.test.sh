@@ -334,7 +334,7 @@ with sync_playwright() as p:
         c = pg.evaluate("T.r('#chead')"); shot(pg, f"2l-{w}-open")
         check(f"{w}×{h}: 送り先は帯でも送信欄でも同じ部品で、同じ幅・同じ位置", a and c and abs(a["l"] - c["l"]) <= 2 and abs(a["r"] - c["r"]) <= 2 and abs(a["t"] - c["t"]) <= 4, (a, c))
         g = pg.evaluate("({ at: T.r('#cattach'), sel: T.r('#cact .cpick'), send: T.r('#csend'), txt: [...document.querySelectorAll('#cact .cpick')].map((e) => e.selectedOptions[0]?.text) })")
-        check(f"{w}×{h}: 最下段は 📎・モデル・エフォート・送り先・送信の 1 行 (モデルとエフォートは略す)", all(abs(g[k]["t"] - c["t"]) <= 2 for k in ("at", "sel", "send")) and g["txt"] == ["fab1m", "m"], g)
+        check(f"{w}×{h}: 最下段は 📎・モデル・エフォート・送り先・送信の 1 行 (モデルとエフォートは略す)", all(abs(g[k]["t"] - c["t"]) <= 2 for k in ("at", "sel", "send")) and g["txt"] == ["fab", "m"], g)
         pg.context.close()
     # 閉じた Fold の実寸 (Soul: 554×690): 送り先・文脈量・▼ がモデル・エフォートと送信の間に 1 行で入る
     pg = page(b, 554, 690)
