@@ -366,6 +366,14 @@
   html.mob #cattach { margin-right: 0; padding: 0; }
   html.mob #cact .cpick { flex: 0 1 auto; font-size: 14px; padding: 0 4px; }
   html.mob #csend { margin-left: auto; padding: 0 18px; font-weight: 700; }
+  /* 1 列: 送り先・文脈量・▼ を最下段のモデル・エフォートと送信の間に 2 段で詰める。▼ は送信から離して左に置く (押し違えて送らない)。幅が足りない端末では送信と一緒に次の行へ回る */
+  html.mob #cbar { flex-wrap: wrap; }
+  html.mob #cbar > #chead { order: 0; flex: 1 1 120px; display: grid; grid-template-columns: 44px minmax(0, 1fr); align-items: center; gap: 0 8px; min-height: 44px; padding: 0 8px 0 0; overflow: hidden; }
+  html.mob #cbar > #chead > #ctoggle { grid-column: 1; grid-row: 1 / 3; border-left: 0; border-right: 1px solid var(--line); }
+  html.mob #cbar > #chead > :is(#cto, #cctx) { grid-column: 2; margin: 0; }
+  html.mob #cbar > #chead > #cto { font-size: 13px; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  html.mob #cbar > #chead > #cctx { font-size: 11px; line-height: 1.2; }
+  html.mob #cbar > #csend { order: 1; margin-left: 0; }
   /* 案表 (『これにする』が付く表) は行ごとのカード。8 列の表は幅 659px で、推奨 (Tier) と理由が横スクロールの先にあった。
      DOM は表のまま (ピン・採用の処理を変えない)。役割の class と data-th は decorate の cardify が付ける。他の表は横スクロールのまま */
   html.mob #reply table.cards, html.mob #reply table.cards tbody { display: block; }
@@ -391,7 +399,7 @@
   /* 罫線図・コード: 幅を超えたら fitPre が --pf で字を小さくする */
   html.mob #reply pre, html.mob #reply pre code { font-size: var(--pf, 14px); }
   /* 操作は下の 1 本に集める: 右端の帯は出さず、#chat を画面の下端の欄にする。高さは今までどおり body の --vvh (見えている範囲) の中なので、下に置いたアドレスバーにも隠れない。
-     ふだん (chat-closed) は 1 本の帯 #dock = ☰ / 送り先 / ◀ ▶ / ＋。送り先を押すと送信欄が開く。赤ペン中 (body.pen) は同じ場所を赤ペン欄 #tray に入れ替える (下の欄は 1 つ)。
+     ふだん (chat-closed) は 1 本の帯 #dock = ◀ ▶ / 送り先 / 赤N / ☰ (＋ は ☰ の一覧の右下)。送り先を押すと送り先の一覧まで開く。赤ペン中 (body.pen) は同じ場所を赤ペン欄 #tray に入れ替える (下の欄は 1 つ)。
      許可待ちの行 (#tstat) と ＋・許可の失敗 (#cmsg) は、閉じていても赤ペン中でも帯のすぐ上に出す */
   html.mob body { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }
   html.mob main { grid-column: 1; grid-row: 1; }
@@ -421,7 +429,11 @@
   html.mob #dock > button { flex: none; display: grid; place-items: center; width: 44px; height: 44px; margin: 0; padding: 0; font: inherit; font-size: 16px; color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 10px; cursor: pointer; }
   html.mob #dock > button:disabled { opacity: .35; }
   html.mob #dock #ptoggle.unread { border-color: var(--red); color: var(--red); }
-  html.mob #dock #newbtn .nl, html.mob :is(#dock, #tray) .lbl { display: none; }
+  html.mob #newbtn .nl, html.mob :is(#dock, #tray) .lbl { display: none; }
+  /* ＋ は ☰ の一覧の右下 (一覧が長くても下端に残す) */
+  html.mob body:not(.proj-closed) #proj { display: flex; flex-direction: column; }
+  html.mob #plist { flex: none; }
+  html.mob #proj > #newbtn { position: sticky; bottom: 0; align-self: flex-end; display: grid; place-items: center; width: 44px; height: 44px; margin: auto 4px 0 0; padding: 0; font-size: 16px; border-radius: 10px; }
   html.mob #dock #dto { flex: 1 1 0; display: flex; gap: 6px; width: auto; min-width: 0; padding: 0 8px; font-size: 14px; white-space: nowrap; overflow: hidden; }
   html.mob #dname { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
   html.mob #dwait { flex: none; margin-left: auto; font-size: 12px; color: var(--muted); }
@@ -613,9 +625,11 @@ if (isMobileUA && window.visualViewport) {
 <script>
 // スマホ: 操作を画面の下端の 1 本 (#dock) に集める。☰ ＋ ◀ ▶ と赤ペン欄 (#tray) を #chat の中へ移し、#chat を下の欄にする (2026-11-13 user)。
 // 押した時の処理は id で付くので、移しても変わらない。mermaid の CDN を待つ module より前に済ませ、読み込み中に並びが跳ねないようにする
-function placeNav() { // ◀ ▶ の置き場: 2 列の時は上の行 (元の場所) / 赤ペン中は赤ペン欄の最下段 / それ以外は下の帯。1 列ではどちらも左端 (帯では ＋ の左、赤ペン欄では左端と位置が変わってちぐはぐだった、2026-11-13 user)
-  const $ = (id) => document.getElementById(id), prev = $("prev"), next = $("next");
-  const to = document.documentElement.classList.contains("split") ? $("bar") : document.body.classList.contains("pen") ? $("tray").querySelector(".row") : $("dock");
+function placeNav() { // ◀ ▶ の置き場: 2 列の時は上の行 (元の場所) / 赤ペン中は赤ペン欄の最下段 / それ以外は下の帯。1 列ではどちらも左端 (帯と赤ペン欄で位置が変わってちぐはぐだった、2026-11-13 user)
+  const $ = (id) => document.getElementById(id), prev = $("prev"), next = $("next"), split = document.documentElement.classList.contains("split");
+  // 送信欄の 1 行目 (送り先・文脈量・▼) は、1 列では最下段のモデル・エフォートと送信の間に置く。開いた帯と同じ下端で閉じられる (上の行まで指を伸ばしていた、2026-11-13 user)
+  if (split) $("chat").insertBefore($("chead"), $("cwhy")); else $("cbar").insertBefore($("chead"), $("csend"));
+  const to = split ? $("bar") : document.body.classList.contains("pen") ? $("tray").querySelector(".row") : $("dock");
   if (prev.parentElement === to) return;
   if (to.id === "bar") { $("pos").before(prev); $("pos").after(next); }
   else to.prepend(prev, next);
@@ -624,8 +638,8 @@ if (isMobileUA) {
   const $ = (id) => document.getElementById(id);
   const dock = Object.assign(document.createElement("div"), { id: "dock" });
   dock.innerHTML = '<button id="dto" title="送信欄を開く"><i></i><span id="dname"></span><small id="dwait"></small></button><button id="dpen" hidden title="畳んだ赤ペン欄に戻る (数字はピンの数)">赤<b></b></button>';
-  dock.prepend($("ptoggle"));
-  dock.append($("newbtn"));
+  dock.append($("ptoggle")); // ☰ は帯の右端。＋ は帯から外し、☰ で開く一覧の右下に置く (2026-11-13 user)
+  $("proj").append($("newbtn"));
   $("chat").prepend(dock);
   $("chat").append($("tray"));
   placeNav();
@@ -1837,7 +1851,7 @@ document.getElementById("chead").onclick = (ev) => {
   if (!isMobileUA) try { localStorage.setItem("rmx.chat.open", closed ? "0" : "1"); } catch {}
 };
 // スマホ: 下の帯の送り先を押すと送信欄が開く。送信を押しても入力欄の焦点を外さない (外れるとキーボードが引っ込み、定型キーが戻って並びが動く)
-document.getElementById("dto")?.addEventListener("click", () => document.body.classList.remove("chat-closed"));
+document.getElementById("dto")?.addEventListener("click", () => { document.body.classList.remove("chat-closed"); document.body.classList.add("to-open"); }); // 送り先の一覧まで 1 回で開く (2026-11-13 user)
 if (isMobileUA) csend.addEventListener("mousedown", (ev) => ev.preventDefault());
 
 // セッション chip: 選択中プロジェクトの all (新しい順) で各セッションが最初に現れた entry = そのセッションの最新返事。並びも新しい順。
@@ -1998,7 +2012,7 @@ async function openNew() {
     say.textContent = "";
   } catch (e) { say.textContent = e.message ?? String(e); }
 }
-document.getElementById("newbtn").onclick = (ev) => { ev.stopPropagation(); if (newpop.hidden) openNew(); else closeNew(); };
+document.getElementById("newbtn").onclick = (ev) => { ev.stopPropagation(); if (isMobileUA) document.body.classList.add("proj-closed"); if (newpop.hidden) openNew(); else closeNew(); };
 newpop.addEventListener("click", async (ev) => {
   ev.stopPropagation();
   const b = ev.target.closest("[data-cwd]");
