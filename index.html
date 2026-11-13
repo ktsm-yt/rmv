@@ -2,7 +2,8 @@
 <html lang="ja">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content">
+<!-- viewport-fit=cover と body 下端の safe-area の余白は外した: Soul (Android WebView) は下に自分のツールバーがあるのに 39px を返し、帯の下が空いていた (2026-11-13 user)。cover を付けなければ普通のブラウザも 0 を返す -->
 <link rel="icon" type="image/png" href="/favicon.png">
 <title>rmv (Red Marker Viewer): 返事を見て赤ペンで返す</title>
 <style>
@@ -18,7 +19,7 @@
   }
   * { box-sizing: border-box; }
   body {
-    margin: 0; height: 100vh; height: 100dvh; height: calc(var(--vvh, 100dvh) / var(--z, 1)); padding-bottom: env(safe-area-inset-bottom); display: grid; grid-template-columns: minmax(0, 1fr) 200px;
+    margin: 0; height: 100vh; height: 100dvh; height: calc(var(--vvh, 100dvh) / var(--z, 1)); display: grid; grid-template-columns: minmax(0, 1fr) 200px;
     font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
     line-height: 1.8; background: var(--bg); color: var(--fg);
   }
@@ -406,8 +407,9 @@
   html.mob body.pen #chat > #tray { display: flex; }
   /* 赤ペン欄を畳む (▼): 書いた分は残したまま元の帯・送信欄に戻し、帯の赤い『赤ペン N』で戻る (ピンを全部消さないと戻れなかった、2026-11-13 user) */
   #pfold { display: none; } html.mob #pfold { display: block; }
+  html.mob:not(.split) #tray .row { position: relative; } html.mob:not(.split) #pfold { position: absolute; left: 50%; transform: translateX(-50%); } /* 1 列は段の中央 (2 列の右の列は狭く、コピーと重なるので並びのまま) */
   html.mob body:not(.pen) #chat > #tray, html.mob #dock > #dpen[hidden] { display: none; }
-  html.mob #dock > #dpen { display: flex; align-items: center; gap: 4px; width: auto; padding: 0 10px; white-space: nowrap; color: #fff; background: var(--red); border-color: var(--red); }
+  html.mob #dock > #dpen { display: flex; align-items: center; gap: 1px; width: auto; padding: 0 8px; white-space: nowrap; color: #fff; background: var(--red); border-color: var(--red); }
   html.mob body.pen #chat { border-top: 3px solid var(--red); max-height: calc(var(--vvh, 100dvh) * .62); } /* 赤ペン中も返事を 4 割は見せる。ピンが増えたらピンの段だけスクロールする */
   html.mob #tstat { order: -3; }
   html.mob #cmsg { order: 2; } /* 開いている時は送信の近く (最下段のすぐ下) */
@@ -621,7 +623,7 @@ function placeNav() { // ◀ ▶ の置き場: 2 列の時は上の行 (元の�
 if (isMobileUA) {
   const $ = (id) => document.getElementById(id);
   const dock = Object.assign(document.createElement("div"), { id: "dock" });
-  dock.innerHTML = '<button id="dto" title="送信欄を開く"><i></i><span id="dname"></span><small id="dwait"></small></button><button id="dpen" hidden title="畳んだ赤ペン欄に戻る">赤ペン <b></b></button>';
+  dock.innerHTML = '<button id="dto" title="送信欄を開く"><i></i><span id="dname"></span><small id="dwait"></small></button><button id="dpen" hidden title="畳んだ赤ペン欄に戻る (数字はピンの数)">赤<b></b></button>';
   dock.prepend($("ptoggle"));
   dock.append($("newbtn"));
   $("chat").prepend(dock);

@@ -365,6 +365,9 @@ with sync_playwright() as p:
         pg = page(b, w, h)
         pin(pg, 0); pg.locator("#pins textarea").first.fill("書きかけ")
         x0 = pg.evaluate("T.r('#prev')?.l")
+        if w < 600:
+            r = pg.evaluate("({ f: T.r('#pfold'), a: T.r('#fattach'), c: T.r('#copy') })")
+            check(f"{w}×{h}: ▼ は赤ペン欄の段の中央で、📎・コピーと重ならない", abs((r["f"]["l"] + r["f"]["r"]) / 2 - w / 2) < 2 and r["a"]["r"] <= r["f"]["l"] and r["f"]["r"] <= r["c"]["l"], r)
         tap(pg, "#pfold")
         if w < 600: check(f"{w}×{h}: ◀ は赤ペン中も畳んだ後も同じ左端", x0 is not None and abs(pg.evaluate("T.r('#prev').l") - x0) < 1, [x0, pg.evaluate("T.r('#prev')")])
         g = pg.evaluate("({ pen: document.body.classList.contains('pen'), tray: T.inView('#tray'), dpen: T.inView('#dpen') && document.querySelector('#dpen').innerText })")
