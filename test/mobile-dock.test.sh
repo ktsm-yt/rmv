@@ -364,7 +364,9 @@ with sync_playwright() as p:
     for (w, h) in ((360, 860), (630, 900)):
         pg = page(b, w, h)
         pin(pg, 0); pg.locator("#pins textarea").first.fill("書きかけ")
+        x0 = pg.evaluate("T.r('#prev')?.l")
         tap(pg, "#pfold")
+        if w < 600: check(f"{w}×{h}: ◀ は赤ペン中も畳んだ後も同じ左端", x0 is not None and abs(pg.evaluate("T.r('#prev').l") - x0) < 1, [x0, pg.evaluate("T.r('#prev')")])
         g = pg.evaluate("({ pen: document.body.classList.contains('pen'), tray: T.inView('#tray'), dpen: T.inView('#dpen') && document.querySelector('#dpen').innerText })")
         check(f"{w}×{h}: ▼ で赤ペン欄が畳まれ、帯に『赤ペン 1』が出る", not g["pen"] and not g["tray"] and g["dpen"] and "1" in g["dpen"], g)
         open_sheet(pg)

@@ -612,12 +612,11 @@ if (isMobileUA && window.visualViewport) {
 <script>
 // スマホ: 操作を画面の下端の 1 本 (#dock) に集める。☰ ＋ ◀ ▶ と赤ペン欄 (#tray) を #chat の中へ移し、#chat を下の欄にする (2026-11-13 user)。
 // 押した時の処理は id で付くので、移しても変わらない。mermaid の CDN を待つ module より前に済ませ、読み込み中に並びが跳ねないようにする
-function placeNav() { // ◀ ▶ の置き場: 2 列の時は上の行 (元の場所) / 赤ペン中は赤ペン欄の最下段 / それ以外は下の帯 (＋ の左)
+function placeNav() { // ◀ ▶ の置き場: 2 列の時は上の行 (元の場所) / 赤ペン中は赤ペン欄の最下段 / それ以外は下の帯。1 列ではどちらも左端 (帯では ＋ の左、赤ペン欄では左端と位置が変わってちぐはぐだった、2026-11-13 user)
   const $ = (id) => document.getElementById(id), prev = $("prev"), next = $("next");
   const to = document.documentElement.classList.contains("split") ? $("bar") : document.body.classList.contains("pen") ? $("tray").querySelector(".row") : $("dock");
   if (prev.parentElement === to) return;
   if (to.id === "bar") { $("pos").before(prev); $("pos").after(next); }
-  else if (to.id === "dock") $("newbtn").before(prev, next);
   else to.prepend(prev, next);
 }
 if (isMobileUA) {
