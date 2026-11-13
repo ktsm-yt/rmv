@@ -1862,6 +1862,7 @@ function renderSug() {
 const pickSug = (i) => { ctext.value = `/${sugItems[i].name} `; sugItems = []; sug.hidden = true; ctext.focus(); };
 ctext.addEventListener("input", () => { sugI = 0; loadSkills(); renderSug(); });
 ctext.addEventListener("keydown", (ev) => {
+  if (ev.key === "Escape" && !ev.isComposing && sug.hidden) { ev.preventDefault(); return ctext.blur(); } // Esc = 欄を抜ける (打った文字は消さない。変換中は変換の取り消し、候補が出ている時は候補を閉じるのが先)
   if (sug.hidden || ev.metaKey || ev.ctrlKey) return;
   if (ev.key === "ArrowDown" || ev.key === "ArrowUp") { ev.preventDefault(); sugI = (sugI + (ev.key === "ArrowDown" ? 1 : sugItems.length - 1)) % sugItems.length; renderSug(); }
   else if (ev.key === "Tab" || ev.key === "Enter") { ev.preventDefault(); pickSug(sugI); }
