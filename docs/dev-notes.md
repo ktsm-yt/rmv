@@ -16,17 +16,18 @@
    - 表示: 本体の返事と混ぜない。プロジェクト列の先頭「メイン」の右隣の「🤖 ワーカー」タブで subagent の返事だけのモードに切り替え (`?mode=agents` として URL に残る、localStorage には持たないので開けば既定の本体モード)。一覧・← →・追従・プロジェクト列・chip・送り先はモードの entry だけを見る。「すべて」/「🤖 ワーカー」= そのモードで repo 絞り込み無し、repo 行のクリックでモード内をその repo に絞る
    - subagent の返事はプロジェクト列の冒頭・上部の stamp・チャット欄の送り先の行に `🤖 worker: …` (セッション chip には付けない)。送り先は親の端末なので本体モードと同じ。未読の赤点は本体の返事だけで数える
 4. 手で起動: `bun run server.ts` (http://127.0.0.1:4310、`RMV_PORT` で変更可)
-   - プロジェクト列 (左): `/history` の全件を repo (cwd の basename) ごとにまとめ、最後に返事した順に「repo 名・最新返事の HH:MM・冒頭 30 字」。先頭の「メイン」= 本体の返事を repo で絞らない (右隣の「🤖 ワーカー」は 3. のモード切り替え)。クリックでその repo に絞り、`?repo=crewforce` として URL に残る (直接開いても同じ。照合は完全一致、大文字小文字は無視)。最新追従・← →・chip もその repo 内だけ
+   - プロジェクト列 (右端。⇆ で左右を入れ替え、localStorage `rmx.side`): `/history` の全件を repo (cwd の basename) ごとにまとめ、最後に返事した順に「repo 名・最新返事の HH:MM・冒頭 30 字」。先頭の「メイン」= 本体の返事を repo で絞らない (右隣の「🤖 ワーカー」は 3. のモード切り替え)。クリックでその repo に絞り、`?repo=crewforce` として URL に残る (直接開いても同じ。照合は完全一致、大文字小文字は無視)。最新追従・← →・chip もその repo 内だけ
      - 終了したものは既定で隠す: `/history` の各 entry の `live` = その `terminal` handle が (a) 今走っている対話 Claude の端末 (`ps` で `claude` プロセスの環境変数 `ORCA_TERMINAL_HANDLE` を集める。daemon / bg-pty-host / bg-spare / `-p` / `--print` は除く) かつ (b) 今の `orca terminal list` (connected かつ writable) にある かつ (c) その端末で最新の本体の返事と同じ cwd (1 端末で順に別 repo を開いた時、前の repo を live にしない)。どちらも 5 秒キャッシュ (`RMV_LIVE_TTL_MS` で変更、`RMV_PS_BIN` で ps を差し替え)。live な entry が 1 つも無い repo、live でないセッションの chip と送り先の行を隠す。選択中の repo・セッション、固定中の送り先、「すべて」は残す。未読の赤点 (☰) は表示中の repo だけで数える
      - 列の末尾の「終了したものも表示 (N)」/「終了したものを隠す」で repo 列・chip・送り先をまとめて切り替え (N は隠れた repo 数、localStorage `rmx.proj.dead`、隠れた repo に未読があれば「・未読あり」)。(b) が取れない時は header `x-rmv-live: unknown` で全 entry `live: true` (fail open)、トグルは出さず全部表示。(a) の ps が失敗した時は (b) だけで判定 (header は `ok`)
      - repo の色: repo 名の hash から決めた色を、プロジェクト列と chip では名前の前の ●、送り先の行では左の 3px の線に出す (同じ色 = 同じ repo)
    - 未読の赤点: そのプロジェクトを最後に選んでいた時より新しい返事がある (repo ごとの既読 ts は localStorage `rmx.seen`、初回は全部既読から)。列を畳んでいても ☰ が赤くなる
-   - 列の開閉: ☰。幅 700px 以上は開いて始まり、開閉を localStorage `rmx.proj` に覚える。700px 未満は畳んで始まり、開くと返事の上に重なる。畳んだ状態でもホバーで重ねて開く (離すと閉じる)
+   - 列の開閉: ☰。どの幅でも畳んだ細帯で始まる。上の ☰ ＋ ⇆ にマウスを乗せると返事の上に重ねて開く (離すと閉じる。帯を横切るだけでは開かない)。☰ で列として開いた選択は幅 700px 以上でだけ localStorage `rmx.projR` に覚え、700px 未満は開いても返事の上に重なる
    - セッション chip: 返事の上に 1 行、選択中プロジェクトのセッションだけ。「最新」= その中で最後に返事したセッションを追う / 他の chip = そのセッションに固定 (← → と追従もその中だけ)。選択は `?s=<key>` (key = `/history` の `session` = terminal handle か session_id) に残る
    - ← → キー: 履歴の前 (古い) / 次 (新しい)。最新に戻ると自動追従に復帰
    - チャット欄: ピン無しで自由文を表示中の返事の端末へ送る (Cmd+Enter も可、10 万字まで。超えたら送らずに理由を出す)。見出しに `→ chip の label`、Orca 外の返事では送信不可と理由を出す。入力欄は文字量で上へ伸びる (最小 10 行、最大 60vh、送信済みの履歴は持たない)
      - 送り先 chip (入力欄の直上に直近 5 セッションを縦に、各行は時刻 + 最新返事の冒頭): 「追従」= 表示中の返事の端末 / 他 = そのセッションに固定 (送るのは一覧でそのセッションの最新返事、表示を切り替えても変わらない。見出しに 📌)。押すと表示もそのセッションに切り替わる (上の chip を押したのと同じ、追従 = 最新)。固定は repo ごとに localStorage `rmx.chat.pin` (`{repo: session key}`)、「追従」で解除
-     - 置き場は CSS だけで決める: 幅 900px 以上は右の列 (300px)、未満は返事の上の帯。✎ で開閉、localStorage `rmx.chat.open` に覚える (既定は開)
+     - 置き場は CSS だけで決める: 幅 900px 以上は右の列 (300px)、未満は返事の上の帯。三角 (右の列は ▶ ◀、上の帯は ▲ ▼) で開閉、PC は localStorage `rmx.chat.open` に覚える (既定は開)
+   - スマホ (mobile UA、head の script が `html.mob` を付ける。PC の細い幅と共用の `html.narrow` とは別): 起動時に ☰ ＋ ◀ ▶ と赤ペン欄 `#tray` を `#chat` の中へ移し (`#chat` 直後の script、`#dock`)、`#chat` を画面の下端の欄にする。ふだんは 1 本の帯 (`chat-closed`)、送り先を押すと送信欄、赤ペン中 (`body.pen`) は同じ場所を赤ペン欄に入れ替える。幅 `MOB_SPLIT_MIN` (600、head の script の 1 か所) 以上は `html.split` で左に返事・右に `#chat` の 2 列。`html.kbd` = キーボードが出ている (欄に焦点があり、見えている高さがその幅で見た最大より 120px 以上低い)。スマホでは `html.wide` と `html.proj-left` を付けない。案表は `decorate` の `cardify` が列の役割の class と `data-th` を付けて CSS でカードにし、罫線図は `fitPre` が `--pf` で字を縮める。確認: `bash test/mobile-dock.test.sh` (Android の UA。`SHOTS=<dir>` で各状態の画面を保存)
    - 描画: 返事中の絶対パス (png/svg/動画/音声) はその場に表示、クリックで新タブ。http(s) リンクは新タブ
 5. 常駐 (launchd、log は `~/Library/Logs/harness-rmv.log`):
    - load: `bash launchd/install.sh` (plist の `__RMV_DIR__` / `__HOME__` を埋めて ~/Library/LaunchAgents に置き bootstrap。起動は job 名 wrapper `launchd/harness-rmv`、repo の場所は wrapper が自分で解決)

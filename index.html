@@ -2,7 +2,8 @@
 <html lang="ja">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content">
+<!-- viewport-fit=cover と body 下端の safe-area の余白は外した: Soul (Android WebView) は下に自分のツールバーがあるのに 39px を返し、帯の下が空いていた (2026-11-13 user)。cover を付けなければ普通のブラウザも 0 を返す -->
 <link rel="icon" type="image/png" href="/favicon.png">
 <title>rmv (Red Marker Viewer): 返事を見て赤ペンで返す</title>
 <style>
@@ -18,7 +19,7 @@
   }
   * { box-sizing: border-box; }
   body {
-    margin: 0; height: 100vh; height: 100dvh; height: calc(var(--vvh, 100dvh) / var(--z, 1)); padding-bottom: env(safe-area-inset-bottom); display: grid; grid-template-columns: minmax(0, 1fr) 200px;
+    margin: 0; height: 100vh; height: 100dvh; height: calc(var(--vvh, 100dvh) / var(--z, 1)); display: grid; grid-template-columns: minmax(0, 1fr) 200px;
     font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
     line-height: 1.8; background: var(--bg); color: var(--fg);
   }
@@ -309,6 +310,7 @@
   #free { min-height: calc(2lh + 8px); } /* 全体へのひとことは空でも 2 行ぶん */
   #tray .row { display: flex; gap: 8px; align-items: center; }
   #akmsg { flex: 1; color: var(--muted); }
+  #fattach { display: none; } html.narrow #fattach { display: block; } /* 赤ペン欄の 📎: 送信欄と同じく細い幅とスマホだけ (スマホは貼り付けもドラッグも無く、写真を足せなかった、2026-11-13 user) */
   #tray button { font: inherit; color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 2px 10px; cursor: pointer; }
   #tray #send { background: var(--red); border-color: var(--red); color: #fff; }
   #tray button:disabled { opacity: .35; cursor: default; }
@@ -344,6 +346,185 @@
     .pin { grid-template-columns: auto minmax(0, 1fr) auto; row-gap: 4px; }
     .pin textarea { grid-column: 1 / -1; grid-row: 2; }
   }
+  /* ここから下はスマホ (mobile UA = html.mob) だけ。PC は細い幅でも変えない (2026-11-13 user: スマホでも使いやすく) */
+  /* 押す物は 44px 角以上 (24px の ☰ ＋ ◀ ▶ と高さ 21px の chip は指で外した) */
+  html.mob :is(button, select, .chip) { min-width: 44px; min-height: 44px; }
+  html.mob #newpop .it, html.mob #cact :is(.q, .cpick) { min-width: 44px; min-height: 44px; }
+  html.mob .chip { padding-inline: 12px; }
+  html.mob :is(.cpbtn, .mmzoom) { display: grid; place-items: start end; background: none; border-color: transparent; } /* 図の右上の ⧉ ⤢: 押せる範囲だけ広げ、下の字は隠さない */
+  html.mob .cimg button { top: -10px; right: -10px; width: 44px; height: 44px; border: 0; border-radius: 0; padding: 0 0 22px 22px; background: radial-gradient(circle at 33px 11px, var(--panel) 9px, transparent 10px); }
+  html.mob #cact .q sup, html.mob #tstat sup { display: none; } /* 数字キーの案内はキーボードが無いので出さない */
+  /* 送信欄の中: 定型キーを 3 列、入力欄、最下段に 📎・モデル・エフォート・送信。モデルとエフォートは名前が切れない幅で出す (184px の列では『fa』『h』に切れた) */
+  html.mob #cform { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+  html.mob #cact, html.mob #copt { display: contents; }
+  html.mob #cact .q { grid-column: auto; order: 1; font-size: 14px; padding: 0 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  html.mob #ctext { grid-column: 1 / -1; order: 2; min-height: 66px; max-height: 40vh; font-size: 16px; }
+  html.mob #cbar { grid-column: 1 / -1; order: 3; position: static; gap: 6px; }
+  html.mob #cattach { margin-right: 0; padding: 0; }
+  html.mob #cact .cpick { flex: 0 1 auto; font-size: 14px; padding: 0 4px; }
+  html.mob #csend { margin-left: auto; padding: 0 18px; font-weight: 700; }
+  /* 送り先・文脈量・▼ を最下段のモデル・エフォートと送信の間に 2 段で詰める。▼ は送信から離して左に置く (押し違えて送らない)。幅が足りない端末では送信と一緒に次の行へ回る */
+  html.mob #cbar { flex-wrap: wrap; }
+  /* 1 列の送り先は 1 つの部品 (#chead) を、閉じた帯と開いた送信欄の最下段で同じ形・同じ位置に置く (切り替えで部品を変えない、2026-11-13 user)。
+     左に ▲ (開く) / ▼ (閉じる)、右に 1 段目 = 状態の点と送り先、2 段目 = 文脈量と返事待ちの数 */
+  html.mob :is(#cbar, #dock) > #chead { order: 0; flex: 1 1 120px; display: grid; grid-template-columns: 44px 10px minmax(0, 1fr) auto; grid-template-areas: "t d n n" "t c c w"; align-items: center; gap: 0 8px; min-height: 44px; margin: 0; padding: 0 8px 0 0; overflow: hidden; cursor: pointer; }
+  html.mob :is(#cbar, #dock) > #chead > * { display: block; margin: 0; min-width: 0; }
+  html.mob :is(#cbar, #dock) > #chead > #ctoggle { grid-area: t; border-left: 0; border-right: 1px solid var(--line); }
+  html.mob body.chat-closed #ctoggle::before { content: "▲"; }
+  html.mob :is(#cbar, #dock) > #chead > #ddot { grid-area: d; }
+  html.mob :is(#cbar, #dock) > #chead > #cto { grid-area: n; font-size: 13px; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  html.mob :is(#cbar, #dock) > #chead > #cctx { grid-area: c; font-size: 11px; line-height: 1.2; overflow: hidden; text-overflow: ellipsis; }
+  html.mob :is(#cbar, #dock) > #chead > #dwait { grid-area: w; font-size: 11px; line-height: 1.2; white-space: nowrap; }
+  html.mob :is(#cbar, #dock) > #chead > #dwait::after { content: none; }
+  html.mob :is(#cbar, #dock) > #chead > :is(#cctx, #dwait):empty { display: none; }
+  html.mob #cbar > #csend { order: 1; margin-left: 0; }
+  /* 1 列: 送り先の部品は帯でも送信欄の最下段でも同じ幅・同じ位置 (開いて閉じる間に指を動かさない、2026-11-13 user)。
+     最下段の他の部品の幅を決め打ちし (📎 44 / モデル 56 / エフォート 44 / 送信 56)、送り先は残り全部。帯も右端の ☰ を 56 にして、送り先を同じ幅で右寄せ。
+     モデルとエフォートは略して (fab / opu / son、h / m / xh) 幅 360 でも 1 行に入れる */
+  html.mob:not(.split) :is(#cbar, #dock) { --g: 6px; gap: var(--g); flex-wrap: nowrap; }
+  @media (max-width: 400px) { html.mob:not(.split) :is(#cbar, #dock) { --g: 4px; } }
+  html.mob:not(.split) :is(#cbar, #dock) > #chead { flex: 0 0 calc(100% - 200px - 4 * var(--g)); }
+  html.mob:not(.split) #dock > #chead { flex-shrink: 1; margin-left: auto; } /* ☰ の一覧を開いて ＋ が出た間だけ縮む (一覧の幕の下) */
+  html.mob:not(.split) #dock > #dto { display: none; }
+  html.mob:not(.split) #cbar > .cpick[data-cmd=model] { flex: 0 0 56px; }
+  html.mob:not(.split) #cbar > .cpick[data-cmd=effort] { flex: 0 0 44px; }
+  html.mob:not(.split) #cbar > #cattach { flex: 0 0 44px; }
+  html.mob:not(.split) :is(#cbar > #csend, #dock > #ptoggle) { flex: none; width: 56px; padding: 0; }
+  /* 案表 (『これにする』が付く表) は行ごとのカード。8 列の表は幅 659px で、推奨 (Tier) と理由が横スクロールの先にあった。
+     DOM は表のまま (ピン・採用の処理を変えない)。役割の class と data-th は decorate の cardify が付ける。他の表は横スクロールのまま */
+  html.mob #reply table.cards, html.mob #reply table.cards tbody { display: block; }
+  html.mob #reply table.cards thead { display: none; }
+  html.mob #reply table.cards tr { display: flex; flex-wrap: wrap; align-items: center; gap: 3px 8px; margin: 8px 0; padding: 10px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+  html.mob #reply table.cards tr::before, html.mob #reply table.cards tr::after { content: ""; flex-basis: 100%; } /* 行の切れ目: 1 行目 (記号・題・印) | 2 行目 (見出しつきの値) | 3 行目 (理由と『これにする』) */
+  html.mob #reply table.cards tr::before { order: 2; }
+  html.mob #reply table.cards tr::after { order: 4; }
+  html.mob #reply table.cards td { display: block; min-width: 0; border: 0; padding: 0; white-space: normal; box-shadow: none; }
+  html.mob #reply table.cards td.ck { order: 0; flex: none; display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: var(--link); color: var(--bg); font-size: 13px; font-weight: 700; }
+  html.mob #reply table.cards td.ck::before { content: none; } /* ピンの印は枠の色で見せる (丸の中に『表 A』は入らない) */
+  html.mob #reply table.cards td.ct { order: 1; flex: 1 1 0; font-size: 15px; font-weight: 700; }
+  html.mob #reply table.cards td.cb { order: 1; flex: none; min-width: 28px; text-align: center; font-size: 12px; font-weight: 700; padding: 1px 8px; border: 1px solid var(--line); border-radius: 999px; }
+  html.mob #reply table.cards td.cm { order: 3; font-size: 12px; color: var(--muted); white-space: nowrap; }
+  html.mob #reply table.cards td.cm::before { content: attr(data-th) " "; }
+  html.mob #reply table.cards td.cr { order: 5; flex: 1 1 100%; font-size: 13px; }
+  html.mob #reply table.cards td:has(> .pick) { display: flex; align-items: center; gap: 8px; }
+  html.mob #reply table.cards .pick { flex: none; margin-left: auto; padding: 0 16px; font-size: 14px; border-radius: 8px; background: var(--bg); }
+  html.mob #reply table.cards .pick.on { background: var(--red); }
+  html.mob #reply table.cards tr.chosen { background: color-mix(in srgb, var(--red) 8%, var(--panel)); }
+  html.mob #reply table.cards tr.pinned { border-color: var(--red); box-shadow: inset 3px 0 0 var(--red); }
+  html.mob #reply table.cards tr.pinned > td.ck { background: var(--red); color: #fff; }
+  /* 罫線図・コード: 幅を超えたら fitPre が --pf で字を小さくする */
+  html.mob #reply pre, html.mob #reply pre code { font-size: var(--pf, 14px); }
+  /* 操作は下の 1 本に集める: 右端の帯は出さず、#chat を画面の下端の欄にする。高さは今までどおり body の --vvh (見えている範囲) の中なので、下に置いたアドレスバーにも隠れない。
+     ふだん (chat-closed) は 1 本の帯 #dock = ◀ ▶ / 送り先 / 赤N / ☰ (＋ は ☰ の一覧の右下)。送り先を押すと送り先の一覧まで開く。赤ペン中 (body.pen) は同じ場所を赤ペン欄 #tray に入れ替える (下の欄は 1 つ)。
+     許可待ちの行 (#tstat) と ＋・許可の失敗 (#cmsg) は、閉じていても赤ペン中でも帯のすぐ上に出す */
+  html.mob body { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }
+  html.mob main { grid-column: 1; grid-row: 1; }
+  html.mob body.proj-closed #proj, html.mob #phead { display: none; } /* 一覧は ☰ で返事の上に重ねて開く (重ね方は狭い幅と同じ)。外を押すか行を選ぶと閉じる */
+  html.mob #proj { bottom: auto; height: var(--vvh, 100dvh); }
+  html.mob body:is(:not(.proj-closed), .new-open)::before { content: ""; position: fixed; inset: 0; z-index: 19; background: rgb(0 0 0 / .25); } /* ☰ と ＋ の一覧を外を押して閉じる時に、下の段へピンが付かないよう幕で受ける */
+  html.mob #chat { grid-column: 1; grid-row: 2; gap: 6px; padding: 6px 8px; border: 0; border-top: 1px solid var(--line); font-size: 14px; max-height: calc(var(--vvh, 100dvh) - 96px); overflow-y: auto; }
+  html.mob body.chat-closed #chat > #chead, html.mob body:not(.chat-closed) #dock, html.mob body:not(.to-open) #cchips { display: none; }
+  html.mob body.chat-closed #chat > #dock { display: flex; }
+  html.mob body.chat-closed #chat > #tstat:not(:empty) { display: grid; }
+  html.mob body.chat-closed #chat > #cmsg:not(:empty) { display: block; }
+  html.mob body.pen #chat > :not(#tray, #tstat, #cmsg) { display: none; }
+  html.mob body.pen #chat > #tray { display: flex; }
+  /* 赤ペン欄を畳む (▼): 書いた分は残したまま元の帯・送信欄に戻し、帯の赤い『赤ペン N』で戻る (ピンを全部消さないと戻れなかった、2026-11-13 user) */
+  #pfold { display: none; } html.mob #pfold { display: block; }
+  html.mob:not(.split) #tray .row { position: relative; } html.mob:not(.split) #pfold { position: absolute; left: 50%; transform: translateX(-50%); } /* 1 列は段の中央 (2 列の右の列は狭く、コピーと重なるので並びのまま) */
+  html.mob body:not(.pen) #chat > #tray, html.mob #dock > #dpen[hidden] { display: none; }
+  html.mob #dock > #dpen { display: flex; align-items: center; gap: 1px; width: auto; padding: 0 8px; white-space: nowrap; color: #fff; background: var(--red); border-color: var(--red); }
+  html.mob body.pen #chat { border-top: 3px solid var(--red); max-height: calc(var(--vvh, 100dvh) * .62); } /* 赤ペン中も返事を 4 割は見せる。ピンが増えたらピンの段だけスクロールする */
+  html.mob #tstat { order: -3; }
+  html.mob #cmsg { order: 2; } /* 開いている時は送信の近く (最下段のすぐ下) */
+  html.mob body:is(.chat-closed, .pen) #cmsg { order: -2; }
+  html.mob #cwhy { order: 1; }
+  html.mob #cform { order: 0; }
+  /* 下の帯 */
+  html.mob #dock { gap: 6px; align-items: center; }
+  html.mob #dock > button { flex: none; display: grid; place-items: center; width: 44px; height: 44px; margin: 0; padding: 0; font: inherit; font-size: 16px; color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 10px; cursor: pointer; }
+  html.mob #dock > button:disabled { opacity: .35; }
+  html.mob #dock #ptoggle.unread { border-color: var(--red); color: var(--red); }
+  html.mob #newbtn .nl, html.mob :is(#dock, #tray) .lbl { display: none; }
+  /* ☰ の一覧を開いている間: ☰ はその場で一覧より手前に出す (一覧に隠れて閉じられなかった、2026-11-13 user)。＋ はその左に出す */
+  html.mob body.proj-closed #dock > #newbtn { display: none; }
+  html.mob body:not(.proj-closed) #dock > :is(#ptoggle, #newbtn) { position: relative; z-index: 21; }
+  html.mob #dock #dto { flex: 1 1 0; display: flex; gap: 6px; width: auto; min-width: 0; padding: 0 8px; font-size: 14px; white-space: nowrap; overflow: hidden; }
+  html.mob #dname { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
+  html.mob #dwait { flex: none; margin-left: auto; font-size: 12px; color: var(--muted); }
+  html.mob #dwait b { font-weight: inherit; }
+  @media (min-width: 360px) { html.mob #dwait::after { content: " ▲"; } }
+  @media (max-width: 359px) { /* 狭い端末では送り先の名前に幅を回す: 返事待ちは数だけを黄の丸に入れ、間隔を詰める */
+    html.mob #dock { gap: 4px; }
+    html.mob #dwait b { display: none; }
+    html.mob #dwait:not(:empty) { padding: 0 7px; border-radius: 999px; background: rgb(229 165 10 / .25); color: var(--fg); font-weight: 700; }
+  }
+  html.mob #dwait span { display: none; } /* 動作中の数は 2 列の時だけ */
+  html.mob #ddot { flex: none; width: 10px; height: 10px; border-radius: 50%; box-sizing: border-box; border: 2px solid var(--line); } /* 状態の点は送り先の一覧と同じ見た目 */
+  html.mob #ddot:is(.wait, .ng) { border: 0; background: #e5a50a; box-shadow: 0 0 0 3px rgb(229 165 10 / .25); }
+  html.mob #ddot.perm { border: 0; background: #e01b24; box-shadow: 0 0 0 3px rgb(224 27 36 / .25); }
+  html.mob #ddot.ok { border: 0; background: #2ec27e; }
+  html.mob #ddot.busy { border-top-color: var(--fg); }
+  html.mob #ddot.bg { border-color: #e5a50a; }
+  /* 開いた送信欄の 1 行目: 送り先 (押すと送り先の一覧) と文脈量、右端の ▼ で畳む */
+  html.mob #chead, html.mob #chead:hover { order: -1; flex: none; gap: 8px; min-height: 44px; padding-left: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+  html.mob #cto { flex: 1 1 0; max-width: none; }
+  html.mob #cto::after { content: " ▾"; color: var(--muted); }
+  html.mob body.to-open #cto::after { content: " ▴"; }
+  html.mob #ctoggle { position: static; order: 3; transform: none; width: 44px; height: 44px; font-size: 14px; border-left: 1px solid var(--line); border-radius: 0; }
+  html.mob #ctoggle::before { content: "▼"; }
+  /* 送り先の一覧 (下の状態行と 2 回並べない): 1 行目 = 名前と時刻、2 行目 = 今の状態か最新の返事の冒頭 */
+  html.mob #cchips { gap: 6px; max-height: 38vh; overflow-y: auto; padding: 0; }
+  html.mob #cchips .chip { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 0 8px; padding: 4px 10px; border-radius: 10px; border-left: 4px solid var(--rc, var(--line)); font-size: 13px; line-height: 1.4; }
+  html.mob #cchips .chip i { margin: 0; }
+  html.mob #cchips .chip b { overflow: hidden; text-overflow: ellipsis; }
+  html.mob #cchips .chip span { grid-column: 2 / -1; font-size: 12px; color: var(--muted); }
+  html.mob #cchips .chip.on span { color: inherit; opacity: .7; }
+  html.mob #cchips .chip .task { grid-column: 1 / -1; max-height: 30vh; overflow: auto; padding-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  /* 許可待ちの行 */
+  html.mob #tstat { gap: 6px; font-size: 13px; color: var(--fg); }
+  html.mob #tstat .trow { align-items: center; padding: 3px 4px 3px 10px; border: 1px solid #e01b24; border-radius: 10px; }
+  html.mob #tstat i { margin: 0; }
+  html.mob #tstat button { padding: 0 12px; font: inherit; font-size: 14px; color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+  /* 入力中 (キーボードが出ている間) は定型キーと送り先の一覧を隠し、入力欄を高くする。返事を画面の上半分に残す */
+  html.mob.kbd:not(.split) #cact .q, html.mob.kbd #cchips { display: none; }
+  html.mob.kbd:not(.split) #ctext { min-height: 112px; }
+  /* 赤ペン欄: 下の欄の中に置く (返事の末尾に貼り付けない)。ピンの段だけがスクロールし、ひとこと・コピー・送信は常に見える */
+  html.mob #tray { position: static; flex: 0 1 auto; flex-direction: column; gap: 6px; min-height: 0; max-width: none; margin: 0; padding: 0; background: none; border: 0; border-radius: 0; box-shadow: none; }
+  html.mob #pins { flex: 0 1 auto; min-height: 0; overflow-y: auto; display: grid; gap: 4px; }
+  html.mob #pins:empty { display: none; }
+  html.mob #tray :is(#free, #fimgs, .row) { flex: none; }
+  html.mob #tray textarea { font-size: 16px; }
+  html.mob #tray button { border-radius: 10px; }
+  /* ＋ の一覧: 下の帯のすぐ上 (下端は --vvh から測る。fixed の bottom は下に置いたアドレスバーに隠れる) */
+  html.mob #newpop { top: calc(var(--vvh, 100dvh) - 62px); right: 8px; left: auto; transform: translateY(-100%); max-height: calc(var(--vvh, 100dvh) - 80px); }
+  /* 開いた画面 (html.split = スマホで幅 MOB_SPLIT_MIN 以上): 左に返事、右に列。下の帯は出さず、送信欄は出したまま。
+     右の列は上から 返事待ちの数・＋・☰ / 許可待ち / 送り先の一覧 (上の chip の代わり) / 送り先 1 行 / 定型キー / 入力欄 / モデル・エフォート / 📎・送信。
+     入力中 (html.kbd) は数の行と一覧を隠して入力欄を伸ばす。赤ペン中は列ごと赤ペン欄に入れ替える (送信欄と積むと、キーボードが出た時にピンの行が画面の外へ押し出された、2026-11-13 user の実機) */
+  html.mob.split body { grid-template-columns: minmax(0, 1fr) clamp(224px, 38%, 320px); grid-template-rows: minmax(0, 1fr); }
+  html.mob.split #chat { grid-column: 2; grid-row: 1; max-height: none; padding: 8px; border-top: 0; border-left: 1px solid var(--line); }
+  html.mob.split body.pen #chat { max-height: none; border-top: 0; border-left: 3px solid var(--red); }
+  html.mob.split #chips { display: none; }
+  html.mob.split body:not(.chat-closed) #dock { display: flex; order: -4; }
+  html.mob.split.kbd #chat > :is(#dock, #cchips) { display: none; }
+  html.mob.split #dock #dto { padding: 0 4px; background: none; border: 0; pointer-events: none; }
+  html.mob.split #ddot, html.mob.split #dname, html.mob.split #ctoggle { display: none; }
+  html.mob.split #dwait { margin-left: 0; }
+  html.mob.split #dwait::after, html.mob.split #cto::after { content: none; }
+  html.mob.split #dwait span { display: inline; }
+  html.mob.split #dock :is(#newbtn, #ptoggle) { order: 2; }
+  html.mob.split body:not(.to-open) #cchips { display: grid; flex: 1 1 0; min-height: 0; max-height: none; order: -1; align-content: start; }
+  html.mob.split #chead { order: 0; padding-right: 12px; }
+  /* 入力欄の行だけが伸びるように行を決め打ちする: 定型キーは最大 10 個 = 4 行、その下に入力欄、最下段 */
+  html.mob.split #cform { flex: none; grid-template-rows: repeat(4, auto) minmax(84px, 1fr) auto; }
+  html.mob.split.kbd #cform { flex: 1 1 auto; min-height: 0; grid-template-rows: repeat(4, auto) minmax(60px, 1fr) auto; }
+  html.mob.split #cact .q { font-size: 13px; padding: 0 2px; }
+  html.mob.split #ctext { grid-row: 5; min-height: 0; max-height: none; }
+  html.mob.split #cbar { grid-row: 6; flex-wrap: wrap; }
+  html.mob.split #cact .cpick { order: -2; flex: 1 1 45%; min-width: 0; } /* モデルとエフォートで 1 行、その下に 📎 と送信 */
+  html.mob.split #tray { margin-top: auto; }
+  @media (min-width: 900px) { html.mob.split:not(.kbd) #cmedia:not(:empty) { display: grid; flex: 0 1 28%; order: 3; } } /* 横向き・タブレット: 使った画像と PDF の一覧を列の下に残す (幅 900px 以上では今までも出ていた) */
+  html.mob.split #newpop { top: 60px; transform: none; max-height: calc(var(--vvh, 100dvh) - 76px); }
   .foot { margin-top: 20px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 12px; line-height: 1.6; color: var(--muted); }
 </style>
 </head>
@@ -353,23 +534,35 @@
 // スマホ (mobile UA) は幅に関係なく狭い幅と同じ並びにする。ブラウザの「PC 版サイト」で UA が desktop になれば戻る。CSS 側は html.narrow
 const isMobileUA = navigator.userAgentData?.mobile || /Android|iPhone|iPad|Mobile/.test(navigator.userAgent);
 const isNarrow = () => document.documentElement.classList.contains("narrow");
+// スマホだけの並び・大きさは html.mob で分ける。html.narrow は PC の細い幅 (サイドパネル) と共用なので、スマホ用の直しを載せると PC も変わる (2026-11-13 user)
+document.documentElement.classList.toggle("mob", !!isMobileUA);
 // 拡張のサイドパネル (rmp の iframe) の中。Zen のサイドバーは 700px を超えるので、幅に関係なく帯のホバーでは開かない (2026-10-30 user)
 const isEmbedded = window !== window.top;
 document.documentElement.classList.toggle("embedded", isEmbedded);
 // 幅は Ctrl + の拡大率で割って測る。@media は html の zoom を見ないので、拡大すると狭いのに 3 列のままだった (2026-10-31 user、Zen のサイドバー)
 // CSS 側は html.wide (>= 900px) / html.xs (< 600px)
 const pageWidth = () => innerWidth / (+document.documentElement.style.zoom || 1);
-try { document.documentElement.classList.toggle("proj-left", localStorage.getItem("rmx.side") === "left"); } catch {} // 列の左右 (⇆)
+try { document.documentElement.classList.toggle("proj-left", !isMobileUA && localStorage.getItem("rmx.side") === "left"); } catch {} // 列の左右 (⇆)。スマホは帯ごと出さないので、前に覚えた左も使わない
 function applyProjDefault() {
   let c = isMobileUA || pageWidth() < 700;
   document.documentElement.classList.toggle("narrow", c);
   if (!c) try { c = localStorage.getItem("rmx.projR") !== "open"; } catch {}
   document.body.classList.toggle("proj-closed", c);
 }
+// スマホで左に返事・右に送信欄の 2 列にする幅 (html.split)。Fold を開いた幅 (実機の画面から約 630px) に合わせた仮の値で、変えるのはここだけ
+const MOB_SPLIT_MIN = 600;
+// 幅は端末の画面 (screen.width) でも測り、狭い方を使う。ブラウザが『PC 版サイト』で開くと viewport の指定が無視され、
+// 閉じた Fold (screen 555) でも幅 980 として描いて 2 列になっていた (2026-11-13、Fold 実機の Soul で実測: inner 980 / screen 555 / 縮小 0.57)
 function applyWidth(force) {
-  const h = document.documentElement.classList, w = pageWidth(), wide = h.contains("wide");
-  h.toggle("wide", w >= 900);
-  h.toggle("xs", w < 600);
+  const h = document.documentElement.classList, w = pageWidth(), wide = h.contains("wide"), split = isMobileUA && Math.min(w, screen.width) >= MOB_SPLIT_MIN;
+  h.toggle("wide", !isMobileUA && w >= 900); // スマホは幅が広くても PC の 3 列にしない (並びは html.mob の規則だけで決める)
+  h.toggle("xs", isMobileUA || w < 600); // スマホは 2 列の時も余白を狭い幅と同じに詰める
+  if (split !== h.contains("split")) { // Fold の開閉: 2 列では送信欄を出したまま、1 列に戻ったら下の帯に畳む
+    h.toggle("split", split);
+    document.body.classList.toggle("chat-closed", !split);
+    document.body.classList.remove("to-open");
+    if (typeof placeNav === "function") placeNav();
+  }
   if (force || isNarrow() !== (isMobileUA || w < 700)) applyProjDefault();
   if (wide !== h.contains("wide")) document.dispatchEvent(new Event("rmx-wide"));
 }
@@ -383,8 +576,8 @@ document.addEventListener("pointerover", (e) => {
   else if (!t?.closest("#proj")) document.body.classList.remove("proj-peek");
 });
 document.documentElement.addEventListener("pointerleave", () => document.body.classList.remove("proj-peek"));
-// チャット欄の開閉。スマホ (mobile UA) は毎回上に畳んで始める (返事を先に見せる、2026-11-11 user)。PC は細い幅でも覚えた開閉 (既定は開)
-try { document.body.classList.toggle("chat-closed", isMobileUA || localStorage.getItem("rmx.chat.open") === "0"); } catch {}
+// チャット欄の開閉。スマホ (mobile UA) は毎回畳んで始める (返事を先に見せる、2026-11-11 user。畳む先は下の帯、2 列の時は出したまま)。PC は細い幅でも覚えた開閉 (既定は開)
+try { document.body.classList.toggle("chat-closed", isMobileUA ? !document.documentElement.classList.contains("split") : localStorage.getItem("rmx.chat.open") === "0"); } catch {}
 // 画面の拡大率 (Ctrl + / - / 0)。Chrome のサイドパネルでは Cmd +/- がタブ側の拡大に取られるので rmv 自身で持つ。localStorage "rmx.zoom" に覚える
 function setPageZoom(z) {
   z = Math.min(2, Math.max(0.5, Math.round(z * 10) / 10)) || 1;
@@ -396,7 +589,18 @@ function setPageZoom(z) {
 try { setPageZoom(+localStorage.getItem("rmx.zoom") || 1); } catch {}
 // スマホ: 高さを実際に見えている範囲 (キーボードと下に置いたアドレスバーを除く) に合わせる。100dvh だけでは下のアドレスバーと赤ペンの送信が重なった
 if (isMobileUA && window.visualViewport) {
-  const fit = () => document.documentElement.style.setProperty("--vvh", `${visualViewport.height}px`);
+  // キーボードが出て高さが縮んだ後、書いている欄 (赤ペンのひとこと・送信欄) が下の欄の中で隠れていたら見える所へ送る (2026-11-13 user)
+  // html.kbd = キーボードが出ている: 欄に焦点があり、見えている高さがこの幅で見た最大より 120px 以上低い (アドレスバーの出入りは 60px 前後)。
+  // 焦点 (:focus) だけで並びを変えると、送信や 📎 を押す指で焦点が外れた瞬間に並びが動く。高さで見れば、戻るボタンでキーボードだけ閉じた時にも元に戻る
+  let maxH = 0, lastW = 0;
+  const fit = () => {
+    const vv = visualViewport;
+    if (vv.width !== lastW) { lastW = vv.width; maxH = 0; }
+    maxH = Math.max(maxH, vv.height);
+    document.documentElement.classList.toggle("kbd", vv.height < maxH - 120 && !!document.activeElement?.matches?.("textarea, input"));
+    document.documentElement.style.setProperty("--vvh", `${visualViewport.height}px`);
+    requestAnimationFrame(() => { const a = document.activeElement; if (a?.matches?.("textarea, input") && a.closest("#chat")) { a.closest("#tray")?.querySelector(".row")?.scrollIntoView({ block: "nearest" }); a.scrollIntoView({ block: "nearest" }); } }); // 赤ペン欄は欄の下の『コピー / 送信』も見せる (欄だけ送るとボタンがキーボードの裏に残った、2026-11-13 user)。狭くて両方入らない時は書いている欄を優先
+  };
   visualViewport.addEventListener("resize", fit);
   fit();
 }
@@ -419,7 +623,7 @@ if (isMobileUA && window.visualViewport) {
     <div id="pins"></div>
     <textarea id="free" rows="2" placeholder="全体へのひとこと (任意)"></textarea>
     <div id="fimgs" hidden></div>
-    <div class="row"><span id="akmsg"></span><button id="copy">コピー</button><button id="send">送信</button></div>
+    <div class="row"><button id="fattach" title="写真・動画を選んで添付">📎</button><input id="ffile" type="file" accept="image/*,video/*" multiple hidden><button id="pfold" title="赤ペン欄を畳んで元の帯に戻る (書いた分は残る)">▼</button><span id="akmsg"></span><button id="copy">コピー</button><button id="send">送信</button></div>
   </div>
 </main>
 <aside id="chat">
@@ -433,6 +637,35 @@ if (isMobileUA && window.visualViewport) {
   <div id="tstat"></div>
   <div id="cmedia"></div>
 </aside>
+<script>
+// スマホ: 操作を画面の下端の 1 本 (#dock) に集める。☰ ＋ ◀ ▶ と赤ペン欄 (#tray) を #chat の中へ移し、#chat を下の欄にする (2026-11-13 user)。
+// 押した時の処理は id で付くので、移しても変わらない。mermaid の CDN を待つ module より前に済ませ、読み込み中に並びが跳ねないようにする
+function placeNav() { // ◀ ▶ の置き場: 2 列の時は上の行 (元の場所) / 赤ペン中は赤ペン欄の最下段 / それ以外は下の帯。1 列ではどちらも左端 (帯と赤ペン欄で位置が変わってちぐはぐだった、2026-11-13 user)
+  const $ = (id) => document.getElementById(id), prev = $("prev"), next = $("next"), split = document.documentElement.classList.contains("split");
+  // 送信欄の 1 行目 (送り先・文脈量・▼) は、1 列では最下段のモデル・エフォートと送信の間に置き、帯の送り先と同じ幅・同じ位置にする。開いた帯と同じ場所で閉じられる (上の行まで指を伸ばしていた、2026-11-13 user)
+  const ch = $("chead"), dot = $("ddot"), wait = $("dwait");
+  if (split) { if (ch.parentElement !== $("chat")) $("chat").insertBefore(ch, $("cwhy")); if (dot.parentElement !== $("dto")) { $("dto").prepend(dot); $("dto").append(wait); } }
+  else {
+    if (dot.parentElement !== ch) ch.append(dot, wait);
+    const at = document.body.classList.contains("chat-closed") ? $("dock") : $("cbar");
+    if (ch.parentElement !== at) at.insertBefore(ch, at.id === "dock" ? $("newbtn") : $("csend"));
+  }
+  const to = split ? $("bar") : document.body.classList.contains("pen") ? $("tray").querySelector(".row") : $("dock");
+  if (prev.parentElement === to) return;
+  if (to.id === "bar") { $("pos").before(prev); $("pos").after(next); }
+  else to.prepend(prev, next);
+}
+if (isMobileUA) {
+  const $ = (id) => document.getElementById(id);
+  const dock = Object.assign(document.createElement("div"), { id: "dock" });
+  dock.innerHTML = '<button id="dpen" hidden title="畳んだ赤ペン欄に戻る (数字はピンの数)">赤<b></b></button><button id="dto" title="送信欄を開く"><i id="ddot"></i><span id="dname"></span><small id="dwait"></small></button>'; // 赤N は送り先の左 (送り先の位置を送信欄とそろえるため)
+  dock.append($("newbtn"), $("ptoggle")); // ☰ は帯の右端。＋ はその左で、☰ の一覧を開いている間だけ出す (2026-11-13 user)
+  $("chat").prepend(dock);
+  $("chat").append($("tray"));
+  placeNav();
+  new MutationObserver(placeNav).observe(document.body, { attributes: true, attributeFilter: ["class"] }); // 送信欄の開閉 (chat-closed) で送り先の部品を帯 ⇄ 最下段へ移す
+}
+</script>
 <div id="mmzoom" hidden><button class="zx" title="閉じる (Esc)">×</button><span><b class="hd">ホイール / ピンチ = 拡大縮小 · ドラッグ = 移動 · ダブルクリック = 全体</b><b class="ht">2 本指 = 拡大縮小 · ドラッグ = 移動 · ダブルタップ = 全体 · 左右スワイプ = 前後</b></span><div id="zbar" class="solo"><button class="zp" title="前の画像 (←)">◀</button><button class="zc" title="閉じる (Esc)">✕</button><button class="zn" title="次の画像 (→)">▶</button></div></div>
 <script src="https://cdn.jsdelivr.net/npm/marked@14.1.2/lib/marked.umd.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/dompurify@3.4.16/dist/purify.min.js"></script>
@@ -601,6 +834,7 @@ async function show(md, entry) {
   document.getElementById("sent").textContent = "";
   document.getElementById("akmsg").textContent = "";
   decorate(el);
+  fitPre();
   refresh();
   try { await mermaid.run({ nodes: el.querySelectorAll("pre.mermaid") }); }
   finally { decorateDiagrams(el); refresh(); scheduleMargin(); } // 図のノードは描画後にしか無い。同じ返事の描き直しでもピンの赤枠を戻す
@@ -1003,6 +1237,38 @@ const textOf = (el) => {
 };
 const hhmm = (d) => d.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit", hour12: false });
 
+// スマホ: 案表を行ごとのカードにする。DOM は表のまま、列ごとの役割の class と見出しの文字 (data-th) を足して CSS で並べる。
+// 列名は決め打ちしない (人によって違う): 1 列目 = 記号 / 2 列目 = 題 / 3 列目以降で値が全部 SS・S・A〜D の列 = 右上の印 / それ以外の最後の列 = 理由 / 残りは見出しつきで 2 行目
+const GRADE = /^(SS|[SABCD])[+-]?$/;
+function cardify(t) {
+  const heads = [...(t.tHead?.rows[0]?.cells ?? [])].map((c) => c.textContent.trim()), rows = [...t.tBodies[0].rows], n = heads.length;
+  let badge = -1;
+  for (let j = n - 1; j >= 2 && badge < 0; j--) if (rows.every((r) => GRADE.test(r.cells[j]?.textContent.trim() ?? ""))) badge = j;
+  const reason = [n - 1, n - 2].find((j) => j >= 2 && j !== badge) ?? -1;
+  t.classList.add("cards");
+  rows.forEach((r) => {
+    [...r.cells].forEach((c, j) => { c.className = j === 0 ? "ck" : j === 1 ? "ct" : j === badge ? "cb" : j === reason ? "cr" : "cm"; c.dataset.th = heads[j] ?? ""; });
+    const pick = r.querySelector(".pick");
+    if (pick) r.cells[Math.max(reason, Math.min(1, r.cells.length - 1))].append(pick); // 『これにする』は理由の右 (理由の列が無ければ題の右)
+  });
+}
+// スマホ: 幅を超える罫線図・コードは、収まるまで字を小さくする (下限 9px)。下限でも収まらない物は元の大きさで横スクロールのまま (長い 1 行のコードを 9px にしても読めない)
+// 幅が変わった時 (Fold の開閉) とフォントが届いた時にも測り直す
+function fitPre() {
+  if (!isMobileUA) return;
+  for (const p of document.querySelectorAll("#reply pre:not(.mermaid)")) {
+    p.style.removeProperty("--pf");
+    if (p.scrollWidth <= p.clientWidth) continue;
+    const cs = getComputedStyle(p), pad = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
+    let f = Math.floor(parseFloat(cs.fontSize) * (p.clientWidth - pad) / (p.scrollWidth - pad) * 10) / 10;
+    for (; f >= 9; f = Math.round((f - 0.3) * 10) / 10) { p.style.setProperty("--pf", f + "px"); if (p.scrollWidth <= p.clientWidth) break; }
+    if (f < 9) p.style.removeProperty("--pf");
+  }
+}
+addEventListener("resize", fitPre);
+document.fonts?.ready.then(fitPre);
+document.fonts?.addEventListener("loadingdone", fitPre);
+
 // 描画後の DOM に錨を付ける: data-anchor = 表示名 (2 / 2-ⅱ / 表 A)、data-pin = 返事内の通し番号 (本文は不変なので番号で同定できる)
 function decorate(el) {
   el.querySelectorAll(".blk").forEach((b) => {
@@ -1023,6 +1289,7 @@ function decorate(el) {
     tr.dataset.anchor = `表 ${cut(first, 12)}`;
     if (isPickRow(tr)) tr.cells[0].insertAdjacentHTML("beforeend", `<button class="pick" data-pick="${first}">これにする</button>`);
   });
+  if (isMobileUA) pickTbls.forEach(cardify);
   el.querySelectorAll("[data-anchor]").forEach((x, i) => { x.dataset.pin = String(i); x.classList.add("pinable"); });
 }
 
@@ -1135,10 +1402,17 @@ function layoutMargin() {
   margin.hidden = !placed.length;
 }
 
+let penFold = false; // スマホ: 赤ペン欄を畳んでいる
 function renderTray() {
   const d = drafts.get(curName());
   const tray = document.getElementById("tray");
   tray.hidden = !d || (!d.pins.size && !d.choices.size);
+  if (isMobileUA) { // 畳んでいる間 (penFold) は帯に『赤ペン N』を出す。赤ペンが空になったら畳みも解く
+    if (tray.hidden) penFold = false;
+    document.body.classList.toggle("pen", !tray.hidden && !penFold);
+    const dpen = document.getElementById("dpen"); dpen.hidden = !penFold; dpen.querySelector("b").textContent = d ? d.pins.size + d.choices.size : "";
+    placeNav();
+  } // スマホ: 赤ペン中は下の欄を赤ペン欄に入れ替える (送信欄と 2 段に積まない)
   scheduleMargin();
   const free = document.getElementById("free");
   if (free.value !== (d?.free ?? "")) free.value = d?.free ?? "";
@@ -1177,7 +1451,7 @@ document.getElementById("reply").addEventListener("click", (ev) => {
   if (pick) {
     const t = +pick.closest("table").dataset.ptbl;
     if (d.choices.get(t)?.letter === pick.dataset.pick) d.choices.delete(t);
-    else d.choices.set(t, { label: pick.closest("table").dataset.plabel, letter: pick.dataset.pick });
+    else { d.choices.set(t, { label: pick.closest("table").dataset.plabel, letter: pick.dataset.pick }); penFold = false; }
     return refresh();
   }
   const mm = ev.target.closest("pre.mermaid");
@@ -1187,7 +1461,7 @@ document.getElementById("reply").addEventListener("click", (ev) => {
   if (!t) return;
   const k = t.dataset.pin;
   if (d.pins.has(k)) d.pins.delete(k);
-  else d.pins.set(k, { anchor: t.dataset.anchor, quote: cut(textOf(t), 30), comment: "" });
+  else { d.pins.set(k, { anchor: t.dataset.anchor, quote: cut(textOf(t), 30), comment: "" }); penFold = false; } // 新しく付けたら畳んだ欄も開く
   refresh();
   const p = d.pins.get(k);
   if (p) requestAnimationFrame(() => { if (drafts.get(curName())?.pins.get(k) === p) pinNode(p, k, false).querySelector("textarea")?.focus(); });
@@ -1265,6 +1539,7 @@ document.getElementById("send").onclick = async () => {
 // チャット欄: ピン無しで自由文を送る。送り先は赤ペンと同じ (表示中 entry の name → server がその entry の terminal へ)。
 // focus:false = 端末タブへ切り替えず viewer に留まる。送信済みの履歴は持たない (2026-09-29 user: 再入力の用途が薄い)。
 const chat = document.getElementById("chat"), ctext = document.getElementById("ctext"), csend = document.getElementById("csend");
+if (isMobileUA) ctext.placeholder = "端末へ送る"; // ⌘+Enter はキーボードが無いので出さない
 let chipLabels = new Map(), chatBusy = false;
 // 送り先の固定: プロジェクト列の選択 (repo 小文字、"すべて" は "") → session key を localStorage "rmx.chat.pin" に。無ければ追従 (表示中の返事の端末)。
 // 固定中に送る entry = /history 一覧 (all、新しい順) でそのセッションの最新。表示中の返事が切り替わっても変わらない。
@@ -1318,7 +1593,7 @@ function renderChat() {
   loadMedia(to);
   loadNow(to);
   const lbl = to ? chipLabels.get(to.session) ?? `${to.repo || "?"} · ${to.session}` : pin;
-  document.getElementById("cto").textContent = lbl ? `${pin ? "📌 " : ""}→ ${lbl}` : "→ (送り先なし)";
+  document.getElementById("cto").textContent = (isMobileUA ? "" : "→ ") + (lbl ? `${pin ? "📌 " : ""}${lbl}` : "(送り先なし)"); // スマホは名前に幅を回す (左の ▲▼ と点が送り先の印)
   const why = !to ? (pin ? "固定先のセッションの返事が一覧に無い (送れない)" : "表示中の返事が無い (送れない)")
     : !to.terminal ? (pin ? "固定先は Orca / herdr 外の端末 (送れない)" : "この返事は Orca / herdr 外の端末 (送れない)") : "";
   document.getElementById("cwhy").textContent = why;
@@ -1329,11 +1604,25 @@ function renderChat() {
   // 各行 = 時刻 + 最新返事の冒頭。同じ repo の chip は時刻だけでは見分けられない (2026-09-29 user)
   // 時刻の左に下の一覧と同じ丸、時刻の色も状態で変える (作業中 = 明るく太字 / 黄 = 返事が要る / 緑 = 閉じてよい / 灰 = 静か・終了)。2026-10-25 user
   const row = (e) => { const st = e.live ? stOf(e).st : "dead"; return `<i class="${st}"></i><time class="${st}">${esc(hhmm(new Date(e.ts)))}</time><span>${esc(agentTag(e) + (e.head || ""))}</span>`; };
-  const shown = [...chipEntries.values()].filter((e) => e.live || showDead || e.session === pin).slice(0, 5);
+  // スマホ: 送り先の一覧は 1 回だけ出す。下の状態行に出していた物は一覧の行に載せる: 2 行目 = 依頼文の冒頭・裏の待ち・経過時間、行を押すと依頼文の全文 (もう一度押すと畳む)
+  const mobRow = (e) => {
+    const { st, bg } = e.live ? stOf(e) : { st: "dead" };
+    const sub = (e.perm ? `${e.perm.tool} 許可待ち` : e.asking ? askText(e) : bg ? "裏で待ち: " + bgSum(bg) : agentTag(e) + (e.head || "")) + (e.live && e.lastOutputAt ? ` · ${ago(e.lastOutputAt)}` : "");
+    const ask = openAsk.has(e.session) && (e.asking?.prompt ?? e.prompt);
+    return `<i class="${st}"></i><b>${esc(chipLabels.get(e.session) ?? (e.repo || "?"))}</b><time class="${st}">${esc(hhmm(new Date(e.ts)))}</time><span>${esc(sub)}</span>${ask ? `<span class="task">${esc(ask)}</span>` : ""}`;
+  };
+  const shown = [...chipEntries.values()].filter((e) => e.live || showDead || e.session === pin).slice(0, isMobileUA ? 12 : 5); // スマホは一覧がスクロールするので多めに出す (2 列では上の chip の代わり)
   // 許可待ちはプロジェクトの絞り込みと 5 件の枠に関係なく先頭に出す (別 repo の foyer の画面の許可待ちが見えなかった、2026-10-15)
   const perms = [...new Map(all.filter((e) => e.session && e.live && e.perm).map((e) => [e.session, e])).values()];
-  renderTstat([...perms, ...shown.filter((e) => e.live && !perms.some((p) => p.session === e.session))]);
-  let html = chipBtn("", !pin, "追従", "表示中の返事の端末へ送る") + shown.map((e) => chipBtn(e.session, e.session === pin, row(e), `送り先をここに固定: ${chipLabels.get(e.session)}`, true, e.repo)).join("");
+  renderTstat(isMobileUA ? perms : [...perms, ...shown.filter((e) => e.live && !perms.some((p) => p.session === e.session))]);
+  if (isMobileUA) { // 下の帯: 送り先の名前と状態の点、返事を待っているセッションの数 (閉じていても分かるように)
+    const sts = [...new Map([...perms, ...chipEntries.values()].filter((e) => e.live).map((e) => [e.session, stOf(e).st])).values()];
+    const wait = sts.filter((x) => x === "ng" || x === "wait" || x === "perm").length, run = sts.filter((x) => x === "busy" || x === "bg").length;
+    document.getElementById("dname").textContent = lbl ? (pin ? "📌 " : "") + lbl : "送り先なし"; // 幅が無いので矢印は付けない (点が送り先の印)
+    document.getElementById("ddot").className = to?.live ? stOf(to).st : "";
+    document.getElementById("dwait").innerHTML = (wait ? `<b>待ち </b>${wait}` : "") + (run ? `<span>${wait ? " / " : ""}動作中 ${run}</span>` : "");
+  }
+  let html = chipBtn("", !pin, "追従", "表示中の返事の端末へ送る") + shown.map((e) => chipBtn(e.session, e.session === pin, (isMobileUA ? mobRow : row)(e), `送り先をここに固定: ${chipLabels.get(e.session)}`, true, e.repo)).join("");
   if (pin && !chipLabels.has(pin)) html += chipBtn(pin, true, "固定中 (返事なし)", pin);
   if (html === cchipsHtml) return; // 毎 poll 描き直すと横スクロール位置が飛ぶ
   cchipsHtml = html;
@@ -1356,16 +1645,18 @@ function stOf(e) {
   const st = (st1 === "wait" || st1 === "idle") && e.end ? e.end : st1;
   return { st, wait, perm, bg };
 }
+const ago = (t) => { const m = Math.max(0, Math.floor((Date.now() - t) / 60000)); return m > 60 ? `${Math.floor(m / 60)} 時間` : `${m} 分`; }; // 最後の出力からの経過
+const askText = (e) => e.asking.waiting ? "待機中" : "依頼: " + e.asking.prompt.replace(/\s+/g, " ").slice(0, 60); // 返事待ちの依頼の 1 行 (起動直後で依頼が無ければ『待機中』)
+const bgSum = (bg) => [...bg.reduce((m, t) => m.set(t.type, (m.get(t.type) ?? 0) + 1), new Map()).entries()].map(([k, n]) => `${k} ${n}`).join(" "); // 裏で走っている物を種類ごとに数える ("shell 1 subagent 1")
 function renderTstat(list) {
   tstatList = list;
-  const ago = (t) => { const m = Math.max(0, Math.floor((Date.now() - t) / 60000)); return m > 60 ? `${Math.floor(m / 60)} 時間` : `${m} 分`; };
   const html = list.map((e) => {
     const { st, wait, perm, bg } = stOf(e);
     const stTitle = { perm: "許可待ち", wait: "入力待ち", busy: "作業中", idle: "静か", bg: "裏で待ち", ok: "閉じてよい", ng: "返事が要る" }[st];
-    const bgText = bg ? " · 裏で待ち: " + [...bg.reduce((m, t) => m.set(t.type, (m.get(t.type) ?? 0) + 1), new Map()).entries()].map(([k, n]) => `${k} ${n}`).join(" ") : "";
+    const bgText = bg ? " · 裏で待ち: " + bgSum(bg) : "";
     const ask = e.asking?.prompt ?? e.prompt; // 返事待ちの依頼、無ければ最新の返事を引き出した依頼
     if (perm) return `<div class="trow perm" data-s="${esc(e.session)}" style="--rc:${repoColor(e.repo)}" title="許可待ち"><i class="perm"></i><span>${esc(e.repo || "?")} · ${esc(perm.tool)} 許可待ち · ${esc(perm.detail)}</span><button data-approve="${esc(e.session)}" data-id="${esc(perm.id)}" title="許可する (y)">許可<sup>y</sup></button></div>`;
-    return `<div class="trow${st === "ng" || (wait && st !== "ok") ? " wait" : ""}" data-s="${esc(e.session)}" style="--rc:${repoColor(e.repo)}" title="${stTitle}${bg ? " · " + esc(bg.map((t) => t.description).join(" / ")) : ""} · 押すと依頼文を開き、この端末を送り先にする"><i class="${st}"></i><span>${esc(hhmm(new Date(e.ts)))} ${esc(e.repo || "?")}${esc(bgText)} · ${e.asking ? esc(e.asking.waiting ? "待機中" : "依頼: " + e.asking.prompt.replace(/\s+/g, " ").slice(0, 60)) : esc(e.head || "")}</span><time>${e.lastOutputAt ? ago(e.lastOutputAt) : ""}</time></div>` + (openAsk.has(e.session) && ask ? `<div class="task">${esc(ask)}</div>` : "");
+    return `<div class="trow${st === "ng" || (wait && st !== "ok") ? " wait" : ""}" data-s="${esc(e.session)}" style="--rc:${repoColor(e.repo)}" title="${stTitle}${bg ? " · " + esc(bg.map((t) => t.description).join(" / ")) : ""} · 押すと依頼文を開き、この端末を送り先にする"><i class="${st}"></i><span>${esc(hhmm(new Date(e.ts)))} ${esc(e.repo || "?")}${esc(bgText)} · ${e.asking ? esc(askText(e)) : esc(e.head || "")}</span><time>${e.lastOutputAt ? ago(e.lastOutputAt) : ""}</time></div>` + (openAsk.has(e.session) && ask ? `<div class="task">${esc(ask)}</div>` : "");
   }).join("");
   if (html === tstatHtml) return; // chip と同じ: 同じ内容なら書き直さない
   tstatHtml = html;
@@ -1394,7 +1685,12 @@ tstat.addEventListener("click", async (ev) => {
     b.disabled = false;
   }
 });
-cchips.addEventListener("click", (ev) => { const b = ev.target.closest("[data-s]"); if (b) pickChip(b.dataset.s); });
+cchips.addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-s]");
+  if (!b) return;
+  if (isMobileUA && b.dataset.s) openAsk.has(b.dataset.s) ? openAsk.delete(b.dataset.s) : openAsk.add(b.dataset.s); // スマホ: 行を押すと依頼文の全文も開く (状態行と同じ)
+  pickChip(b.dataset.s);
+});
 async function pickChip(s) {
   if (s) chatPins[REPO.toLowerCase()] = s; else delete chatPins[REPO.toLowerCase()];
   try { localStorage.setItem("rmx.chat.pin", JSON.stringify(chatPins)); } catch {}
@@ -1467,6 +1763,11 @@ addEventListener("dragover", (ev) => { if (draggedFiles(ev)) ev.preventDefault()
 addEventListener("drop", (ev) => { if (draggedFiles(ev)) ev.preventDefault(); });
 const droppedImages = (ev) => [...(ev.dataTransfer?.files ?? [])].filter(isMedia);
 ctext.addEventListener("drop", (ev) => addImages(droppedImages(ev), pending, renderImgs, document.getElementById("cmsg")));
+document.getElementById("pfold").onclick = () => { penFold = true; document.activeElement?.blur(); refresh(); };
+if (isMobileUA) document.getElementById("dpen").onclick = () => { penFold = false; refresh(); };
+const ffile = document.getElementById("ffile");
+document.getElementById("fattach").onclick = () => ffile.click();
+ffile.onchange = () => { addImages([...ffile.files].filter(isMedia), draftOf(curName()).imgs, refresh, document.getElementById("akmsg")); ffile.value = ""; };
 document.getElementById("free").addEventListener("drop", (ev) => addImages(droppedImages(ev), draftOf(curName()).imgs, refresh, document.getElementById("akmsg")));
 document.getElementById("cact").addEventListener("click", (ev) => { const b = ev.target.closest(".q"); if (b) sendText(b.dataset.t, false); });
 // モデル / エフォートのプルダウン。選ぶと server の /switch が、打つ直前に端末の今の会話・許可待ち・入力欄の書きかけを確かめてから `/model X` / `/effort Y` を打つ。
@@ -1477,9 +1778,12 @@ document.getElementById("cact").addEventListener("click", (ev) => { const b = ev
 const MODELS_DEFAULT = ["sonnet", "opus", "haiku", "fable"];
 const PICKS = { model: MODELS_DEFAULT, effort: ["low", "medium", "high", "xhigh", "max"] };
 const nowVal = { model: null, effort: null }; // 表示する今の値。候補に無ければ候補の先頭に足す
+// スマホ: 最下段を 1 行に収めるため、モデルは頭 3 文字、エフォートは頭文字で出す (送る値は元のまま、2026-11-13 user「fab, opu, son / h m xh」。[1m] の印は「ほぼ無用」で出さない)
+const EFFORT_ABBR = { low: "l", medium: "m", high: "h", xhigh: "xh", max: "max" };
+const pickAbbr = (c, x) => c === "effort" ? EFFORT_ABBR[x] ?? x : x.slice(0, 3);
 function fillPick(sel) {
   const c = sel.dataset.cmd, v = nowVal[c], l = PICKS[c];
-  sel.replaceChildren(sel.firstElementChild, ...(v && !l.includes(v) ? [v, ...l] : l).map((x) => new Option(x, x)));
+  sel.replaceChildren(sel.firstElementChild, ...(v && !l.includes(v) ? [v, ...l] : l).map((x) => new Option(isMobileUA ? pickAbbr(c, x) : x, x)));
   sel.value = v ?? ""; // 代入は change を出さないので打ち込みは走らない
 }
 async function switchTo(sel) {
@@ -1564,10 +1868,16 @@ ctext.addEventListener("keydown", (ev) => {
 sug.addEventListener("mousedown", (ev) => { const d = ev.target.closest("[data-i]"); if (d) { ev.preventDefault(); pickSug(+d.dataset.i); } });
 // 開閉は PC だけ localStorage "rmx.chat.open" に覚える (スマホは毎回畳んで始める)。狭い幅はバー全体 (#chead) が押せる
 document.getElementById("chead").onclick = (ev) => {
+  if (isMobileUA && document.body.classList.contains("chat-closed")) { document.body.classList.remove("chat-closed"); document.body.classList.add("to-open"); return; } // スマホ 1 列の帯: どこを押しても送り先の一覧まで開く
+  if (isMobileUA && !ev.target.closest("#ctoggle")) return void (document.documentElement.classList.contains("split") || document.body.classList.toggle("to-open")); // スマホ: 行 = 送り先の一覧の開閉、畳むのは右端の ▼ (2 列の時は一覧も送信欄も出したまま)
   if (!isNarrow() && !ev.target.closest("#ctoggle")) return;
   const closed = document.body.classList.toggle("chat-closed");
+  document.body.classList.remove("to-open");
   if (!isMobileUA) try { localStorage.setItem("rmx.chat.open", closed ? "0" : "1"); } catch {}
 };
+// スマホ: 下の帯の送り先を押すと送信欄が開く。送信を押しても入力欄の焦点を外さない (外れるとキーボードが引っ込み、定型キーが戻って並びが動く)
+document.getElementById("dto")?.addEventListener("click", () => { document.body.classList.remove("chat-closed"); document.body.classList.add("to-open"); }); // 送り先の一覧まで 1 回で開く (2026-11-13 user)
+if (isMobileUA) csend.addEventListener("mousedown", (ev) => ev.preventDefault());
 
 // セッション chip: 選択中プロジェクトの all (新しい順) で各セッションが最初に現れた entry = そのセッションの最新返事。並びも新しい順。
 // 同じ repo のセッションが 2 つ以上なら HH:MM を添えて見分ける。
@@ -1690,6 +2000,7 @@ document.getElementById("pside").onclick = () => {
   const left = document.documentElement.classList.toggle("proj-left");
   try { localStorage.setItem("rmx.side", left ? "left" : "right"); } catch {}
 };
+if (isMobileUA) document.addEventListener("click", (ev) => { if (!ev.composedPath().some((n) => n.id === "proj" || n.id === "ptoggle")) document.body.classList.add("proj-closed"); }); // スマホ: 重ねた一覧は外を押すと閉じる (『終了したものも表示』は押すと描き直されて DOM から外れるので、closest でなく通った経路で見る)
 renderFilter();
 
 // ＋ 新規: GET /worktrees の path を一覧にし、行を押したら即 POST /new (許可する cwd の判定は server だけ)。
@@ -1726,7 +2037,7 @@ async function openNew() {
     say.textContent = "";
   } catch (e) { say.textContent = e.message ?? String(e); }
 }
-document.getElementById("newbtn").onclick = (ev) => { ev.stopPropagation(); if (newpop.hidden) openNew(); else closeNew(); };
+document.getElementById("newbtn").onclick = (ev) => { ev.stopPropagation(); if (isMobileUA) document.body.classList.add("proj-closed"); if (newpop.hidden) openNew(); else closeNew(); };
 newpop.addEventListener("click", async (ev) => {
   ev.stopPropagation();
   const b = ev.target.closest("[data-cwd]");
