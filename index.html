@@ -97,9 +97,9 @@
   #tstat .trow { display: flex; gap: 8px; overflow: hidden; white-space: nowrap; cursor: pointer; border-left: 3px solid var(--rc, var(--line)); padding-left: 6px; }
   #tstat .trow span { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; }
   #tstat .trow.wait { color: inherit; font-weight: 700; }
-  /* 状態アイコン (文字でなく絵で。2026-09-29 user): 作業中 = 回るリング / 待ち = 目立つ点 / 静か = 薄い丸 */
+  /* 状態アイコン (文字でなく絵で。2026-09-29 user): 作業中 = 上だけ濃いリング / 待ち = 目立つ点 / 静か = 薄い丸。動かさない: 回転・明滅は止まっていても毎秒 60 回の描き直しになり、サイドバーに常駐させると Mac 全体の描画 (WindowServer) を詰まらせた (2026-11-13 実測 10 秒で 600 回) */
   #cchips .chip i, #tstat i { flex: none; width: 10px; height: 10px; margin-top: 4px; border-radius: 50%; box-sizing: border-box; }
-  #cchips .chip i.busy, #tstat i.busy { border: 2px solid var(--line); border-top-color: var(--fg); animation: tspin .8s linear infinite; }
+  #cchips .chip i.busy, #tstat i.busy { border: 2px solid var(--line); border-top-color: var(--fg); }
   #cchips .chip i.wait, #tstat i.wait { background: #e5a50a; box-shadow: 0 0 0 3px rgb(229 165 10 / .25); }
   #cchips .chip i.perm, #tstat i.perm { background: #e01b24; box-shadow: 0 0 0 3px rgb(224 27 36 / .25); }
   #tstat .trow.perm { color: inherit; font-weight: 700; }
@@ -107,11 +107,8 @@
   #cchips .chip i.idle, #tstat i.idle { border: 2px solid var(--line); }
   #cchips .chip i.ng, #tstat i.ng { background: #e5a50a; box-shadow: 0 0 0 3px rgb(229 165 10 / .25); } /* 返事が要る (終了: NG) = 入力待ちと同じ黄の点 */
   #cchips .chip i.ok, #tstat i.ok { background: #2ec27e; } /* 閉じてよい (終了: OK) = 緑の点、光らせない */
-  #cchips .chip i.bg, #tstat i.bg { border: 2px solid #e5a50a; animation: tblink 1.6s ease-in-out infinite; } /* 裏で待ち (shell / monitor / subagent が走っていて、終わると起きる) = 黄のリングがゆっくり明滅 */
-  @keyframes tblink { 50% { opacity: .25; } }
+  #cchips .chip i.bg, #tstat i.bg { border: 2px solid #e5a50a; } /* 裏で待ち (shell / monitor / subagent が走っていて、終わると起きる) = 黄のリング (中を塗らないので入力待ちの黄の点と見分けられる) */
   #tstat .task { white-space: pre-wrap; color: var(--fg); padding: 2px 6px 6px 15px; max-height: 40vh; overflow: auto; } /* 行を押すと開く依頼文の全文 */
-  @keyframes tspin { to { transform: rotate(360deg); } }
-  @media (prefers-reduced-motion: reduce) { #cchips .chip i.busy, #tstat i.busy { animation: none; border-top-color: var(--muted); } }
   #sug { border: 1px solid var(--line); border-radius: 6px; background: var(--panel); overflow: hidden; margin-bottom: 6px; }
   #sug div { padding: 3px 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
   #sug div.on { background: var(--bg); box-shadow: inset 2px 0 var(--red); }
