@@ -323,7 +323,8 @@ with sync_playwright() as p:
         g = pg.evaluate("({ over: document.documentElement.scrollWidth - innerWidth, chat: T.inView('#chat'), small: T.small(), name: Math.round(T.r('#cto')?.w ?? 0) })")
         open_sheet(pg)
         g2 = pg.evaluate("({ send: T.inView('#csend'), room: T.selRoom(), small: T.small(), over: document.documentElement.scrollWidth - innerWidth })")
-        check(f"{w}×{h}: 帯も開いた送信欄も横にはみ出さず画面内、送り先の名前 (alpha = 37px) が切れず、モデル名も切れない", g["over"] <= 0 and g["chat"] and not g["small"] and g["name"] >= 37 and g2["send"] and g2["over"] <= 0 and not g2["small"] and min(g2["room"]) >= 20, (g, g2))
+        # 最下段を 1 行にするのを優先し、狭い端末では送り先の名前が頭の数文字まで縮む (2026-11-13 user「省略すれば 1 行にできる」)
+        check(f"{w}×{h}: 帯も開いた送信欄も横にはみ出さず画面内、送り先の名前は頭 2 文字以上 (20px) 見え、モデル名も切れない", g["over"] <= 0 and g["chat"] and not g["small"] and g["name"] >= 20 and g2["send"] and g2["over"] <= 0 and not g2["small"] and min(g2["room"]) >= 20, (g, g2))
         pg.context.close()
     # 帯の送り先と、開いた送信欄の『▼ 送り先』は同じ幅・同じ位置 (開いて閉じる間に指を動かさない)
     for (w, h) in ((360, 860), (554, 690)):
@@ -332,6 +333,8 @@ with sync_playwright() as p:
         open_sheet(pg)
         c = pg.evaluate("T.r('#chead')"); shot(pg, f"2l-{w}-open")
         check(f"{w}×{h}: 送り先は帯でも送信欄でも同じ部品で、同じ幅・同じ位置", a and c and abs(a["l"] - c["l"]) <= 2 and abs(a["r"] - c["r"]) <= 2 and abs(a["t"] - c["t"]) <= 4, (a, c))
+        g = pg.evaluate("({ at: T.r('#cattach'), sel: T.r('#cact .cpick'), send: T.r('#csend'), txt: [...document.querySelectorAll('#cact .cpick')].map((e) => e.selectedOptions[0]?.text) })")
+        check(f"{w}×{h}: 最下段は 📎・モデル・エフォート・送り先・送信の 1 行 (モデルとエフォートは略す)", all(abs(g[k]["t"] - c["t"]) <= 2 for k in ("at", "sel", "send")) and g["txt"] == ["fab1m", "m"], g)
         pg.context.close()
     # 閉じた Fold の実寸 (Soul: 554×690): 送り先・文脈量・▼ がモデル・エフォートと送信の間に 1 行で入る
     pg = page(b, 554, 690)

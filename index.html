@@ -377,17 +377,22 @@
   html.mob :is(#cbar, #dock) > #chead > #ddot { grid-area: d; }
   html.mob :is(#cbar, #dock) > #chead > #cto { grid-area: n; font-size: 13px; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   html.mob :is(#cbar, #dock) > #chead > #cctx { grid-area: c; font-size: 11px; line-height: 1.2; overflow: hidden; text-overflow: ellipsis; }
-  html.mob :is(#cbar, #dock) > #chead > #dwait { grid-area: w; font-size: 11px; line-height: 1.2; }
+  html.mob :is(#cbar, #dock) > #chead > #dwait { grid-area: w; font-size: 11px; line-height: 1.2; white-space: nowrap; }
   html.mob :is(#cbar, #dock) > #chead > #dwait::after { content: none; }
   html.mob :is(#cbar, #dock) > #chead > :is(#cctx, #dwait):empty { display: none; }
   html.mob #cbar > #csend { order: 1; margin-left: 0; }
-  /* 1 列: 帯の送り先と、開いた送信欄の『▼ 送り先』を同じ幅・同じ位置にそろえる (開いて閉じる間に指を動かさない、2026-11-13 user)。
-     どちらも行の右寄せで、右端のボタン (☰ と送信) の幅を 66px にそろえ、送り先は行の 40% */
-  html.mob:not(.split) #cbar > #chead { flex: 0 1 40%; }
-  html.mob:not(.split) #cbar > #csend { flex: none; width: 66px; padding: 0; }
-  html.mob:not(.split) #dock > #chead { flex: 0 1 40%; margin-left: auto; }
+  /* 1 列: 送り先の部品は帯でも送信欄の最下段でも同じ幅・同じ位置 (開いて閉じる間に指を動かさない、2026-11-13 user)。
+     最下段の他の部品の幅を決め打ちし (📎 44 / モデル 68 / エフォート 44 / 送信 56)、送り先は残り全部。帯も右端の ☰ を 56 にして、送り先を同じ幅で右寄せ。
+     モデルとエフォートは略して (fab / opu / son、h / m / xh) 幅 360 でも 1 行に入れる */
+  html.mob:not(.split) :is(#cbar, #dock) { --g: 6px; gap: var(--g); flex-wrap: nowrap; }
+  @media (max-width: 400px) { html.mob:not(.split) :is(#cbar, #dock) { --g: 4px; } }
+  html.mob:not(.split) :is(#cbar, #dock) > #chead { flex: 0 0 calc(100% - 212px - 4 * var(--g)); }
+  html.mob:not(.split) #dock > #chead { flex-shrink: 1; margin-left: auto; } /* ☰ の一覧を開いて ＋ が出た間だけ縮む (一覧の幕の下) */
   html.mob:not(.split) #dock > #dto { display: none; }
-  html.mob:not(.split) #dock > #ptoggle { width: 66px; }
+  html.mob:not(.split) #cbar > .cpick[data-cmd=model] { flex: 0 0 68px; }
+  html.mob:not(.split) #cbar > .cpick[data-cmd=effort] { flex: 0 0 44px; }
+  html.mob:not(.split) #cbar > #cattach { flex: 0 0 44px; }
+  html.mob:not(.split) :is(#cbar > #csend, #dock > #ptoggle) { flex: none; width: 56px; padding: 0; }
   /* 案表 (『これにする』が付く表) は行ごとのカード。8 列の表は幅 659px で、推奨 (Tier) と理由が横スクロールの先にあった。
      DOM は表のまま (ピン・採用の処理を変えない)。役割の class と data-th は decorate の cardify が付ける。他の表は横スクロールのまま */
   html.mob #reply table.cards, html.mob #reply table.cards tbody { display: block; }
@@ -1591,7 +1596,7 @@ function renderChat() {
   loadMedia(to);
   loadNow(to);
   const lbl = to ? chipLabels.get(to.session) ?? `${to.repo || "?"} · ${to.session}` : pin;
-  document.getElementById("cto").textContent = lbl ? `${pin ? "📌 " : ""}→ ${lbl}` : "→ (送り先なし)";
+  document.getElementById("cto").textContent = (isMobileUA ? "" : "→ ") + (lbl ? `${pin ? "📌 " : ""}${lbl}` : "(送り先なし)"); // スマホは名前に幅を回す (左の ▲▼ と点が送り先の印)
   const why = !to ? (pin ? "固定先のセッションの返事が一覧に無い (送れない)" : "表示中の返事が無い (送れない)")
     : !to.terminal ? (pin ? "固定先は Orca / herdr 外の端末 (送れない)" : "この返事は Orca / herdr 外の端末 (送れない)") : "";
   document.getElementById("cwhy").textContent = why;
@@ -1776,9 +1781,12 @@ document.getElementById("cact").addEventListener("click", (ev) => { const b = ev
 const MODELS_DEFAULT = ["sonnet", "opus", "haiku", "fable"];
 const PICKS = { model: MODELS_DEFAULT, effort: ["low", "medium", "high", "xhigh", "max"] };
 const nowVal = { model: null, effort: null }; // 表示する今の値。候補に無ければ候補の先頭に足す
+// スマホ: 最下段を 1 行に収めるため、モデルは頭 3 文字 (+ [1m] なら 1m)、エフォートは頭文字で出す (送る値は元のまま、2026-11-13 user「fab, opu, son / h m xh」)
+const EFFORT_ABBR = { low: "l", medium: "m", high: "h", xhigh: "xh", max: "max" };
+const pickAbbr = (c, x) => c === "effort" ? EFFORT_ABBR[x] ?? x : x.replace(/^([a-z]{3})[a-z]*(?:\[(\w+)\])?.*$/i, (_, h, w) => h + (w ?? ""));
 function fillPick(sel) {
   const c = sel.dataset.cmd, v = nowVal[c], l = PICKS[c];
-  sel.replaceChildren(sel.firstElementChild, ...(v && !l.includes(v) ? [v, ...l] : l).map((x) => new Option(x, x)));
+  sel.replaceChildren(sel.firstElementChild, ...(v && !l.includes(v) ? [v, ...l] : l).map((x) => new Option(isMobileUA ? pickAbbr(c, x) : x, x)));
   sel.value = v ?? ""; // 代入は change を出さないので打ち込みは走らない
 }
 async function switchTo(sel) {
