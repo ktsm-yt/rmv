@@ -312,6 +312,7 @@
   #free { min-height: calc(2lh + 8px); } /* 全体へのひとことは空でも 2 行ぶん */
   #tray .row { display: flex; gap: 8px; align-items: center; }
   #akmsg { flex: 1; color: var(--muted); }
+  #fattach { display: none; } html.narrow #fattach { display: block; } /* 赤ペン欄の 📎: 送信欄と同じく細い幅とスマホだけ (スマホは貼り付けもドラッグも無く、写真を足せなかった、2026-11-13 user) */
   #tray button { font: inherit; color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 2px 10px; cursor: pointer; }
   #tray #send { background: var(--red); border-color: var(--red); color: #fff; }
   #tray button:disabled { opacity: .35; cursor: default; }
@@ -517,8 +518,8 @@ function applyProjDefault() {
 }
 // スマホで左に返事・右に送信欄の 2 列にする幅 (html.split)。Fold を開いた幅 (実機の画面から約 630px) に合わせた仮の値で、変えるのはここだけ
 const MOB_SPLIT_MIN = 600;
-// 形も見る: 閉じた Fold は端末の『画面のズーム』次第で幅 600 を超え、細長いのに 2 列になった (2026-11-13 user)。
-// 開いた画面は縦横比 約 0.9、閉じた画面は約 0.45。screen は端末の寸法なので、キーボードが出ても変わらない
+// 形も見る: 幅 600 以上でも縦に細長い画面は 2 列にしない。screen は端末の寸法なので、キーボードが出ても変わらない
+// 実測 (2026-11-13、Fold 実機・Soul): 閉じた画面は幅 554・screen 555x877 (縦横比 0.63) で、1 列になるのは幅 600 未満だから。この縦横比の条件は閉じた Fold には効いていない
 const MOB_SPLIT_RATIO = 0.6;
 function applyWidth(force) {
   const h = document.documentElement.classList, w = pageWidth(), wide = h.contains("wide"), split = isMobileUA && w >= MOB_SPLIT_MIN && screen.width / screen.height >= MOB_SPLIT_RATIO;
@@ -590,7 +591,7 @@ if (isMobileUA && window.visualViewport) {
     <div id="pins"></div>
     <textarea id="free" rows="2" placeholder="全体へのひとこと (任意)"></textarea>
     <div id="fimgs" hidden></div>
-    <div class="row"><span id="akmsg"></span><button id="copy">コピー</button><button id="send">送信</button></div>
+    <div class="row"><button id="fattach" title="写真・動画を選んで添付">📎</button><input id="ffile" type="file" accept="image/*,video/*" multiple hidden><span id="akmsg"></span><button id="copy">コピー</button><button id="send">送信</button></div>
   </div>
 </main>
 <aside id="chat">
@@ -1717,6 +1718,9 @@ addEventListener("dragover", (ev) => { if (draggedFiles(ev)) ev.preventDefault()
 addEventListener("drop", (ev) => { if (draggedFiles(ev)) ev.preventDefault(); });
 const droppedImages = (ev) => [...(ev.dataTransfer?.files ?? [])].filter(isMedia);
 ctext.addEventListener("drop", (ev) => addImages(droppedImages(ev), pending, renderImgs, document.getElementById("cmsg")));
+const ffile = document.getElementById("ffile");
+document.getElementById("fattach").onclick = () => ffile.click();
+ffile.onchange = () => { addImages([...ffile.files].filter(isMedia), draftOf(curName()).imgs, refresh, document.getElementById("akmsg")); ffile.value = ""; };
 document.getElementById("free").addEventListener("drop", (ev) => addImages(droppedImages(ev), draftOf(curName()).imgs, refresh, document.getElementById("akmsg")));
 document.getElementById("cact").addEventListener("click", (ev) => { const b = ev.target.closest(".q"); if (b) sendText(b.dataset.t, false); });
 // モデル / エフォートのプルダウン。選ぶと server の /switch が、打つ直前に端末の今の会話・許可待ち・入力欄の書きかけを確かめてから `/model X` / `/effort Y` を打つ。
