@@ -414,15 +414,6 @@ with sync_playwright() as p:
             check(f"{w}×420 で入力欄に焦点: 右の列は 送り先 1 行・定型キー・入力欄 (60px 以上)・送信", g["to"] and g["keys"] >= 5 and g["chips"] is None and (g["h"] or 0) >= 60 and g["send"], g)
             if w == 820: pg.evaluate("T.toTop('#reply table[data-ptbl]')"); pg.wait_for_timeout(150); shot(pg, "3c-open-keyboard")
         pg.context.close()
-    # 追加: 『PC 版サイト』で開くと viewport の指定が無視され、閉じた Fold でも幅 980 で描かれる (実機の Soul: inner 980 / screen 555)。端末の画面が狭ければ 1 列
-    pg = page(b, 980, 1220, init="Object.defineProperty(screen, 'width', { get: () => 555 }); Object.defineProperty(screen, 'height', { get: () => 877 });")
-    check("幅 980 で描かれても端末の画面が 555 なら 2 列にしない", not pg.evaluate("T.SIDE()"), pg.evaluate("[innerWidth, screen.width]"))
-    pg.context.close()
-    # 追加: Soul の『PC 版サイト』は UA が PC の形 (UA-CH は mobile) で幅 980 に描く。画面 555 に合う倍率を掛け、普通のスマホと同じ幅で並べる (字が小さく右が空いていた、2026-11-15)
-    pg = page(b, 980, 1220, ua="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36", init="Object.defineProperty(navigator, 'userAgentData', { get: () => ({ mobile: true }) }); Object.defineProperty(screen, 'width', { get: () => 555 }); Object.defineProperty(screen, 'height', { get: () => 877 });")
-    g = pg.evaluate("({ z: +document.documentElement.style.zoom, w: pageWidth(), mob: document.documentElement.classList.contains('mob'), side: T.SIDE() })")
-    check("PC 版サイトの幅 980 / 画面 555: 倍率 1.77 を掛けて幅 555 相当の 1 列で並ぶ", g["mob"] and abs(g["z"] - 1.77) < 0.01 and abs(g["w"] - 555) < 3 and not g["side"], g)
-    pg.context.close()
     # 追加: Waterfox は閉じた Fold を幅 624 で描く (画面の倍率を 2 で扱う、2026-11-14 実測)。600 の境目では 2 列になっていた
     pg = page(b, 624, 816)
     check("幅 624 (Waterfox の閉じた Fold) は 1 列", not pg.evaluate("T.SIDE()"), pg.evaluate("[innerWidth, screen.width]"))

@@ -542,8 +542,8 @@
 <body>
 <script>
 // 描画前に列の開閉を決める (ちらつき防止)。狭い幅 (< 700px) とスマホは畳む、広い幅は localStorage "rmx.projR" の選択 (既定は畳む)。幅が変わった時も module 側がこれを呼ぶ
-// スマホ (mobile UA) は幅に関係なく狭い幅と同じ並びにする。ブラウザの「PC 版サイト」で UA が desktop になれば戻る。CSS 側は html.narrow
-const isMobileUA = navigator.userAgentData?.mobile || /Android|iPhone|iPad|Mobile/.test(navigator.userAgent);
+// スマホ (mobile UA) は幅に関係なく狭い幅と同じ並びにする。CSS 側は html.narrow。対応は Firefox 系・Chromium 系のスマホ表示だけ (『PC 版サイト』表示の Soul 向けの直しは 2026-11-15 に外した、user「firefox, chromium 系だけ対応にする」)
+const isMobileUA = /Android|iPhone|iPad|Mobile/.test(navigator.userAgent);
 const isNarrow = () => document.documentElement.classList.contains("narrow");
 // スマホだけの並び・大きさは html.mob で分ける。html.narrow は PC の細い幅 (サイドパネル) と共用なので、スマホ用の直しを載せると PC も変わる (2026-11-13 user)
 document.documentElement.classList.toggle("mob", !!isMobileUA);
@@ -565,22 +565,8 @@ function applyProjDefault() {
 // 600 では Waterfox の閉じた画面が 2 列になっていたので、間の 720 にする
 // ponytail: 端末の表示サイズ設定で倍率が変わると幅も動く。閉じた画面が 720 を超える設定にしたら、端末の画素数 (screen.width × devicePixelRatio) で判定する形に変える
 const MOB_SPLIT_MIN = 720;
-// 幅は端末の画面 (screen.width) でも測り、狭い方を使う。ブラウザが『PC 版サイト』で開くと viewport の指定が無視され、
-// 閉じた Fold (screen 555) でも幅 980 として描いて 2 列になっていた (2026-11-13、Fold 実機の Soul で実測: inner 980 / screen 555 / 縮小 0.57)
-// 『PC 版サイト』のスマホ (Soul: UA は PC の形、UA-CH は mobile) は幅 980 で描いて画面に縮めるので、字が小さく右が空く (2026-11-15 user、Fold 実機: inner 980 / screen 555 / 縮小 0.57)。
-// 画面の幅に合う倍率を html に掛けて普通のスマホ表示と同じ大きさにする。覚えない。Ctrl +/- で倍率を決めてある時は掛けない
-const pcSite = isMobileUA && !/Android|iPhone|iPad|Mobile/.test(navigator.userAgent);
-function fitPcSite() {
-  let mine = 0;
-  try { mine = +localStorage.getItem("rmx.zoom") || 0; } catch {}
-  if (!pcSite || mine) return;
-  const z = Math.max(1, Math.round(innerWidth / screen.width * 100) / 100);
-  document.documentElement.style.zoom = z === 1 ? "" : z;
-  document.documentElement.style.setProperty("--z", z);
-}
 function applyWidth(force) {
-  fitPcSite();
-  const h = document.documentElement.classList, w = pageWidth(), wide = h.contains("wide"), split = isMobileUA && Math.min(w, screen.width) >= MOB_SPLIT_MIN;
+  const h = document.documentElement.classList, w = pageWidth(), wide = h.contains("wide"), split = isMobileUA && w >= MOB_SPLIT_MIN;
   h.toggle("wide", !isMobileUA && w >= 900); // スマホは幅が広くても PC の 3 列にしない (並びは html.mob の規則だけで決める)
   h.toggle("xs", isMobileUA || w < 600); // スマホは 2 列の時も余白を狭い幅と同じに詰める
   if (split !== h.contains("split")) { // Fold の開閉: 2 列では送信欄を出したまま、1 列に戻ったら下の帯に畳む
@@ -628,14 +614,13 @@ if (isMobileUA && window.visualViewport) {
   // html.kbd = キーボードが出ている: 欄に焦点があり、見えている高さがこの幅で見た最大より 120px 以上低い (アドレスバーの出入りは 60px 前後)。
   // 焦点 (:focus) だけで並びを変えると、送信や 📎 を押す指で焦点が外れた瞬間に並びが動く。高さで見れば、戻るボタンでキーボードだけ閉じた時にも元に戻る
   // ピンチで拡大すると vv.height は倍率の分だけ縮む。そのまま使うと画面の高さが縮み、下の帯が画面の途中に浮いた (2026-11-15 user)。
-  // 拡大していない時の倍率 (その幅で見た最小。普通は 1、Soul の PC 版表示は 0.57) からの拡大分を掛け戻し、キーボードとアドレスバーの分だけを拾う。幅は拡大で動かない innerWidth で見る
-  let maxH = 0, lastW = 0, baseScale = 1;
+  // 拡大分 (vv.scale) を掛け戻し、キーボードとアドレスバーの分だけを拾う。幅は拡大で動かない innerWidth で見る
+  let maxH = 0, lastW = 0;
   const fit = () => {
     const vv = visualViewport;
-    if (innerWidth !== lastW) { lastW = innerWidth; maxH = 0; baseScale = vv.scale; }
-    baseScale = Math.min(baseScale, vv.scale);
-    document.documentElement.classList.toggle("zoomed", vv.scale > baseScale * 1.02);
-    const h = vv.height * vv.scale / baseScale;
+    if (innerWidth !== lastW) { lastW = innerWidth; maxH = 0; }
+    document.documentElement.classList.toggle("zoomed", vv.scale > 1.02);
+    const h = vv.height * vv.scale;
     maxH = Math.max(maxH, h);
     const typing = !!document.activeElement?.matches?.("textarea, input");
     document.documentElement.classList.toggle("kbd", h < maxH - 120 && typing);
@@ -1105,7 +1090,7 @@ if (isMobileUA) {
   }, { passive: true });
   document.addEventListener("touchmove", (ev) => {
     if (!pinch || ev.touches.length !== 2) return;
-    if (ev.cancelable) ev.preventDefault(); // Soul の PC 版表示は touch-action を無視してページごと拡大した (2026-11-15 user の録画)
+    if (ev.cancelable) ev.preventDefault(); // touch-action が効かないブラウザでもページごと拡大させない (Soul で実際に効かなかった、2026-11-15)
     pinch.v = pinch.rf * dist(ev) / pinch.d;
     if (!frame) frame = requestAnimationFrame(() => { frame = 0; if (pinch) setRf(pinch.v); mainEl.scrollTop = pinch ? pinch.at * mainEl.scrollHeight : mainEl.scrollTop; });
   }, { passive: false }); // 拡大を止めるため preventDefault できる形で受ける
