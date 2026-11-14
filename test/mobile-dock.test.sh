@@ -389,6 +389,11 @@ with sync_playwright() as p:
     pg = page(b, 980, 1220, init="Object.defineProperty(screen, 'width', { get: () => 555 }); Object.defineProperty(screen, 'height', { get: () => 877 });")
     check("幅 980 で描かれても端末の画面が 555 なら 2 列にしない", not pg.evaluate("T.SIDE()"), pg.evaluate("[innerWidth, screen.width]"))
     pg.context.close()
+    # 追加: Soul の『PC 版サイト』は UA が PC の形 (UA-CH は mobile) で幅 980 に描く。画面 555 に合う倍率を掛け、普通のスマホと同じ幅で並べる (字が小さく右が空いていた、2026-11-15)
+    pg = page(b, 980, 1220, ua="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36", init="Object.defineProperty(navigator, 'userAgentData', { get: () => ({ mobile: true }) }); Object.defineProperty(screen, 'width', { get: () => 555 }); Object.defineProperty(screen, 'height', { get: () => 877 });")
+    g = pg.evaluate("({ z: +document.documentElement.style.zoom, w: pageWidth(), mob: document.documentElement.classList.contains('mob'), side: T.SIDE() })")
+    check("PC 版サイトの幅 980 / 画面 555: 倍率 1.77 を掛けて幅 555 相当の 1 列で並ぶ", g["mob"] and abs(g["z"] - 1.77) < 0.01 and abs(g["w"] - 555) < 3 and not g["side"], g)
+    pg.context.close()
     # 追加: Waterfox は閉じた Fold を幅 624 で描く (画面の倍率を 2 で扱う、2026-11-14 実測)。600 の境目では 2 列になっていた
     pg = page(b, 624, 816)
     check("幅 624 (Waterfox の閉じた Fold) は 1 列", not pg.evaluate("T.SIDE()"), pg.evaluate("[innerWidth, screen.width]"))

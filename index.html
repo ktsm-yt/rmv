@@ -391,6 +391,9 @@
   html.mob:not(.split) #cbar > .cpick[data-cmd=model] { flex: 0 0 56px; }
   html.mob:not(.split) #cbar > .cpick[data-cmd=effort] { flex: 0 0 44px; }
   html.mob:not(.split) #cbar > #cattach { flex: 0 0 44px; }
+  /* 開くと ◀ ▶ (左右の切り替え) の位置にモデル・エフォートが入れ替わり、📎 は帯で空いている 3 つ目の位置に置く。📎 を左端に置くと ◀ と入れ替わり、開閉のたびに位置が変わって見えた (2026-11-15 user) */
+  html.mob:not(.split) #cbar > .cpick[data-cmd=model] { order: -3; }
+  html.mob:not(.split) #cbar > .cpick[data-cmd=effort] { order: -2; }
   html.mob:not(.split) :is(#cbar > #csend, #dock > #ptoggle) { flex: none; width: 56px; padding: 0; }
   /* 案表 (『これにする』が付く表) は行ごとのカード。8 列の表は幅 659px で、推奨 (Tier) と理由が横スクロールの先にあった。
      DOM は表のまま (ピン・採用の処理を変えない)。役割の class と data-th は decorate の cardify が付ける。他の表は横スクロールのまま */
@@ -558,7 +561,19 @@ function applyProjDefault() {
 const MOB_SPLIT_MIN = 720;
 // 幅は端末の画面 (screen.width) でも測り、狭い方を使う。ブラウザが『PC 版サイト』で開くと viewport の指定が無視され、
 // 閉じた Fold (screen 555) でも幅 980 として描いて 2 列になっていた (2026-11-13、Fold 実機の Soul で実測: inner 980 / screen 555 / 縮小 0.57)
+// 『PC 版サイト』のスマホ (Soul: UA は PC の形、UA-CH は mobile) は幅 980 で描いて画面に縮めるので、字が小さく右が空く (2026-11-15 user、Fold 実機: inner 980 / screen 555 / 縮小 0.57)。
+// 画面の幅に合う倍率を html に掛けて普通のスマホ表示と同じ大きさにする。覚えない。Ctrl +/- で倍率を決めてある時は掛けない
+const pcSite = isMobileUA && !/Android|iPhone|iPad|Mobile/.test(navigator.userAgent);
+function fitPcSite() {
+  let mine = 0;
+  try { mine = +localStorage.getItem("rmx.zoom") || 0; } catch {}
+  if (!pcSite || mine) return;
+  const z = Math.max(1, Math.round(innerWidth / screen.width * 100) / 100);
+  document.documentElement.style.zoom = z === 1 ? "" : z;
+  document.documentElement.style.setProperty("--z", z);
+}
 function applyWidth(force) {
+  fitPcSite();
   const h = document.documentElement.classList, w = pageWidth(), wide = h.contains("wide"), split = isMobileUA && Math.min(w, screen.width) >= MOB_SPLIT_MIN;
   h.toggle("wide", !isMobileUA && w >= 900); // スマホは幅が広くても PC の 3 列にしない (並びは html.mob の規則だけで決める)
   h.toggle("xs", isMobileUA || w < 600); // スマホは 2 列の時も余白を狭い幅と同じに詰める
