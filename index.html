@@ -567,6 +567,15 @@ function applyWidth(force) {
   }
   if (force || isNarrow() !== (isMobileUA || w < 700)) applyProjDefault();
   if (wide !== h.contains("wide")) document.dispatchEvent(new Event("rmx-wide"));
+  if (location.hash.includes("dbg")) sendDbg(); // 幅が変わるたび (Fold の開閉を含む) 値を残す
+}
+// #dbg 付きで開いた時だけ、幅の判定に使った値をサーバーの state/dbg.jsonl へ送る。Soul は外から覗けないので画面の側から送らせる (2026-11-14)
+function sendDbg() {
+  const vv = window.visualViewport, mq = (q) => matchMedia(q).matches;
+  const v = { inner: [innerWidth, innerHeight], outer: [outerWidth, outerHeight], screen: [screen.width, screen.height], avail: [screen.availWidth, screen.availHeight],
+    vv: vv && [vv.width, vv.height, vv.scale], dpr: devicePixelRatio, zoom: document.documentElement.style.zoom || "", page: pageWidth(), orient: screen.orientation?.type,
+    dw555: mq("(max-device-width: 600px)"), cls: document.documentElement.className };
+  fetch("/dbg", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(v) }).catch(() => {});
 }
 applyWidth(true);
 addEventListener("resize", () => applyWidth());

@@ -778,6 +778,18 @@ async function movedPane(meta: { session_id?: unknown; herdr_pane?: unknown; her
 // /send の本体には手を入れず opt だけ足した: 送り先が決まるのも打ち始めるのも /send の中なので、差し替えの抑止と打つ直前の確認はここからしか差し込めない
 // check は送り先が決まった後 (herdr の pane の追跡・Orca の端末の解決の後)、打つ直前に呼ぶ。Response を返したらそれを返して何も打たない
 type SendTarget = { meta: Record<string, unknown>; pane: string | null; sock: string | null; handle: string | null };
+// POST /dbg {…}: 画面を #dbg 付きで開いた時、幅の判定に使う値を state/dbg.jsonl に 1 行足す。
+// Soul (Android) は WebView のデバッグ口を開けておらず、外から値を読めないので、画面の側から送らせる (2026-11-14 Fold の閉じた画面で 2 列になる件)
+async function dbg(req: Request): Promise<Response> {
+  if (!ORIGINS.has(req.headers.get("origin") ?? "")) return new Response("forbidden origin", { status: 403 });
+  const t = await req.text();
+  let v: unknown;
+  try { v = JSON.parse(t); } catch { return new Response("bad json", { status: 400 }); }
+  if (t.length > 4000) return new Response("too long", { status: 400 });
+  await appendFile(`${STATE}/dbg.jsonl`, JSON.stringify({ ts: new Date().toISOString(), ua: req.headers.get("user-agent"), v }) + "\n");
+  return new Response(null, { status: 204 });
+}
+
 async function send(req: Request, opt: { exact?: boolean; check?: (t: SendTarget) => Promise<Response | null> } = {}): Promise<Response> {
   if (!ORIGINS.has(req.headers.get("origin") ?? "")) return new Response("forbidden origin", { status: 403 });
   const body = await req.json().catch(() => null);
@@ -807,6 +819,10 @@ async function send(req: Request, opt: { exact?: boolean; check?: (t: SendTarget
   }
   // herdr pane がある時、orca の端末は焦点を戻す先 (herdr を載せている Orca タブ) としてだけ使う。Orca 無しの herdr だけの entry は handle なし (焦点は動かさない)
   const handle = pane ? meta.terminal || null : await resolveTerminal(meta, opt.exact === true);
+  // 誤送信の調べ用: どの行から、どの pane / 端末へ送ったかを 1 行残す (2026-11-14 user: 新しいセッションへの初回が別のセッションに届いた。記録が無く原因を追えなかった)
+  // ponytail: 切り詰めない。上限 = 1 送信 300 バイト程度で、1 日数百回でも年に数十 MB。重くなったら日付で分ける
+  const asked = await metaOf(name);
+  await appendFile(`${STATE}/send.jsonl`, JSON.stringify({ ts: new Date().toISOString(), name, sid: asked?.session_id ?? null, recPane: asked ? herdrPaneOf(asked) : null, recTerm: asked?.terminal ?? null, sid2: meta.session_id ?? null, pane, handle, exact: opt.exact === true }) + "\n").catch(() => {});
   if (!pane && !handle) return new Response(`terminal closed: 元の端末は閉じられ、同じフォルダ (${meta.cwd ?? ""}) の端末も無い`, { status: 409 });
   if (opt.check) { const why = await opt.check({ meta, pane, sock, handle: handle || null }); if (why) return why; }
   // 本文と Enter を分けて送る: `--enter` は Claude 端末だと「turn が始まったか」を最大 8 秒観察してから戻る
@@ -1247,6 +1263,7 @@ Bun.serve({
       return new Response(r.body, { status: r.status, statusText: r.statusText, headers });
     }
     if (pathname === "/send" && req.method === "POST") return send(req);
+    if (pathname === "/dbg" && req.method === "POST") return dbg(req);
     if (pathname === "/switch" && req.method === "POST") return switchTo(req);
     if (pathname === "/approve" && req.method === "POST") return approve(req);
     if (pathname === "/paste" && req.method === "POST") return paste(req);
