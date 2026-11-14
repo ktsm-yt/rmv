@@ -621,13 +621,17 @@ if (isMobileUA && window.visualViewport) {
   // キーボードが出て高さが縮んだ後、書いている欄 (赤ペンのひとこと・送信欄) が下の欄の中で隠れていたら見える所へ送る (2026-11-13 user)
   // html.kbd = キーボードが出ている: 欄に焦点があり、見えている高さがこの幅で見た最大より 120px 以上低い (アドレスバーの出入りは 60px 前後)。
   // 焦点 (:focus) だけで並びを変えると、送信や 📎 を押す指で焦点が外れた瞬間に並びが動く。高さで見れば、戻るボタンでキーボードだけ閉じた時にも元に戻る
-  let maxH = 0, lastW = 0;
+  // ピンチで拡大すると vv.height は倍率の分だけ縮む。そのまま使うと画面の高さが縮み、下の帯が画面の途中に浮いた (2026-11-15 user)。
+  // 拡大していない時の倍率 (その幅で見た最小。普通は 1、Soul の PC 版表示は 0.57) からの拡大分を掛け戻し、キーボードとアドレスバーの分だけを拾う。幅は拡大で動かない innerWidth で見る
+  let maxH = 0, lastW = 0, baseScale = 1;
   const fit = () => {
     const vv = visualViewport;
-    if (vv.width !== lastW) { lastW = vv.width; maxH = 0; }
-    maxH = Math.max(maxH, vv.height);
-    document.documentElement.classList.toggle("kbd", vv.height < maxH - 120 && !!document.activeElement?.matches?.("textarea, input"));
-    document.documentElement.style.setProperty("--vvh", `${visualViewport.height}px`);
+    if (innerWidth !== lastW) { lastW = innerWidth; maxH = 0; baseScale = vv.scale; }
+    baseScale = Math.min(baseScale, vv.scale);
+    const h = vv.height * vv.scale / baseScale;
+    maxH = Math.max(maxH, h);
+    document.documentElement.classList.toggle("kbd", h < maxH - 120 && !!document.activeElement?.matches?.("textarea, input"));
+    document.documentElement.style.setProperty("--vvh", `${h}px`);
     requestAnimationFrame(() => { const a = document.activeElement; if (a?.matches?.("textarea, input") && a.closest("#chat")) { a.closest("#tray")?.querySelector(".row")?.scrollIntoView({ block: "nearest" }); a.scrollIntoView({ block: "nearest" }); } }); // 赤ペン欄は欄の下の『コピー / 送信』も見せる (欄だけ送るとボタンがキーボードの裏に残った、2026-11-13 user)。狭くて両方入らない時は書いている欄を優先
   };
   visualViewport.addEventListener("resize", fit);
