@@ -233,15 +233,12 @@ with sync_playwright() as p:
     g = pg.evaluate("T.r('#chat')")
     check("図を描く間の入れ物があっても下の帯は下端のまま", g and g["b"] >= 850, g)
     pg.evaluate("document.getElementById('dmmg999').remove()")
-    # 縮む幅は Waterfox の 4 割 (340) と Soul の約 100px (760) の 2 通り。0.25 秒より長く続いた縮みは反映する
-    for low in (340, 760):
-        pg.evaluate(f"Object.defineProperty(visualViewport, 'height', {{ configurable: true, get: () => {low} }}); visualViewport.dispatchEvent(new Event('resize'))"); pg.wait_for_timeout(100)
+    # 見えている高さが縮んだら (下のアドレスバーが出てきた等)、下の帯は待たずにその上へ動く。0.25 秒待つ版はアドレスバーの出入りに遅れて帯が行き来した (2026-11-15 user の録画)
+    for low in (760, 340):
+        pg.evaluate(f"Object.defineProperty(visualViewport, 'height', {{ configurable: true, get: () => {low} }}); visualViewport.dispatchEvent(new Event('resize'))"); pg.wait_for_timeout(50)
         g = pg.evaluate("T.r('#chat')")
-        check(f"入力していない時に高さが一瞬 {low} に縮んでも下の帯は下端のまま", g and g["b"] >= 850, g)
-        pg.wait_for_timeout(300)
-        g = pg.evaluate("T.r('#chat')")
-        check(f"高さ {low} が 0.25 秒より長く続いたら下の帯はその下端へ", g and abs(g["b"] - low) <= 1, g)
-        pg.evaluate("delete visualViewport.height; visualViewport.dispatchEvent(new Event('resize'))"); pg.wait_for_timeout(100)
+        check(f"高さが {low} に縮んだら下の帯はすぐその下端へ", g and abs(g["b"] - low) <= 1, g)
+        pg.evaluate("delete visualViewport.height; visualViewport.dispatchEvent(new Event('resize'))"); pg.wait_for_timeout(50)
     # 入力中 (キーボードが出た近似 = 高さ 480)
     open_sheet(pg)
     tap(pg, "#ctext")
