@@ -419,6 +419,9 @@
   html.mob #reply table.cards tr.pinned > td.ck { background: var(--red); color: #fff; }
   /* 罫線図・コード: 幅を超えたら fitPre が --pf で字を小さくする */
   html.mob #reply pre, html.mob #reply pre code { font-size: var(--pf, 14px); }
+  /* ピンチ = 返事の字の大きさ (--rf)。ページの拡大は止める (拡大すると下の帯が画面の途中に浮き、横に動かして読む手間も出た、2026-11-15 user)。全画面の図・画像 (#mmzoom) は touch-action: none で自前のピンチのまま */
+  html.mob body { touch-action: pan-x pan-y; }
+  html.mob #reply { zoom: var(--rf, 1); }
   /* 操作は下の 1 本に集める: 右端の帯は出さず、#chat を画面の下端の欄にする。高さは今までどおり body の --vvh (見えている範囲) の中なので、下に置いたアドレスバーにも隠れない。
      ふだん (chat-closed) は 1 本の帯 #dock = ◀ ▶ / 送り先 / 赤N / ☰ (＋ は ☰ の一覧の右下)。送り先を押すと送り先の一覧まで開く。赤ペン中 (body.pen) は同じ場所を赤ペン欄 #tray に入れ替える (下の欄は 1 つ)。
      許可待ちの行 (#tstat) と ＋・許可の失敗 (#cmsg) は、閉じていても赤ペン中でも帯のすぐ上に出す */
@@ -628,9 +631,12 @@ if (isMobileUA && window.visualViewport) {
     const vv = visualViewport;
     if (innerWidth !== lastW) { lastW = innerWidth; maxH = 0; baseScale = vv.scale; }
     baseScale = Math.min(baseScale, vv.scale);
-    const h = vv.height * vv.scale / baseScale;
+    let h = vv.height * vv.scale / baseScale;
     maxH = Math.max(maxH, h);
-    document.documentElement.classList.toggle("kbd", h < maxH - 120 && !!document.activeElement?.matches?.("textarea, input"));
+    const typing = !!document.activeElement?.matches?.("textarea, input");
+    document.documentElement.classList.toggle("kbd", h < maxH - 120 && typing);
+    // キーボードが出ていない時に 120px を超えて縮んだ値は使わない: Waterfox で ← → の切り替え中に 1〜2 コマだけ高さが 4 割に縮み、下の帯が跳ねて下が黒くなった (2026-11-15 user の録画)。アドレスバーの出入り (60px 前後) は拾う
+    if (!typing && h < maxH - 120) h = maxH;
     document.documentElement.style.setProperty("--vvh", `${h}px`);
     requestAnimationFrame(() => { const a = document.activeElement; if (a?.matches?.("textarea, input") && a.closest("#chat")) { a.closest("#tray")?.querySelector(".row")?.scrollIntoView({ block: "nearest" }); a.scrollIntoView({ block: "nearest" }); } }); // 赤ペン欄は欄の下の『コピー / 送信』も見せる (欄だけ送るとボタンがキーボードの裏に残った、2026-11-13 user)。狭くて両方入らない時は書いている欄を優先
   };
@@ -1071,6 +1077,30 @@ document.addEventListener("touchend", (ev) => {
   const p = ev.changedTouches[0], dx = p.clientX - s.x, dy = p.clientY - s.y;
   if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) (dx > 0 ? older : newer)();
 }, { passive: true });
+// スマホ: 2 本指で広げる / 狭める = 返事の字の大きさ (0.8〜2.5 倍、localStorage "rmx.replyFont" に覚える)。読んでいた位置は全体に対する割合で保つ
+if (isMobileUA) {
+  const replyEl = document.getElementById("reply");
+  let rf = 1, pinch = null, frame = 0;
+  const setRf = (v) => { rf = Math.min(2.5, Math.max(0.8, Math.round(v * 100) / 100)); replyEl.style.setProperty("--rf", rf); };
+  try { setRf(+localStorage.getItem("rmx.replyFont") || 1); } catch {}
+  const dist = (ev) => Math.hypot(ev.touches[0].clientX - ev.touches[1].clientX, ev.touches[0].clientY - ev.touches[1].clientY);
+  document.addEventListener("touchstart", (ev) => {
+    if (ev.touches.length !== 2 || ev.target.closest?.("#mmzoom")) return;
+    swipe = null;
+    pinch = { d: dist(ev), rf, at: mainEl.scrollTop / Math.max(1, mainEl.scrollHeight) };
+  }, { passive: true });
+  document.addEventListener("touchmove", (ev) => {
+    if (!pinch || ev.touches.length !== 2) return;
+    pinch.v = pinch.rf * dist(ev) / pinch.d;
+    if (!frame) frame = requestAnimationFrame(() => { frame = 0; if (pinch) setRf(pinch.v); mainEl.scrollTop = pinch ? pinch.at * mainEl.scrollHeight : mainEl.scrollTop; });
+  }, { passive: true });
+  document.addEventListener("touchend", (ev) => {
+    if (!pinch || ev.touches.length >= 2) return;
+    pinch = null;
+    try { rf === 1 ? localStorage.removeItem("rmx.replyFont") : localStorage.setItem("rmx.replyFont", rf); } catch {}
+    fitPre(); scheduleMargin();
+  }, { passive: true });
+}
 // 図の全画面: 図の複製を画面いっぱいに置き、viewBox を動かして拡大・移動する (CSS transform より拡大しても線がぼやけない)。
 // 表示域と viewBox の縦横比を常に揃えるので preserveAspectRatio="none" で歪まない。
 const zoom = document.getElementById("mmzoom");
