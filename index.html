@@ -551,8 +551,11 @@ function applyProjDefault() {
   if (!c) try { c = localStorage.getItem("rmx.projR") !== "open"; } catch {}
   document.body.classList.toggle("proj-closed", c);
 }
-// スマホで左に返事・右に送信欄の 2 列にする幅 (html.split)。Fold を開いた幅 (実機の画面から約 630px) に合わせた仮の値で、変えるのはここだけ
-const MOB_SPLIT_MIN = 600;
+// スマホで左に返事・右に送信欄の 2 列にする幅 (html.split)。変えるのはここだけ
+// Fold 実機 (2026-11-14 adb で実測): 閉じた画面は Soul・Chrome 555 / Waterfox 624 (画面の倍率を 2.25 でなく 2 で扱う)、開いた画面は短い辺でも 821。
+// 600 では Waterfox の閉じた画面が 2 列になっていたので、間の 720 にする
+// ponytail: 端末の表示サイズ設定で倍率が変わると幅も動く。閉じた画面が 720 を超える設定にしたら、端末の画素数 (screen.width × devicePixelRatio) で判定する形に変える
+const MOB_SPLIT_MIN = 720;
 // 幅は端末の画面 (screen.width) でも測り、狭い方を使う。ブラウザが『PC 版サイト』で開くと viewport の指定が無視され、
 // 閉じた Fold (screen 555) でも幅 980 として描いて 2 列になっていた (2026-11-13、Fold 実機の Soul で実測: inner 980 / screen 555 / 縮小 0.57)
 function applyWidth(force) {
