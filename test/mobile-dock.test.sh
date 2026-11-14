@@ -215,6 +215,8 @@ with sync_playwright() as p:
     cdp.send("Emulation.setPageScaleFactor", {"pageScaleFactor": 2}); pg.wait_for_timeout(300)
     g = pg.evaluate("({ scale: visualViewport.scale, chat: T.r('#chat') })")
     check("ピンチで 2 倍に拡大しても下の帯はページの下端 (下端 860 付近)", g["scale"] == 2 and g["chat"] and g["chat"]["b"] >= 850, g)
+    g = pg.evaluate("({ zoomed: document.documentElement.classList.contains('zoomed'), ta: getComputedStyle(document.body).touchAction })")
+    check("ページが拡大されたままの時はブラウザのピンチを通す (縮めて戻せる)", g["zoomed"] and g["ta"] == "auto", g)
     cdp.send("Emulation.setPageScaleFactor", {"pageScaleFactor": 1}); pg.wait_for_timeout(300)
     # 2 本指で広げる = 返事の字だけが大きくなる。ページは拡大せず、下の帯は画面の下端のまま (2026-11-15 user 採用 B)
     fs0 = pg.evaluate("document.querySelector('#reply').getBoundingClientRect().height")

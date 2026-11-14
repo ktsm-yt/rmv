@@ -423,6 +423,7 @@
   html.mob #reply pre, html.mob #reply pre code { font-size: var(--pf, 14px); }
   /* ピンチ = 返事の字の大きさ (--rf)。ページの拡大は止める (拡大すると下の帯が画面の途中に浮き、横に動かして読む手間も出た、2026-11-15 user)。全画面の図・画像 (#mmzoom) は touch-action: none で自前のピンチのまま */
   html.mob body { touch-action: pan-x pan-y; }
+  html.mob.zoomed body { touch-action: auto; } /* もうページが拡大されている時 (止める前の版で拡大したまま等) は、ブラウザのピンチで縮めて戻せるようにする */
   html.mob #reply { zoom: var(--rf, 1); }
   /* 操作は下の 1 本に集める: 右端の帯は出さず、#chat を画面の下端の欄にする。高さは今までどおり body の --vvh (見えている範囲) の中なので、下に置いたアドレスバーにも隠れない。
      ふだん (chat-closed) は 1 本の帯 #dock = ◀ ▶ / 送り先 / 赤N / ☰ (＋ は ☰ の一覧の右下)。送り先を押すと送り先の一覧まで開く。赤ペン中 (body.pen) は同じ場所を赤ペン欄 #tray に入れ替える (下の欄は 1 つ)。
@@ -633,6 +634,7 @@ if (isMobileUA && window.visualViewport) {
     const vv = visualViewport;
     if (innerWidth !== lastW) { lastW = innerWidth; maxH = 0; applied = 0; baseScale = vv.scale; }
     baseScale = Math.min(baseScale, vv.scale);
+    document.documentElement.classList.toggle("zoomed", vv.scale > baseScale * 1.02);
     const h = vv.height * vv.scale / baseScale;
     maxH = Math.max(maxH, h);
     const typing = !!document.activeElement?.matches?.("textarea, input");
@@ -1101,7 +1103,7 @@ if (isMobileUA) {
   try { setRf(+localStorage.getItem("rmx.replyFont") || 1); } catch {}
   const dist = (ev) => Math.hypot(ev.touches[0].clientX - ev.touches[1].clientX, ev.touches[0].clientY - ev.touches[1].clientY);
   document.addEventListener("touchstart", (ev) => {
-    if (ev.touches.length !== 2 || ev.target.closest?.("#mmzoom")) return;
+    if (ev.touches.length !== 2 || ev.target.closest?.("#mmzoom") || document.documentElement.classList.contains("zoomed")) return;
     swipe = null;
     pinch = { d: dist(ev), rf, at: mainEl.scrollTop / Math.max(1, mainEl.scrollHeight) };
   }, { passive: true });
