@@ -626,17 +626,19 @@ if (isMobileUA && window.visualViewport) {
   // 焦点 (:focus) だけで並びを変えると、送信や 📎 を押す指で焦点が外れた瞬間に並びが動く。高さで見れば、戻るボタンでキーボードだけ閉じた時にも元に戻る
   // ピンチで拡大すると vv.height は倍率の分だけ縮む。そのまま使うと画面の高さが縮み、下の帯が画面の途中に浮いた (2026-11-15 user)。
   // 拡大していない時の倍率 (その幅で見た最小。普通は 1、Soul の PC 版表示は 0.57) からの拡大分を掛け戻し、キーボードとアドレスバーの分だけを拾う。幅は拡大で動かない innerWidth で見る
-  let maxH = 0, lastW = 0, baseScale = 1;
-  const fit = () => {
+  let maxH = 0, lastW = 0, baseScale = 1, applied = 0, shrinkT = 0;
+  const fit = (settled) => {
     const vv = visualViewport;
-    if (innerWidth !== lastW) { lastW = innerWidth; maxH = 0; baseScale = vv.scale; }
+    if (innerWidth !== lastW) { lastW = innerWidth; maxH = 0; applied = 0; baseScale = vv.scale; }
     baseScale = Math.min(baseScale, vv.scale);
-    let h = vv.height * vv.scale / baseScale;
+    const h = vv.height * vv.scale / baseScale;
     maxH = Math.max(maxH, h);
     const typing = !!document.activeElement?.matches?.("textarea, input");
     document.documentElement.classList.toggle("kbd", h < maxH - 120 && typing);
-    // キーボードが出ていない時に 120px を超えて縮んだ値は使わない: Waterfox で ← → の切り替え中に 1〜2 コマだけ高さが 4 割に縮み、下の帯が跳ねて下が黒くなった (2026-11-15 user の録画)。アドレスバーの出入り (60px 前後) は拾う
-    if (!typing && h < maxH - 120) h = maxH;
+    // 入力していない時の縮みは 0.25 秒続いてから使う: ← → の切り替えの瞬間に 1〜4 コマだけ縮んだ高さが来て、下の帯が跳ねて下が黒くなった
+    // (2026-11-15 user の録画 2 本: Waterfox は画面の 4 割、Soul の PC 版表示は約 100px。幅で線を引いた版 (120px) は Soul の方をすり抜けた)。キーボードは待たずに拾う
+    if (!typing && h < applied && settled !== true) { if (!shrinkT) shrinkT = setTimeout(() => { shrinkT = 0; fit(true); }, 250); return; }
+    clearTimeout(shrinkT); shrinkT = 0; applied = h;
     document.documentElement.style.setProperty("--vvh", `${h}px`);
     requestAnimationFrame(() => { const a = document.activeElement; if (a?.matches?.("textarea, input") && a.closest("#chat")) { a.closest("#tray")?.querySelector(".row")?.scrollIntoView({ block: "nearest" }); a.scrollIntoView({ block: "nearest" }); } }); // 赤ペン欄は欄の下の『コピー / 送信』も見せる (欄だけ送るとボタンがキーボードの裏に残った、2026-11-13 user)。狭くて両方入らない時は書いている欄を優先
   };
@@ -1091,9 +1093,10 @@ if (isMobileUA) {
   }, { passive: true });
   document.addEventListener("touchmove", (ev) => {
     if (!pinch || ev.touches.length !== 2) return;
+    if (ev.cancelable) ev.preventDefault(); // Soul の PC 版表示は touch-action を無視してページごと拡大した (2026-11-15 user の録画)
     pinch.v = pinch.rf * dist(ev) / pinch.d;
     if (!frame) frame = requestAnimationFrame(() => { frame = 0; if (pinch) setRf(pinch.v); mainEl.scrollTop = pinch ? pinch.at * mainEl.scrollHeight : mainEl.scrollTop; });
-  }, { passive: true });
+  }, { passive: false }); // 拡大を止めるため preventDefault できる形で受ける
   document.addEventListener("touchend", (ev) => {
     if (!pinch || ev.touches.length >= 2) return;
     pinch = null;
