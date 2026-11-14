@@ -226,6 +226,11 @@ with sync_playwright() as p:
     check("2 本指で広げると返事の字が約 2 倍、ページは拡大せず帯は下端、横にはみ出さない、倍率を覚える", 1.8 <= g["rf"] <= 2.5 and g["h"] > fs0 * 1.5 and g["scale"] == 1 and g["chat"] and g["chat"]["b"] >= 850 and g["over"] <= 0 and g["saved"] and g["ta"] == "pan-x pan-y", g)
     pg.evaluate("localStorage.removeItem('rmx.replyFont'); document.querySelector('#reply').style.removeProperty('--rf')")
     # 入力欄を使っていない時に見えている高さが一瞬 4 割に縮んでも、下の帯は跳ねない (Waterfox の ← → で出たちらつき、2026-11-15 user の録画)
+    # 図を描く間だけ mermaid が body の末尾に足す入れ物 (#d<id>) は、下の帯を押し上げない (← → のちらつきの本当の原因、2026-11-15)
+    pg.evaluate("document.body.insertAdjacentHTML('beforeend', '<div id=\"dmmg999\" style=\"height:159px\">x</div>')"); pg.wait_for_timeout(50)
+    g = pg.evaluate("T.r('#chat')")
+    check("図を描く間の入れ物があっても下の帯は下端のまま", g and g["b"] >= 850, g)
+    pg.evaluate("document.getElementById('dmmg999').remove()")
     # 縮む幅は Waterfox の 4 割 (340) と Soul の約 100px (760) の 2 通り。0.25 秒より長く続いた縮みは反映する
     for low in (340, 760):
         pg.evaluate(f"Object.defineProperty(visualViewport, 'height', {{ configurable: true, get: () => {low} }}); visualViewport.dispatchEvent(new Event('resize'))"); pg.wait_for_timeout(100)

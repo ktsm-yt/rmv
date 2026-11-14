@@ -263,6 +263,8 @@
   #reply pre { line-height: 1.25; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px; overflow-x: auto; }
   #reply pre, #reply pre code { font-family: "UDEV Gothic", "HackGen Console", "rmv-mono", ui-monospace, Menlo, monospace; font-size: 14px; } /* 無印 = 半角:全角 1:2。35 版は 3:5 で罫線図がズレる。rmv-mono = Mac のフォントを配る (スマホ用、Mac はローカルが先で取りに行かない) */
   #reply pre.mermaid { position: relative; background: transparent; border: none; text-align: center; overflow-x: auto; }
+  /* mermaid.render が描く間だけ body の末尾に足す入れ物 (#d<id>)。body の grid の行に入り、その間 下の帯を 159px 押し上げていた (スマホの ← → のちらつき、2026-11-15)。字の幅は測れるよう表示したまま画面の外へ */
+  body > div[id^="dmmg"] { position: absolute; left: -10000px; top: 0; }
   /* 図: 角を丸める (配色は mermaid.initialize の themeVariables)。空き地クリック / ⤢ = 全画面、ノードクリック = 赤ペン */
   :is(pre.mermaid, #mmzoom) :is(.node rect, rect.actor, rect.note) { rx: 8px; ry: 8px; }
   :is(pre.mermaid, #mmzoom) .cluster rect { rx: 12px; ry: 12px; }
@@ -915,8 +917,20 @@ async function showIdx(i) {
   shownName = e.name;
   await show(await (await fetch(`/history/${encodeURIComponent(e.name)}`, { cache: "no-store" })).text(), e);
 }
-const older = () => showIdx(idx + 1);
-const newer = () => showIdx(idx - 1);
+// #dbg 付きの時だけ: ← → の後 24 コマの高さの値を state/dbg.jsonl へ送る (スマホのちらつきを実機で捕まえる。直し方 2 回が当て推量で外れた、2026-11-15)
+function traceSwitch() {
+  if (!location.hash.includes("dbg")) return;
+  const rows = [], t0 = performance.now(), vv = window.visualViewport, r = Math.round, chat = document.getElementById("chat"), reply = document.getElementById("reply");
+  const tick = () => {
+    const c = chat.getBoundingClientRect();
+    rows.push([r(performance.now() - t0), r(document.body.getBoundingClientRect().height), parseInt(document.documentElement.style.getPropertyValue("--vvh")) || 0, r(c.top), r(c.bottom), vv ? r(vv.height) : 0, vv ? +vv.scale.toFixed(2) : 0, vv ? r(vv.offsetTop) : 0, innerHeight, r(mainEl.scrollTop), r(reply.getBoundingClientRect().height)]);
+    if (rows.length < 24) return requestAnimationFrame(tick);
+    fetch("/dbg", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ trace: "switch", cols: "t bodyH vvh chatT chatB vvH scale vvTop innerH scroll replyH", rows }) }).catch(() => {});
+  };
+  requestAnimationFrame(tick);
+}
+const older = () => { traceSwitch(); return showIdx(idx + 1); };
+const newer = () => { traceSwitch(); return showIdx(idx - 1); };
 // 読み上げ: 描画済み本文から、コード・表・図・画像・ボタン等の UI 部品を除いた文字だけを読む。もう一度押すと止まる。
 // 声は server の /speak (Gemini TTS)。1 つ目のチャンクで失敗したら (キー無し等) ブラウザ内蔵の speechSynthesis で全文を読む
 const speakBtn = document.getElementById("speak");
