@@ -109,8 +109,8 @@
   #cchips .chip i.idle, #tstat i.idle { border: 2px solid var(--line); }
   #cchips .chip i.ng, #tstat i.ng { background: #e5a50a; box-shadow: 0 0 0 3px rgb(229 165 10 / .25); } /* 返事が要る (終了: NG) = 入力待ちと同じ黄の点 */
   #cchips .chip i.ok, #tstat i.ok { background: #2ec27e; } /* 閉じてよい (終了: OK) = 緑の点、光らせない */
-  #cchips .chip i.bg, #tstat i.bg { border: 2px solid #e5a50a; animation: tblink 2s steps(2) infinite; } /* 裏で待ち (shell / monitor / subagent が走っていて、終わると起きる) = 黄のリング (中を塗らないので入力待ちの黄の点と見分けられる) が 0.5 秒ごとに明るさを変える (1 → .625 → .25 → .625 の 4 コマで 1 周 2 秒)。なめらかな明滅 (1.6s ease-in-out) は 10 秒で 601 回描き直した。コマ送りで 25 回 (2026-11-16 headless 実測、test/bg-blink.test.sh)。切り替えは 0.5 秒 = 回転 6 コマごとなので、作業中の印と同時に出ても描き直しは増えない */
-  @keyframes tblink { 50% { opacity: .25; } }
+  #cchips .chip i.bg, #tstat i.bg { border: 2px solid #e5a50a; animation: tblink 2s step-end infinite; } /* 裏で待ち (shell / monitor / subagent が走っていて、終わると起きる) = 黄のリング (中を塗らないので入力待ちの黄の点と見分けられる) がゆっくり明滅する。なめらかな明滅 (1.6s ease-in-out) は 10 秒で 600 回描き直した。0.5 秒ごとの 4 コマ (v0.21.16、25 回) は粗いと言われた (2026-11-16 user) ので、作業中の回転と同じ 1 秒 12 コマで刻み、同じ瞬間に描き直す。10 秒 125 回で、作業中の印と一緒に出ても 125 回のまま (headless 実測、test/bg-blink.test.sh) */
+  @keyframes tblink { 4.167%, 95.833% { opacity: .987; } 8.333%, 91.667% { opacity: .950; } 12.5%, 87.5% { opacity: .890; } 16.667%, 83.333% { opacity: .812; } 20.833%, 79.167% { opacity: .722; } 25%, 75% { opacity: .625; } 29.167%, 70.833% { opacity: .528; } 33.333%, 66.667% { opacity: .438; } 37.5%, 62.5% { opacity: .360; } 41.667%, 58.333% { opacity: .300; } 45.833%, 54.167% { opacity: .263; } 50% { opacity: .250; } } /* 明るさを余弦の曲線で 24 コマに刻む (1 → .25 → 1)。コマの境目は 1/12 秒ごとで、作業中の回転 (1 秒 12 コマ) と同じ瞬間 */
   .hid #cchips .chip i.bg, .hid #tstat i.bg { animation: none; } /* タブが隠れている間は止める (visibilitychange) */
   @media (prefers-reduced-motion: reduce) { #cchips .chip i.busy, #tstat i.busy, #cchips .chip i.bg, #tstat i.bg { animation: none; } } /* 明滅の行より後ろに置く (同じ強さの指定は後ろが勝つ) */
   #tstat .task { white-space: pre-wrap; color: var(--fg); padding: 2px 6px 6px 15px; max-height: 40vh; overflow: auto; } /* 行を押すと開く依頼文の全文 */

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # 裏で待ち (i.bg、黄のリング) の明滅の試験 (2026-11-16 user: 待ちタスクの明滅を戻す、重くならないくらいで)。
-# 明滅はコマ送り (steps) にして、毎フレーム描き直さないことを headless の描画回数 (trace の DrawFrame) で見る。
+# 明滅はコマ送り (作業中の回転と同じ 1 秒 12 コマ) にして、毎フレーム描き直さないことを headless の描画回数 (trace の DrawFrame) で見る。
 # 実行: bash rmv/test/bg-blink.test.sh   (bun / uv / playwright の chromium が要る)
-#   RMV_DIR=<dir> で server.ts + index.html の置き場を差し替えられる (明滅の無い v0.21.15 に当てると FAIL = negative control)
-#   MEASURE=1 で放置 10 秒の描画回数を 明滅なし / 旧 tblink / 今の版 / 作業中だけ / 作業中 + 今の版 で出す (試験はしない)
+#   RMV_DIR=<dir> で server.ts + index.html の置き場を差し替えられる (明滅の無い v0.21.15 や 0.5 秒ごとの v0.21.16 に当てると FAIL = negative control)
+#   MEASURE=1 で放置 10 秒の描画回数を 明滅なし / 旧 tblink / v0.21.16 / 今の版 を、裏で待ちだけの時と作業中 1 つと一緒の時で出す (試験はしない)
 # 試験の中でも旧 tblink (毎フレーム描く) が上限を超えることを確かめる (測り方が壊れていないかの対照)。
 set -u
 A="$(cd "$(dirname "$0")/.." && pwd)"
@@ -44,7 +44,7 @@ def history(busy): # 全部の端末を『入力待ち + 裏で shell が走っ�
         route.fulfill(response=r, headers={**r.headers, "x-rmv-live": "ok"}, body=json.dumps(items))
     return f
 # 比べる明滅の付け方。None = 今の index.html のまま
-ARMS = {"none": "animation: none", "old": "animation: tblink_old 1.6s ease-in-out infinite"}
+ARMS = {"none": "animation: none", "old": "animation: tblink_old 1.6s ease-in-out infinite", "v16": "animation: tblink_old 2s steps(2) infinite"} # v16 = v0.21.16 (0.5 秒ごと 4 コマ)
 def page(b, arm=None, busy=False, reduced=False, hidden=False):
     c = b.new_context(viewport={"width": 420, "height": 1100}, device_scale_factor=2, reduced_motion="reduce" if reduced else "no-preference")
     if hidden: c.add_init_script("Object.defineProperty(document, 'hidden', { configurable: true, get: () => true })")
@@ -53,7 +53,7 @@ def page(b, arm=None, busy=False, reduced=False, hidden=False):
     pg.route("**/new", lambda r: r.abort())
     pg.goto(base)
     pg.wait_for_function("document.querySelectorAll('#tstat i.bg').length >= 1", timeout=10000)
-    if arm: pg.add_style_tag(content="@keyframes tblink_old { 50% { opacity: .25; } } #cchips .chip i.bg, #tstat i.bg { " + ARMS[arm] + " !important; }")
+    if arm: pg.add_style_tag(content="@keyframes tblink_old { 50% { opacity: .25; } } #cchips .chip i.bg, #tstat i.bg { " + ARMS[arm] + " !important; }"); pg.evaluate("document.getAnimations().forEach((a) => { a.startTime = 0; })") # 差し込んだ明滅も syncSpin と同じ時計にそろえる
     pg.wait_for_timeout(3000) # 読み込み直後の描画を落ち着かせる
     return pg
 def frames(b, pg, sec): # sec 秒放置した間に描いたコマ数 (3366f5d と同じ trace の数え方)
@@ -66,19 +66,21 @@ bg_anims = lambda pg: pg.evaluate("[...document.querySelectorAll('#tstat i.bg, #
 with sync_playwright() as p:
     b = p.chromium.launch()
     if measure:
-        for name, arm, busy in [("明滅なし", "none", False), ("旧 tblink (1.6s なめらか)", "old", False), ("今の版", None, False), ("作業中 1 + 明滅なし", "none", True), ("作業中 1 + 今の版", None, True)]:
-            pg = page(b, arm, busy)
-            d, pt = frames(b, pg, 10)
-            print(f"{name:24} 放置 10 秒: DrawFrame {d:4}  Paint {pt:4}  (裏で待ち {count(pg, 'i.bg')} 個 / 作業中 {count(pg, 'i.busy')} 個)")
-            pg.context.close()
+        for busy in (False, True):
+            for name, arm in [("明滅なし", "none"), ("旧 tblink (1.6s なめらか)", "old"), ("v0.21.16 (0.5 秒ごと)", "v16"), ("今の版", None)]:
+                pg = page(b, arm, busy)
+                d, pt = frames(b, pg, 10)
+                print(f"{('作業中 1 + ' if busy else '') + name:32} 放置 10 秒: DrawFrame {d:4}  Paint {pt:4}  (裏で待ち {count(pg, 'i.bg')} 個 / 作業中 {count(pg, 'i.busy')} 個)")
+                pg.context.close()
         sys.exit(0)
-    SEC, LIMIT = 4, 4 * 4 # 4 秒で 16 コマまで (= 1 秒 4 回。旧 tblink は 1 秒約 60 回)
+    SEC, LIMIT = 4, 4 * 15 # 4 秒で 60 コマまで (= 1 秒 15 回。今の版は作業中の回転と同じ 1 秒 12 回、旧 tblink は 1 秒約 60 回)
     pg = page(b)
     check("裏で待ちの印がある・作業中の印は無い", count(pg, "i.bg") >= 2 and count(pg, "i.busy") == 0, (count(pg, "i.bg"), count(pg, "i.busy")))
     an = bg_anims(pg)
     check("裏で待ちの印が明滅している", len(an) >= 2 and set(an) == {"tblink"}, an)
     d, _ = frames(b, pg, SEC)
     check(f"明滅しても {SEC} 秒の描画は {LIMIT} コマ以下", d <= LIMIT, d)
+    check(f"明滅は 1 秒 10 コマ以上で刻む (なめらかに見える。{SEC} 秒で {d} コマ)", d >= SEC * 10, d) # v0.21.16 の 0.5 秒ごと (1 秒 2 コマ) は粗いと言われた (2026-11-16 user)
     # 隠れたら止め、戻ったら作業中の回転と同じ時計にそろえ直す
     pg.evaluate("Object.defineProperty(document, 'hidden', { configurable: true, get: () => true }); document.dispatchEvent(new Event('visibilitychange'))")
     check("タブが隠れたら明滅を止める", bg_anims(pg) == [], bg_anims(pg))
@@ -92,6 +94,10 @@ with sync_playwright() as p:
     pg = page(b, reduced=True)
     check("動きを減らす設定では明滅しない", bg_anims(pg) == [], bg_anims(pg))
     pg.context.close()
+    # 作業中の回転と同じ瞬間に描き直す: 一緒に出ても、明滅なしの時より増えない (コマの境目がずれると 1 秒 12 回ずつ上乗せになる)
+    pg = page(b, "none", busy=True); d0, _ = frames(b, pg, SEC); pg.context.close()
+    pg = page(b, busy=True); d1, _ = frames(b, pg, SEC); pg.context.close()
+    check(f"作業中と一緒でも描き直しが増えない ({SEC} 秒: 明滅なし {d0} / 今の版 {d1})", d1 <= d0 + 3, (d0, d1))
     pg = page(b, "old")
     d, _ = frames(b, pg, SEC)
     check(f"対照: 旧 tblink は {SEC} 秒で {LIMIT} コマを超える (測り方が効いている)", d > LIMIT, d)
