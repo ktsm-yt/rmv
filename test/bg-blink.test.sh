@@ -45,8 +45,9 @@ def history(busy): # 全部の端末を『入力待ち + 裏で shell が走っ�
     return f
 # 比べる明滅の付け方。None = 今の index.html のまま
 ARMS = {"none": "animation: none", "old": "animation: tblink_old 1.6s ease-in-out infinite"}
-def page(b, arm=None, busy=False, reduced=False):
+def page(b, arm=None, busy=False, reduced=False, hidden=False):
     c = b.new_context(viewport={"width": 420, "height": 1100}, device_scale_factor=2, reduced_motion="reduce" if reduced else "no-preference")
+    if hidden: c.add_init_script("Object.defineProperty(document, 'hidden', { configurable: true, get: () => true })")
     pg = c.new_page()
     pg.route(re.compile(r"/history$"), history(busy))
     pg.route("**/new", lambda r: r.abort())
@@ -84,6 +85,9 @@ with sync_playwright() as p:
     pg.evaluate("Object.defineProperty(document, 'hidden', { configurable: true, get: () => false }); document.dispatchEvent(new Event('visibilitychange'))")
     st = pg.evaluate("[...document.querySelectorAll('#tstat i.bg, #cchips i.bg')].flatMap((e) => e.getAnimations()).map((a) => a.startTime)")
     check("タブが戻ったら明滅を戻し、時計をそろえる", len(st) >= 2 and set(st) == {0}, st)
+    pg.context.close()
+    pg = page(b, hidden=True)
+    check("裏のタブで開いた時も明滅しない", bg_anims(pg) == [], bg_anims(pg))
     pg.context.close()
     pg = page(b, reduced=True)
     check("動きを減らす設定では明滅しない", bg_anims(pg) == [], bg_anims(pg))
