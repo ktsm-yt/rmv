@@ -102,7 +102,6 @@
   #cchips .chip i, #tstat i { flex: none; width: 10px; height: 10px; margin-top: 4px; border-radius: 50%; box-sizing: border-box; }
   #cchips .chip i.busy, #tstat i.busy { border: 2px solid var(--line); border-top-color: var(--fg); animation: tspin 1s steps(12) infinite; }
   @keyframes tspin { to { transform: rotate(360deg); } }
-  @media (prefers-reduced-motion: reduce) { #cchips .chip i.busy, #tstat i.busy { animation: none; } }
   #cchips .chip i.wait, #tstat i.wait { background: #e5a50a; box-shadow: 0 0 0 3px rgb(229 165 10 / .25); }
   #cchips .chip i.perm, #tstat i.perm { background: #e01b24; box-shadow: 0 0 0 3px rgb(224 27 36 / .25); }
   #tstat .trow.perm { color: inherit; font-weight: 700; }
@@ -110,7 +109,10 @@
   #cchips .chip i.idle, #tstat i.idle { border: 2px solid var(--line); }
   #cchips .chip i.ng, #tstat i.ng { background: #e5a50a; box-shadow: 0 0 0 3px rgb(229 165 10 / .25); } /* 返事が要る (終了: NG) = 入力待ちと同じ黄の点 */
   #cchips .chip i.ok, #tstat i.ok { background: #2ec27e; } /* 閉じてよい (終了: OK) = 緑の点、光らせない */
-  #cchips .chip i.bg, #tstat i.bg { border: 2px solid #e5a50a; } /* 裏で待ち (shell / monitor / subagent が走っていて、終わると起きる) = 黄のリング (中を塗らないので入力待ちの黄の点と見分けられる) */
+  #cchips .chip i.bg, #tstat i.bg { border: 2px solid #e5a50a; animation: tblink 2s steps(2) infinite; } /* 裏で待ち (shell / monitor / subagent が走っていて、終わると起きる) = 黄のリング (中を塗らないので入力待ちの黄の点と見分けられる) が 0.5 秒ごとに 4 段で明滅する。なめらかな明滅 (1.6s ease-in-out) は 10 秒で 601 回描き直した。コマ送りで 25 回 (2026-11-16 headless 実測、test/bg-blink.test.sh)。切り替えは 0.5 秒 = 回転 6 コマごとなので、作業中の印と同時に出ても描き直しは増えない */
+  @keyframes tblink { 50% { opacity: .25; } }
+  .hid #cchips .chip i.bg, .hid #tstat i.bg { animation: none; } /* タブが隠れている間は止める (visibilitychange) */
+  @media (prefers-reduced-motion: reduce) { #cchips .chip i.busy, #tstat i.busy, #cchips .chip i.bg, #tstat i.bg { animation: none; } } /* 明滅の行より後ろに置く (同じ強さの指定は後ろが勝つ) */
   #tstat .task { white-space: pre-wrap; color: var(--fg); padding: 2px 6px 6px 15px; max-height: 40vh; overflow: auto; } /* 行を押すと開く依頼文の全文 */
   #sug { border: 1px solid var(--line); border-radius: 6px; background: var(--panel); overflow: hidden; margin-bottom: 6px; }
   #sug div { padding: 3px 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
@@ -1715,6 +1717,7 @@ function stOf(e) {
 }
 // 書き直しで回転が 0 コマ目に戻らないよう、全部の印を同じ時計 (ページを開いた時刻) に合わせる。印ごとにずれると描き直しが印の数だけ増える
 const syncSpin = (el) => el.getAnimations({ subtree: true }).forEach((a) => { a.startTime = 0; });
+document.addEventListener("visibilitychange", () => { document.documentElement.classList.toggle("hid", document.hidden); if (!document.hidden) { syncSpin(cchips); syncSpin(tstat); } }); // 隠れている間は裏で待ちの明滅を止め、戻ったら時計をそろえ直す
 const ago = (t) => { const m = Math.max(0, Math.floor((Date.now() - t) / 60000)); return m > 60 ? `${Math.floor(m / 60)} 時間` : `${m} 分`; }; // 最後の出力からの経過
 const askText = (e) => e.asking.waiting ? "待機中" : "依頼: " + e.asking.prompt.replace(/\s+/g, " ").slice(0, 60); // 返事待ちの依頼の 1 行 (起動直後で依頼が無ければ『待機中』)
 const bgSum = (bg) => [...bg.reduce((m, t) => m.set(t.type, (m.get(t.type) ?? 0) + 1), new Map()).entries()].map(([k, n]) => `${k} ${n}`).join(" "); // 裏で走っている物を種類ごとに数える ("shell 1 subagent 1")
