@@ -384,15 +384,16 @@
   html.mob :is(#cbar, #dock) > #chead > :is(#cctx, #dwait):empty { display: none; }
   html.mob #cbar > #csend { order: 1; margin-left: 0; }
   /* 1 列: 送り先の部品は帯でも送信欄の最下段でも同じ幅・同じ位置 (開いて閉じる間に指を動かさない、2026-11-13 user)。
-     最下段の他の部品の幅を決め打ちし (📎 44 / モデル 56 / エフォート 44 / 送信 56)、送り先は残り全部。帯も右端の ☰ を 56 にして、送り先を同じ幅で右寄せ。
+     最下段の他の部品の幅を決め打ちし (モデル 44 / エフォート 44 / 📎 44 / 送信 56 = 帯の ◀ 44 / ▶ 44 / 空き / ☰ 56 と同じ)、送り先は残り全部を右寄せ。
      モデルとエフォートは略して (fab / opu / son、h / m / xh) 幅 360 でも 1 行に入れる */
   html.mob:not(.split) :is(#cbar, #dock) { --g: 6px; gap: var(--g); flex-wrap: nowrap; }
   @media (max-width: 400px) { html.mob:not(.split) :is(#cbar, #dock) { --g: 4px; } }
   html.mob:not(.split) :is(#cbar, #dock) > #chead { flex: 0 0 calc(100% - 200px - 4 * var(--g)); }
-  html.mob:not(.split) #dock > #chead { flex-shrink: 1; margin-left: auto; } /* ☰ の一覧を開いて ＋ が出た間だけ縮む (一覧の幕の下) */
+  html.mob:not(.split) :is(#cbar, #dock) > #chead { margin-left: auto; }
+  html.mob:not(.split) #dock > #chead { flex-shrink: 1; } /* ☰ の一覧を開いて ＋ が出た間だけ縮む (一覧の幕の下) */
   html.mob:not(.split) #dock > #dto { display: none; }
-  html.mob:not(.split) #cbar > .cpick[data-cmd=model] { flex: 0 0 56px; }
-  html.mob:not(.split) #cbar > .cpick[data-cmd=effort] { flex: 0 0 44px; }
+  html.mob:not(.split) #cbar > .cpick:is([data-cmd=model], [data-cmd=effort]) { flex: 0 0 44px; }
+  html.mob:not(.split) #cbar > .cpick[data-cmd=model] { padding: 0 0 0 2px; } /* 44px に『fab』と矢印を入れる (左右 4px のままだと b が矢印に隠れた) */
   html.mob:not(.split) #cbar > #cattach { flex: 0 0 44px; }
   /* 開くと ◀ ▶ (左右の切り替え) の位置にモデル・エフォートが入れ替わり、📎 は帯で空いている 3 つ目の位置に置く。📎 を左端に置くと ◀ と入れ替わり、開閉のたびに位置が変わって見えた (2026-11-15 user) */
   html.mob:not(.split) #cbar > .cpick[data-cmd=model] { order: -3; }

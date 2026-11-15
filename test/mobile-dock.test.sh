@@ -365,6 +365,18 @@ with sync_playwright() as p:
         g = pg.evaluate("({ at: T.r('#cattach'), sel: T.r('#cact .cpick'), send: T.r('#csend'), txt: [...document.querySelectorAll('#cact .cpick')].map((e) => e.selectedOptions[0]?.text) })")
         check(f"{w}×{h}: 最下段は 📎・モデル・エフォート・送り先・送信の 1 行 (モデルとエフォートは略す)", all(abs(g[k]["t"] - c["t"]) <= 2 for k in ("at", "sel", "send")) and g["txt"] == ["fab", "m"], g)
         pg.context.close()
+    # 帯の段の全部品: 開閉の前後で残る部品は 1px 以内、開いて消えた部品の場所に別の部品が入るのも『動いた』と数える (rule ui-toggle-stable-position 4 項)。
+    # 決めた入れ替えは次の 3 組だけ (2026-11-15 user 採用 B): ◀ → モデル、▶ → エフォート、☰ → 送信。位置と大きさのずれは 2px 以内。他の入れ替え (旧版の 📎 × ◀ など) は落とす
+    SWAP = {"prev": "model", "next": "effort", "ptoggle": "csend"}
+    ROW = """() => { const c = T.r('#chead'), o = {}; for (const e of document.querySelectorAll('#chat :is(button, select, #cto)')) { const b = T.r(e); if (b && b.b > c.t && b.t < c.b) o[e.dataset.cmd || e.id] = b; } return o; }"""
+    for (w, h) in ((360, 860), (554, 690)):
+        pg = page(b, w, h)
+        a = pg.evaluate(ROW); open_sheet(pg); c = pg.evaluate(ROW)
+        moved = [k for k in a.keys() & c.keys() if max(abs(a[k][s] - c[k][s]) for s in "ltrb") > 1]
+        hit = [f"{k}×{j}" for j in a.keys() - c.keys() for k in c.keys() - a.keys() if c[k]["l"] < a[j]["r"] and a[j]["l"] < c[k]["r"] and SWAP.get(j) != k]
+        swap = {f"{j}→{k}": None if j not in a or k not in c else round(max(abs(a[j][s] - c[k][s]) for s in "ltrb"), 1) for j, k in SWAP.items()}
+        check(f"{w}×{h}: 帯の段の部品は開閉で動かず、消えた部品の場所には決めた 3 組 (◀→モデル ▶→エフォート ☰→送信) だけが 2px 以内で入る", a and not moved and not hit and all(d is not None and d <= 2 for d in swap.values()), {"moved": moved, "hit": hit, "swap": swap})
+        pg.context.close()
     # 閉じた Fold の実寸 (Soul: 554×690): 送り先・文脈量・▼ がモデル・エフォートと送信の間に 1 行で入る
     pg = page(b, 554, 690)
     open_sheet(pg)
