@@ -519,6 +519,8 @@ check "paste: 空 → 413" "$(pst "$GOOD" image/png "$TMP/empty.png")" 413
 check "paste: webp (クリップボードに載せられない型) → 415" "$(pst "$GOOD" image/webp "$TMP/p.png")" 415
 check "paste: mp4 → 200 で .mp4 のパスを返す" "$(pst "$GOOD" video/mp4 "$TMP/p.png") $(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["path"].rsplit(".",1)[-1])' "$TMP/body")" "200 mp4"
 PV="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["path"])' "$TMP/body")"
+check "paste: pdf → 200 で .pdf のパスを返す" "$(pst "$GOOD" application/pdf "$TMP/p.png") $(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["path"].rsplit(".",1)[-1])' "$TMP/body")" "200 pdf"
+PD="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["path"])' "$TMP/body")"
 # 本物の png (灰色一色) を作る。長い辺 2000px 超は 2000px に縮み、それ以下は手を付けない (sips -Z は小さい画像を拡大するので)
 mkpng() { python3 -c 'import sys,zlib,struct
 w,h=int(sys.argv[1]),int(sys.argv[2]); c=lambda t,d: struct.pack(">I",len(d))+t+d+struct.pack(">I",zlib.crc32(t+d))
@@ -630,6 +632,8 @@ check "send+images: 画像も本文も無し → 400" "$(post "$GOOD" "$(simg ''
 rm -f "$TMP/osa" "$TMP/argv"
 check "send+images: 動画 → 200" "$(post "$GOOD" "$(simg '動画見て' "[\"$PV\"]")")" 200
 check "send+images: 動画はクリップボードに載せず、パスを本文の次の行に足す" "$([ -e "$TMP/osa" ] && echo osa || echo no-osa) $(grep -c "^動画見て$" "$TMP/argv") $(grep -c "^$PV$" "$TMP/argv")" "no-osa 1 1"
+rm -f "$TMP/osa" "$TMP/argv"
+check "send+images: PDF もクリップボードに載せず、パスを本文の次の行に足す" "$(post "$GOOD" "$(simg 'PDF見て' "[\"$PD\"]")") $([ -e "$TMP/osa" ] && echo osa || echo no-osa) $(grep -c "^$PD$" "$TMP/argv")" "200 no-osa 1"
 touch "$TMP/noimg"
 check "send+images: 端末に画像が入らない → 502 (本文は送らない)" "$(post "$GOOD" "$(simg 'これ見て' "[\"$PP\"]")")" 502
 rm -f "$TMP/noimg"

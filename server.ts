@@ -689,17 +689,17 @@ async function now(name: string | null): Promise<Response> {
 // POST /paste: チャット欄に貼った画像を state/paste/ に保存し、絶対パスを返す。端末へは /send が images で貼る。
 // Origin 必須は /send と同じ理由 (他サイトからディスクに書かせない)。
 // ponytail: 古い画像は消さない。上限 = state/paste/ が貼った分だけ増える。溜まったら日数で消す掃除を足す
-// 動画と CLIP_MAX 超の画像はクリップボードに載せず、/send が保存先のパスを本文に足す (Claude Code は動画を画像にできない。67 MB の gif・15 MB の mp4 が貼れなかった、2026-10-25)
-const PASTE_EXT: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "video/mp4": "mp4", "video/quicktime": "mov", "video/webm": "webm" };
+// 動画・PDF と CLIP_MAX 超の画像はクリップボードに載せず、/send が保存先のパスを本文に足す (Claude Code は動画を画像にできない。67 MB の gif・15 MB の mp4 が貼れなかった、2026-10-25)
+const PASTE_EXT: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "video/mp4": "mp4", "video/quicktime": "mov", "video/webm": "webm", "application/pdf": "pdf" };
 const CLIP_CLASS: Record<string, string> = { png: "PNGf", jpg: "JPEG", gif: "GIFf" }; // osascript でクリップボードに載せられる型だけ
-const PASTED = /^\d+-[0-9a-f]{8}\.(png|jpg|gif|mp4|mov|webm)$/; // /paste が付けた名前だけ (任意ファイルをクリップボードに載せさせない)
+const PASTED = /^\d+-[0-9a-f]{8}\.(png|jpg|gif|mp4|mov|webm|pdf)$/; // /paste が付けた名前だけ (任意ファイルをクリップボードに載せさせない)
 // ponytail: CLIP_MAX は旧い受付上限をそのまま使った。Claude Code が実際に取り込める上限は未計測。PASTE_MAX は Bun.serve の maxRequestBodySize 既定 (128 MB) の手前
 const CLIP_MAX = 20_000_000, PASTE_MAX = 120_000_000;
 const asText = (p: string) => !CLIP_CLASS[p.split(".").pop()!] || Bun.file(p).size > CLIP_MAX;
 async function paste(req: Request): Promise<Response> {
   if (!ORIGINS.has(req.headers.get("origin") ?? "")) return new Response("forbidden origin", { status: 403 });
   const ext = PASTE_EXT[req.headers.get("content-type") ?? ""];
-  if (!ext) return new Response("png / jpeg / gif / mp4 / mov / webm only", { status: 415 });
+  if (!ext) return new Response("png / jpeg / gif / mp4 / mov / webm / pdf only", { status: 415 });
   const buf = await req.arrayBuffer();
   if (!buf.byteLength || buf.byteLength > PASTE_MAX) return new Response("file must be 1 B..120 MB", { status: 413 });
   const path = `${STATE}/paste/${Date.now()}-${crypto.randomUUID().slice(0, 8)}.${ext}`;

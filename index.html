@@ -145,6 +145,7 @@
   #cmedia .pdf span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
   #cimgs:not([hidden]), #fimgs:not([hidden]) { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 6px; }
   .cimg { position: relative; }
+  .cpdf { display: block; height: 56px; max-width: 120px; padding: 0 8px; line-height: 56px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; border-radius: 6px; border: 1px solid var(--line); }
   .cimg img, .cimg video { display: block; height: 56px; max-width: 120px; object-fit: cover; border-radius: 6px; border: 1px solid var(--line); }
   .cimg button { position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; padding: 0; border-radius: 50%; border: 1px solid var(--line); background: var(--panel); color: var(--fg); font-size: 11px; line-height: 1; cursor: pointer; }
   #cwhy { color: var(--muted); }
@@ -649,7 +650,7 @@ if (isMobileUA && window.visualViewport) {
     <div id="pins"></div>
     <textarea id="free" rows="2" placeholder="全体へのひとこと (任意)"></textarea>
     <div id="fimgs" hidden></div>
-    <div class="row"><button id="fattach" title="写真・動画を選んで添付">📎</button><input id="ffile" type="file" accept="image/*,video/*" multiple hidden><button id="pfold" title="赤ペン欄を畳んで元の帯に戻る (書いた分は残る)">▼</button><span id="akmsg"></span><button id="copy">コピー</button><button id="send">送信</button></div>
+    <div class="row"><button id="fattach" title="写真・動画・PDF を選んで添付">📎</button><input id="ffile" type="file" accept="image/*,video/*,application/pdf" multiple hidden><button id="pfold" title="赤ペン欄を畳んで元の帯に戻る (書いた分は残る)">▼</button><span id="akmsg"></span><button id="copy">コピー</button><button id="send">送信</button></div>
   </div>
 </main>
 <aside id="chat">
@@ -658,7 +659,7 @@ if (isMobileUA && window.visualViewport) {
   <nav id="cchips"></nav>
   <div id="sug" hidden></div>
   <div id="cimgs" hidden></div>
-  <div id="cform"><textarea id="ctext" rows="3" placeholder="端末へ送る (⌘+Enter)"></textarea><div id="cact"><button class="q" data-k="1" data-t="A" title="A を送る (1)">A<sup>1</sup></button><button class="q" data-k="2" data-t="B" title="B を送る (2)">B<sup>2</sup></button><button class="q" data-k="3" data-t="C" title="C を送る (3)">C<sup>3</sup></button><button class="q" data-k="4" data-t="ok" title="ok を送る (4)">ok<sup>4</sup></button><button class="q" data-k="5" data-t="続き" title="続き を送る (5)">続き<sup>5</sup></button><div id="copt"></div><div id="cbar"><select class="cpick" data-cmd="model" title="モデルを切り替える (/model を打つ。書きかけ・許可待ちの間は打たない)"><option value="">model</option></select><select class="cpick" data-cmd="effort" title="エフォートを切り替える (/effort を打つ。書きかけ・許可待ちの間は打たない)"><option value="">effort</option></select><button id="csend">送信</button><button id="cattach" title="写真・動画を選んで添付">📎</button><input id="cfile" type="file" accept="image/*,video/*" multiple hidden></div></div></div>
+  <div id="cform"><textarea id="ctext" rows="3" placeholder="端末へ送る (⌘+Enter)"></textarea><div id="cact"><button class="q" data-k="1" data-t="A" title="A を送る (1)">A<sup>1</sup></button><button class="q" data-k="2" data-t="B" title="B を送る (2)">B<sup>2</sup></button><button class="q" data-k="3" data-t="C" title="C を送る (3)">C<sup>3</sup></button><button class="q" data-k="4" data-t="ok" title="ok を送る (4)">ok<sup>4</sup></button><button class="q" data-k="5" data-t="続き" title="続き を送る (5)">続き<sup>5</sup></button><div id="copt"></div><div id="cbar"><select class="cpick" data-cmd="model" title="モデルを切り替える (/model を打つ。書きかけ・許可待ちの間は打たない)"><option value="">model</option></select><select class="cpick" data-cmd="effort" title="エフォートを切り替える (/effort を打つ。書きかけ・許可待ちの間は打たない)"><option value="">effort</option></select><button id="csend">送信</button><button id="cattach" title="写真・動画・PDF を選んで添付">📎</button><input id="cfile" type="file" accept="image/*,video/*,application/pdf" multiple hidden></div></div></div>
   <div id="cmsg"></div>
   <div id="tstat"></div>
   <div id="cmedia"></div>
@@ -1800,15 +1801,15 @@ cimgs.addEventListener("click", (ev) => {
 });
 // 貼り付け (⌘V) も 📎 で選んだ写真も同じ経路: server に預けて pending に積む
 // list = 積む先の配列、render = 描き直し、say = 失敗を出す要素 (チャット欄と赤ペンで共用)
-// 動画も同じ経路で預ける。server は動画をクリップボードでなくパスで端末に送る
-function isMedia(f) { return /^(image|video)\//.test(f.type); }
-function thumb(p) { return p.video ? `<video src="${p.url}" muted></video>` : `<img src="${p.url}" alt="">`; }
+// 動画・PDF も同じ経路で預ける。server はそれらをクリップボードでなくパスで端末に送る (Claude Code はパスから PDF を読む)
+function isMedia(f) { return /^(image|video)\//.test(f.type) || f.type === "application/pdf"; }
+function thumb(p) { return p.pdf ? `<span class="cpdf" title="${esc(p.pdf)}">📄 ${esc(p.pdf)}</span>` : p.video ? `<video src="${p.url}" muted></video>` : `<img src="${p.url}" alt="">`; }
 async function addImages(fs, list, render, say) {
   for (const f of fs) {
     try {
       const r = await fetch("/paste", { method: "POST", headers: { "content-type": f.type }, body: f });
       if (!r.ok) throw new Error((await r.text()) || String(r.status));
-      list.push({ path: (await r.json()).path, url: URL.createObjectURL(f), video: f.type.startsWith("video/") });
+      list.push({ path: (await r.json()).path, url: URL.createObjectURL(f), video: f.type.startsWith("video/"), pdf: f.type === "application/pdf" ? f.name || "PDF" : "" });
       say.textContent = "";
     } catch (e) { say.textContent = `画像を貼れませんでした: ${e.message ?? e}`; }
   }
