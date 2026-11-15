@@ -1406,7 +1406,7 @@ function stackNotes(items, gap) {
 }
 
 const pinNodes = new WeakMap();
-let marginFrame = 0, composingPin = false;
+let marginFrame = 0, composingPin = false, marginSkips = 0, marginPassAt = 0, marginLast = []; // 後ろ 3 つは #dbg の記録用
 const margin = document.getElementById("margin"), pinsEl = document.getElementById("pins"), mainEl = document.querySelector("main");
 const marginResize = new ResizeObserver(() => scheduleMargin());
 const pinNode = (p, k, choice) => {
@@ -1434,7 +1434,7 @@ const marginAnchor = (entry) => entry.choice
   : document.querySelector(`#reply [data-pin="${CSS.escape(entry.k)}"]`);
 const scheduleMargin = () => { if (!marginFrame) marginFrame = requestAnimationFrame(() => { marginFrame = 0; layoutMargin(); }); };
 function layoutMargin() {
-  if (composingPin) return;
+  if (composingPin) return void marginSkips++;
   const d = drafts.get(curName()), desktop = document.documentElement.classList.contains("wide") && !document.documentElement.classList.contains("narrow");
   if (margin.hidden === desktop) margin.hidden = !desktop;
   const available = desktop && margin.getBoundingClientRect().width >= 160;
@@ -1465,6 +1465,7 @@ function layoutMargin() {
   const height = placed.length ? `${tops[tops.length - 1] + placed[placed.length - 1].node.getBoundingClientRect().height + 32}px` : "0px";
   if (margin.style.height !== height) margin.style.height = height;
   margin.hidden = !placed.length;
+  marginPassAt = performance.now(); marginLast = placed.map((entry, i) => [entry.k, Math.round(entry.top), tops[i]]);
 }
 
 let penFold = false; // スマホ: 赤ペン欄を畳んでいる
@@ -1563,6 +1564,26 @@ document.getElementById("ask").addEventListener("toggle", scheduleMargin);
 document.addEventListener("rmx-wide", scheduleMargin);
 document.fonts?.ready.then(scheduleMargin);
 document.fonts?.addEventListener("loadingdone", scheduleMargin);
+// #dbg 付きの時だけ: 右余白のカードが、今の錨の行から積み直した位置と 6px 以上ずれていたら、その時の値を state/dbg.jsonl へ送る
+// (2026-11-15 カードが行より 90〜105px 下に出る件。Chromium では再現せず、実機の値で原因を見る。原因が分かったら外す)
+// ponytail: 採用行 (data-k の無いカード) は積み直しに入れない。採用行と赤ペンが混ざると誤検知する
+let marginDrift = "";
+if (location.hash.includes("dbg")) setInterval(() => {
+  const r = Math.round, mainTop = mainEl.getBoundingClientRect().top;
+  const rows = [...margin.children].filter((n) => n.dataset.k != null).map((n) => {
+    const a = document.querySelector(`#reply [data-pin="${CSS.escape(n.dataset.k)}"]`);
+    return [n.dataset.k, a ? r(a.getBoundingClientRect().top - mainTop + mainEl.scrollTop) : null, r(parseFloat(n.style.top)), r(n.getBoundingClientRect().height)];
+  });
+  const want = stackNotes(rows.map(([, top, , h]) => ({ top, h })), 4);
+  const key = JSON.stringify(rows);
+  if (!rows.some((row, i) => Math.abs(row[2] - want[i]) > 6) || key === marginDrift) return;
+  marginDrift = key;
+  const reply = document.getElementById("reply").getBoundingClientRect();
+  const v = { trace: "margin", cols: "k anchorTop cardTop cardH", rows, want: want.map(r), last: marginLast, lastCols: "k entryTop placedTop", composingPin, frame: !!marginFrame, skips: marginSkips,
+    sinceLastPass: r(performance.now() - marginPassAt), scrollTop: r(mainEl.scrollTop), reply: [r(reply.width), r(reply.height)], active: document.activeElement?.closest("#margin, #pins, #reply")?.id ?? document.activeElement?.tagName,
+    hidden: document.hidden, cls: document.documentElement.className, zoom: document.documentElement.style.zoom || "", dpr: devicePixelRatio, inner: [innerWidth, innerHeight], page: pageVer };
+  fetch("/dbg", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(v) }).catch(() => {});
+}, 1000);
 document.getElementById("reply").addEventListener("load", scheduleMargin, true);
 document.getElementById("reply").addEventListener("loadedmetadata", scheduleMargin, true);
 document.getElementById("free").addEventListener("input", (ev) => { draftOf(curName()).free = ev.target.value; });
