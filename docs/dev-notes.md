@@ -36,6 +36,6 @@
 6. 確認 (hook): `python3 hooks/stop-to-fragment.py < test/fixture-lowload.jsonl && ls state state/history`
 7. 確認 (server): `curl -s localhost:4310/history | head -c 200` / `curl -s localhost:4310/fragment | head -3`
 8. 送り先の状態: `GET /now` がモデル・エフォート・`ctx` を返す。モデルとエフォートは transcript の最後の `/model` `/effort` と assistant 行から、モデルが無ければ settings の `"model"` (`<cwd>/.claude/settings.local.json` → `<cwd>/.claude/settings.json` → `~/.claude/settings.json`、最後は `RMV_CC_SETTINGS` で場所を変更)。画面は送り先が変わった時と新しい返事が来た時に取り直す。`ctx` の上限は model が `[1m]` で終われば 100 万、それ以外は 20 万の推定
-9. 新規セッション: `POST /new {cwd}` が `orca terminal create --worktree path:<cwd> --command claude --focus` を叩く。`cwd` は `orca worktree list` の path と完全一致する時だけ受け付け、他は 403 (viewer と同じ Origin だけ許可)。候補は `GET /worktrees` (60 秒 memo)
+9. 新規セッション: `POST /new {cwd}` が herdr の pane で `claude` を起動する (`herdr agent start --kind claude`。`RMV_NEW_CMD` が `claude` 以外なら `herdr pane run`)。pane は同じ cwd の空いた shell の pane → 同じ cwd の pane を `pane split --direction down` → 無ければ `workspace create` の順で選ぶ。herdr が止まっている・分割や起動に失敗した時は Orca に落とさず 500 で理由を返し、画面に出す。`cwd` は `GET /worktrees` の path (`orca worktree list`、取れなければ herdr の pane の cwd) と完全一致する時だけ受け付け、他は 403 (viewer と同じ Origin だけ許可)。候補は `GET /worktrees` (60 秒 memo)
 
 依存なし (CDN は marked@14.1.2 / mermaid@11.4.1 に pin)。`state/` は生成物。正本はこの repo だけ。macro-harness は Stop hook の配線 (settings.json) でここの `hooks/stop-to-fragment.py` を指すだけ (2026-09-29 に macro-harness の rmv/ から切り出し)。

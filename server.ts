@@ -401,14 +401,14 @@ async function herdrOrder(paths: string[]): Promise<Map<string, number> | null> 
   }
 }
 
-// POST /new {cwd}: まっさらな Claude Code セッションを起動する。herdr が動いていればその pane 分割 (newInHerdr)、でなければ Orca の新しい端末タブ。
-// cwd は orca worktree list に載っている path と完全一致する時だけ (任意の dir で任意の command を走らせない)。command は RMV_NEW_CMD (既定 claude)。shell は通さない
+// POST /new {cwd}: まっさらな Claude Code セッションを herdr の pane で起動する (newInHerdr)。herdr が止まっている・失敗した時は Orca に落とさず理由付きの 500。
+// cwd は worktreePaths (orca worktree list、取れなければ herdr の pane の cwd) に載っている path と完全一致する時だけ (任意の dir で任意の command を走らせない)。command は RMV_NEW_CMD (既定 claude)。shell は通さない
 const NEW_CMD = process.env.RMV_NEW_CMD || "claude";
 // herdr が動いていれば選んだ cwd と同じフォルダの pane を下に分割して NEW_CMD を起動し、その pane id を返す。herdr は「フォルダごとに workspace」で使うので、
 // 別フォルダの pane を分割すると新 pane がそのフォルダの画面の中に入り、選んだフォルダで立ち上がったように見えない (2026-10-13 実機)。
 // 分割元 = pane list (素の shell も含む) のうち cwd 一致 → near の pane → focused → 先頭。一致する pane が無ければ workspace を新設してその root pane を使う。
 // ただし cwd 一致の pane のうち agent が居らず前面が素の shell の pane (paneIsIdleShell) があれば、分割せずその pane で起動する (開くたびに pane が増えない)。複数なら near → focused → 先頭。
-// 再利用した pane は user の物なので起動に失敗しても閉じない。動いていない・途中で失敗は null (呼び元が Orca に落とす)。near は `<handle>__<paneKey>` なので paneKey が一致する pane を探す
+// 再利用した pane は user の物なので起動に失敗しても閉じない。動いていない・途中で失敗は理由付きの Error を投げる (下の newInHerdr の注記)。near は `<handle>__<paneKey>` なので paneKey が一致する pane を探す
 // 前面が shell 自身だけの pane か: `herdr pane process-info` の foreground_processes が shell_pid の 1 プロセスだけ (dev server / vim / 実行中のコマンドは別 pid)。取れない・読めない時は false (誤って打ち込むより pane が増える方がまし)
 // ponytail: プロンプトに打ちかけの文字があるかは見えない。上限 = shell が前面なら空きとみなす
 async function paneIsIdleShell(pane: string, sock: string | null): Promise<boolean> {
