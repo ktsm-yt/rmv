@@ -378,7 +378,7 @@ async function worktrees(): Promise<Response> {
   const body = order ? [...hit, ...paths.filter((p) => !order.has(p))] : paths;
   return Response.json(body, { headers: { "cache-control": "no-store", "x-rmv-fixed": String(hit.length) } });
 }
-// path → workspace の番号。pane は cwd が一致するか配下にある path のうち一番深い 1 つに当てる (/Users/i の pane が全部を拾わないように)。
+// path → workspace の番号。pane は cwd が一致するか配下にある path のうち一番深い 1 つに当てる (ホームの pane が全部の path に当たらないように)。
 // 番号はその path に当たった pane の workspace の最小番号 (同じフォルダが 2 つの workspace にあれば若い方)。
 // 対応は label の文字でなく pane の workspace_id で取る。既定 session だけ見る (名前付き session は番号が別に振られるので混ぜない)。取れなければ null
 async function herdrOrder(paths: string[]): Promise<Map<string, number> | null> {
