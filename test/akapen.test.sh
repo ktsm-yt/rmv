@@ -967,7 +967,8 @@ rm -f "$STATE/history/$PPA" "$STATE/history/${PPA%.md}.json" "$STATE/history/$PP
 list "$(term term_test "$CWD" 1)"
 
 # --- herdr: 名前付き session (herdr --session solo) は socket が別で pane id が既定 session と重なる ---
-SOLO=/Users/i/.config/herdr/sessions/solo/herdr.sock; DFLT=/Users/i/.config/herdr/herdr.sock
+# 名前付き session の socket は在る物を置く (socket が消えた名前付き session の返事は live にしない)
+SOLO="$TMP/sessions/solo/herdr.sock"; mkdir -p "${SOLO%/*}"; : > "$SOLO"; DFLT=/Users/i/.config/herdr/herdr.sock
 list "$(term term_test "$CWD" 1)" "$(term term_pp "$CWD" 5)"
 PPD="29990101T000000011-ppd.md"; PPS="29990101T000000012-pps.md"
 ppentry2() { # <socket> <dst name>: 同じ pane id w5:p1 の返事を、socket だけ変えて server の history に置く
