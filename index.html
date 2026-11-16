@@ -2080,7 +2080,8 @@ if (isMobileUA) document.addEventListener("click", (ev) => { if (!ev.composedPat
 renderFilter();
 
 // ＋ 新規: GET /worktrees の path を一覧にし、行を押したら即 POST /new (許可する cwd の判定は server だけ)。
-// 並び = /history で最近返事があった順 (repo 基準)。worktree (/.worktrees/ /.harness-worktrees/) は親の下に字下げ。先頭 = 選んでいる repo に一致する path
+// 並び = server の順 (herdr の workspace の番号順、Orca だけなら Orca の順) のまま。先頭 x-rmv-fixed 件より後ろ (どの workspace にも無い) だけ /history で最近返事があった順 (repo 基準)。
+// worktree (/.worktrees/ /.harness-worktrees/) は親の下に字下げ。選んでいる repo の行は印だけ付け、先頭には移さない (開くたびに順が変わらないように)
 const newpop = document.getElementById("newpop");
 const closeNew = () => { newpop.hidden = true; document.body.classList.remove("new-open"); };
 const WT_RE = /^(.*?)\/\.(?:harness-)?worktrees\//;
@@ -2090,6 +2091,7 @@ async function openNew() {
     const r = await fetch("/worktrees", { cache: "no-store" });
     if (!r.ok) throw new Error((await r.text()) || String(r.status));
     const paths = await r.json();
+    const fixed = Number(r.headers.get("x-rmv-fixed")) || 0;
     if (!Array.isArray(paths) || !paths.length) throw new Error("worktree が無い");
     const base = (p) => p.split("/").filter(Boolean).pop();
     const last = new Map(); // repo (小文字) → 最後の返事の時刻
@@ -2102,12 +2104,13 @@ async function openNew() {
     const mains = paths.filter((p) => !parentOf(p) || !paths.includes(parentOf(p)));
     const kids = (m) => paths.filter((p) => parentOf(p) === m).sort(byRank);
     const groupRank = (m) => Math.max(rank(m), ...kids(m).map(rank));
-    mains.sort((a, b) => groupRank(b) - groupRank(a));
-    if (curPath) { const i = mains.indexOf(curPath); if (i >= 0) mains.splice(i, 1); mains.unshift(curPath); }
+    const pos = (p) => { const i = paths.indexOf(p); return i < fixed ? i : Infinity; };
+    const groupPos = (m) => Math.min(pos(m), ...kids(m).map(pos)); // 親の pane が無く worktree にだけ pane がある repo も、その workspace の位置に置く
+    mains.sort((a, b) => groupPos(a) - groupPos(b) || groupRank(b) - groupRank(a)); // 固定順どうしは server の順、残り (Infinity - Infinity = NaN) は最近の順
     const cnt = new Map(); for (const m of mains) cnt.set(base(m), (cnt.get(base(m)) ?? 0) + 1);
     const label = (p) => cnt.get(base(p)) > 1 ? p.split("/").filter(Boolean).slice(-2).join("/") : base(p);
     const row = (p, sub) => `<button class="it${sub ? " sub" : ""}${p === curPath ? " cur" : ""}" data-cwd="${esc(p)}" title="${esc(p)}"><span>${sub ? "└ " : ""}${esc(sub ? base(p) : label(p))}</span>${p === curPath ? '<span class="k">選択中</span>' : ""}</button>`;
-    newpop.innerHTML = `<div class="hd">どのフォルダで新しく始める?</div>` + mains.map((m) => row(m, false) + kids(m).filter((c) => c !== curPath).map((c) => row(c, true)).join("")).join("");
+    newpop.innerHTML = `<div class="hd">どのフォルダで新しく始める?</div>` + mains.map((m) => row(m, false) + kids(m).map((c) => row(c, true)).join("")).join("");
     newpop.hidden = false;
     document.body.classList.add("new-open");
     say.textContent = "";

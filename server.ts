@@ -368,9 +368,37 @@ async function socketOfSession(near: string): Promise<string | null> {
   }
   return null;
 }
+// 一覧の順は herdr の workspace の番号順 (順の正本は user が herdr で並べた順。rmv は持たない)。どの workspace にも当たらない path は後ろ。
+// x-rmv-fixed = 先頭の何件がこの固定順か (残りは画面が最近の返事の順に並べる)。herdr が取れない (Orca だけ) 時は Orca の順のまま全件を固定にする
 async function worktrees(): Promise<Response> {
   const paths = await worktreePaths();
-  return paths ? Response.json(paths, { headers: { "cache-control": "no-store" } }) : new Response("orca worktree list failed", { status: 502 });
+  if (!paths) return new Response("orca worktree list failed", { status: 502 });
+  const order = await herdrOrder(paths);
+  const hit = order ? paths.filter((p) => order.has(p)).sort((a, b) => order.get(a)! - order.get(b)!) : paths; // sort は安定: 同じ workspace の中は元の順
+  const body = order ? [...hit, ...paths.filter((p) => !order.has(p))] : paths;
+  return Response.json(body, { headers: { "cache-control": "no-store", "x-rmv-fixed": String(hit.length) } });
+}
+// path → workspace の番号。pane は cwd が一致するか配下にある path のうち一番深い 1 つに当てる (/Users/i の pane が全部を拾わないように)。
+// 番号はその path に当たった pane の workspace の最小番号 (同じフォルダが 2 つの workspace にあれば若い方)。
+// 対応は label の文字でなく pane の workspace_id で取る。既定 session だけ見る (名前付き session は番号が別に振られるので混ぜない)。取れなければ null
+async function herdrOrder(paths: string[]): Promise<Map<string, number> | null> {
+  try {
+    const [w, p] = await Promise.all([herdrRun(["workspace", "list"]), herdrRun(["pane", "list"])]);
+    const ws = w.code === 0 ? JSON.parse(w.out)?.result?.workspaces : null;
+    const panes = p.code === 0 ? JSON.parse(p.out)?.result?.panes : null;
+    if (!Array.isArray(ws) || !Array.isArray(panes)) return null;
+    const num = new Map(ws.map((x) => [x?.workspace_id, x?.number]));
+    const order = new Map<string, number>();
+    for (const x of panes) {
+      const n = num.get(x?.workspace_id), cwd = x?.cwd;
+      if (typeof n !== "number" || typeof cwd !== "string") continue;
+      const path = paths.filter((q) => cwd === q || cwd.startsWith(q + "/")).sort((a, b) => b.length - a.length)[0];
+      if (path && (order.get(path) ?? Infinity) > n) order.set(path, n);
+    }
+    return order;
+  } catch {
+    return null;
+  }
 }
 
 // POST /new {cwd}: まっさらな Claude Code セッションを起動する。herdr が動いていればその pane 分割 (newInHerdr)、でなければ Orca の新しい端末タブ。
