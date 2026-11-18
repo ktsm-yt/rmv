@@ -152,6 +152,7 @@
   .cimg button { position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; padding: 0; border-radius: 50%; border: 1px solid var(--line); background: var(--panel); color: var(--fg); font-size: 11px; line-height: 1; cursor: pointer; }
   #cwhy { color: var(--muted); }
   #cmsg { color: var(--red); overflow-wrap: anywhere; }
+  #cmsg .queue-accepted { color: var(--green); }
   #cwhy:empty, #cmsg:empty { display: none; }
   body.chat-closed #chat { padding: 12px 4px; }
   body.chat-closed #chat > :not(#chead), body.chat-closed #chead > :not(#ctoggle) { display: none; }
@@ -879,7 +880,7 @@ async function show(md, entry) {
 // 履歴: list[0] が最新。following = 最新を見ている間は新着で自動的に差し替える。
 // all = /history の全件 (プロジェクト列のため常に絞らずに取る)、list = そのうち選択中プロジェクト (?repo=) かつセッション (?s=) の分。
 // ← → と追従は list の中だけで動く。
-let all = [], list = [], idx = 0, following = true, shownName = null;
+let all = [], list = [], idx = 0, following = true, shownName = null, showRequest = 0;
 const params = new URLSearchParams(location.search);
 let SESS = params.get("s") || ""; // "" = 最新 (最後に返事したセッションを追う)
 let REPO = params.get("repo") || ""; // "" = すべて
@@ -907,8 +908,19 @@ async function showIdx(i) {
   const e = list[idx];
   renderBar();
   if (!e || e.name === shownName) return;
+  const request = ++showRequest;
   shownName = e.name;
-  await show(await (await fetch(`/history/${encodeURIComponent(e.name)}`, { cache: "no-store" })).text(), e);
+  renderChat();
+  let md;
+  try {
+    const reply = await fetch(`/history/${encodeURIComponent(e.name)}`, { cache: "no-store" });
+    if (!reply.ok) throw new Error(`history: ${reply.status}`);
+    md = await reply.text();
+  } catch (err) {
+    if (request === showRequest && shownName === e.name) { shownName = null; renderChat(); }
+    throw err;
+  }
+  if (request === showRequest && shownName === e.name) await show(md, e);
 }
 // #dbg 付きの時だけ: ← → の後 24 コマの高さの値を state/dbg.jsonl へ送る (スマホのちらつきを実機で捕まえる。直し方 2 回が当て推量で外れた、2026-11-15)
 function traceSwitch() {
@@ -1257,11 +1269,11 @@ document.addEventListener("keydown", (ev) => {
   if (ev.ctrlKey && !ev.metaKey && !ev.altKey && /^[-=+;^0]$/.test(ev.key)) { ev.preventDefault(); return setPageZoom(ev.key === "0" ? 1 : (+document.documentElement.style.zoom || 1) + (ev.key === "-" ? -0.1 : 0.1)); } // Ctrl + / - / 0 = 拡大 / 縮小 / 戻す (JIS の ; ^ も +。Cmd +/- はブラウザの拡大のまま)
   if (ev.code === "KeyN" && ev.ctrlKey && !ev.metaKey && !ev.altKey && !ev.shiftKey) { ev.preventDefault(); return newpop.hidden ? openNew().then(() => newpop.querySelector(".it")?.focus()) : closeNew(); } // Ctrl+N = 新規セッションの一覧を開く / 閉じる (入力欄の中でも。Cmd+N はブラウザ・Orca の新規ウィンドウ、Option+N は ˜ の入力なので空いている Ctrl に置いた)
   if (!newpop.hidden && (ev.key === "ArrowUp" || ev.key === "ArrowDown")) { ev.preventDefault(); const its = [...newpop.querySelectorAll(".it")], i = its.indexOf(document.activeElement); return its.at(i < 0 && ev.key === "ArrowUp" ? -1 : (i + (ev.key === "ArrowDown" ? 1 : -1)) % its.length)?.focus(); } // 一覧が開いている間の ↑↓ = 行の移動 (Enter で起動、Esc で閉じる)
-  if (ev.key === "Enter" && (ev.metaKey || ev.ctrlKey)) { ev.preventDefault(); return document.getElementById(ev.target === ctext ? "csend" : "send").click(); } // Cmd+Enter = 送信 (入力欄の中でも。チャット欄にいる時はチャット欄の送信)
+  if (ev.key === "Enter" && (ev.metaKey || ev.ctrlKey) && !ev.isComposing) { ev.preventDefault(); return document.getElementById(ev.target === ctext ? "csend" : "send").click(); } // Cmd+Enter = 送信 (入力欄の中でも。チャット欄にいる時はチャット欄の送信)
   if (ev.code === "KeyR" && ev.shiftKey && !ev.altKey && !ev.ctrlKey && !ev.metaKey && !ev.target.closest?.("input, textarea, [contenteditable]")) return togglePause(); // Shift+R = 読み上げの一時停止 / 再開 (下の修飾キー除けより前で拾う。ev.key だと Caps Lock ON で "r" になるので物理キーで見る)
   if (ev.altKey || ev.ctrlKey || ev.metaKey || ev.shiftKey) return;
   const qb = /^[0-9]$/.test(ev.key) && document.querySelector(`#cact .q[data-k="${ev.key}"]`);
-  if (qb && !ev.target.closest?.("input, textarea, [contenteditable]") && sug.hidden) { ev.preventDefault(); return qb.click(); } // 数字 1〜0 = クイック送信 (欄の外だけ。空のチャット欄でも拾うと「3」を打とうとして A が送られた、2026-09-30)
+  if (qb && !qb.disabled && !ev.target.closest?.("input, textarea, [contenteditable]") && sug.hidden) { ev.preventDefault(); return qb.click(); } // 数字 1〜0 = クイック送信 (欄の外だけ。空のチャット欄でも拾うと「3」を打とうとして A が送られた、2026-09-30)
   // ↑↓ = 送り先 chip (= 端末) を上下に移る。欄の外、または空のチャット欄で (skill 候補が出ている時は候補の移動が先)
   if ((ev.key === "ArrowUp" || ev.key === "ArrowDown") && sug.hidden && (ev.target === ctext ? !ctext.value : !ev.target.closest?.("input, textarea, [contenteditable]"))) {
     const cs = [...cchips.querySelectorAll(".chip")], i = cs.findIndex((c) => c.classList.contains("on")), n = cs[i + (ev.key === "ArrowDown" ? 1 : -1)];
@@ -1644,11 +1656,12 @@ document.getElementById("send").onclick = async () => {
   }
 };
 
-// チャット欄: ピン無しで自由文を送る。送り先は赤ペンと同じ (表示中 entry の name → server がその entry の terminal へ)。
+// チャット欄: ピン無しで自由文を送る。サーバーが履歴の name から Claude の端末か Codex の会話を決める。
 // focus:false = 端末タブへ切り替えず viewer に留まる。送信済みの履歴は持たない (2026-09-29 user: 再入力の用途が薄い)。
 const chat = document.getElementById("chat"), ctext = document.getElementById("ctext"), csend = document.getElementById("csend");
-if (isMobileUA) ctext.placeholder = "端末へ送る"; // ⌘+Enter はキーボードが無いので出さない
 let chipLabels = new Map(), chatBusy = false;
+const chatDrafts = new Map(); // Codex の会話ごと。null は従来どおり共通の Claude 下書き。
+let draftSession = null, chatStatusSession = null;
 // 送り先の固定: プロジェクト列の選択 (repo 小文字、"すべて" は "") → session key を localStorage "rmx.chat.pin" に。無ければ追従 (表示中の返事の端末)。
 // 固定中に送る entry = /history 一覧 (all、新しい順) でそのセッションの最新。表示中の返事が切り替わっても変わらない。
 const cchips = document.getElementById("cchips");
@@ -1656,7 +1669,10 @@ let chatPins = {}, cchipsHtml = null, chipEntries = new Map();
 try { chatPins = JSON.parse(localStorage.getItem("rmx.chat.pin")) || {}; } catch {}
 // 固定先の端末が終了していたら (entry が全部 live=false) 固定を無視して追従に戻す。終了した端末へは送れないので、
 // 固定を残すと /clear や端末の開き直しの後も昨日の端末を指したまま送信が失敗する (2026-10-06 実機: Crewforce が前日 18:39 の端末に固定)
-const chatPin = () => { const p = chatPins[REPO.toLowerCase()] ?? ""; return p && !all.some((e) => e.session === p && e.live) && all.some((e) => e.session === p) ? "" : p; };
+const chatPin = () => {
+  const p = chatPins[REPO.toLowerCase()] ?? "";
+  return p && all.some((e) => e.session === p) && !all.some((e) => e.session === p && (e.live || e.codex)) ? "" : p;
+};
 // 右下: 送り先セッションで使った mermaid 図 + 画像・PDF (server の /media)。返事が変わった時だけ取り直す。押すと図・画像は全画面、PDF は別タブ
 const cmedia = document.getElementById("cmedia");
 let mediaFor, mmSeq = 0;
@@ -1700,20 +1716,40 @@ cmedia.addEventListener("click", (ev) => {
   zoomSet = [...cmedia.querySelectorAll("button.mt > :is(img, svg)")]; // PDF は送りに入れない
   zoomGallery(zoomSet.indexOf(t));
 });
-const chatTo = () => { const p = chatPin(); return p ? all.find((e) => e.session === p) ?? null : cur; };
+const chatTo = () => {
+  const p = chatPin();
+  if (p) return all.find((e) => e.session === p) ?? null;
+  const next = list[idx];
+  return cur && (shownName === cur.name || (shownName === next?.name && next.session === cur.session && next.sid === cur.sid)) ? cur : null;
+};
 function renderChat() {
   const pin = chatPin(), to = chatTo();
+  if (to) {
+    const key = to.codex ? to.session : null;
+    if (key !== draftSession) {
+      if (ctext.value) chatDrafts.set(draftSession, ctext.value); else chatDrafts.delete(draftSession);
+      draftSession = key;
+      ctext.value = chatDrafts.get(key) ?? "";
+    }
+  }
+  if (chatStatusSession !== (to?.session ?? null)) {
+    chatStatusSession = to?.session ?? null;
+    document.getElementById("cmsg").textContent = "";
+    renderSug();
+  }
   loadMedia(to);
   loadNow(to);
-  const lbl = to ? chipLabels.get(to.session) ?? `${to.repo || "?"} · ${to.session}` : pin;
+  const lbl = to ? (to.codex ? "Codex · " : "") + (chipLabels.get(to.session) ?? `${to.repo || "?"} · ${to.session}`) : pin;
   document.getElementById("cto").textContent = (isMobileUA ? "" : "→ ") + (lbl ? `${pin ? "📌 " : ""}${lbl}` : "(送り先なし)"); // スマホは名前に幅を回す (左の ▲▼ と点が送り先の印)
   const why = !to ? (pin ? "固定先のセッションの返事が一覧に無い (送れない)" : "表示中の返事が無い (送れない)")
-    : to.codex ? "Codex の会話へは赤ペンの送信から送る (送信欄は未対応)"
-    : !to.terminal ? (pin ? "固定先は Orca / herdr 外の端末 (送れない)" : "この返事は Orca / herdr 外の端末 (送れない)") : "";
+    : !to.terminal && !to.codex ? (pin ? "固定先は Orca / herdr 外の端末 (送れない)" : "この返事は Orca / herdr 外の端末 (送れない)") : "";
   document.getElementById("cwhy").textContent = why;
+  ctext.placeholder = (to?.codex ? "Codexへ文字を送る" : "端末へ送る") + (isMobileUA ? "" : " (⌘+Enter)");
   ctext.disabled = csend.disabled = !!why || chatBusy;
-  document.getElementById("cattach").disabled = csend.disabled;
-  document.querySelectorAll("#cact .q, #cact .cpick").forEach((b) => { b.disabled = csend.disabled; });
+  const terminalControlsDisabled = csend.disabled || !!to?.codex;
+  document.getElementById("cattach").disabled = terminalControlsDisabled;
+  document.querySelectorAll("#cact .q, #cact .cpick").forEach((b) => { b.disabled = terminalControlsDisabled; });
+  cimgs.hidden = !to || to.codex || !pending.length;
   csend.textContent = chatBusy ? "送信中…" : "送信";
   // 各行 = 時刻 + 最新返事の冒頭。同じ repo の chip は時刻だけでは見分けられない (2026-09-29 user)
   // 時刻の左に下の一覧と同じ丸、時刻の色も状態で変える (作業中 = 明るく太字 / 黄 = 返事が要る / 緑 = 閉じてよい / 灰 = 静か・終了)。2026-10-25 user
@@ -1725,7 +1761,7 @@ function renderChat() {
     const ask = openAsk.has(e.session) && (e.asking?.prompt ?? e.prompt);
     return `<i class="${st}"></i><b>${esc(chipLabels.get(e.session) ?? (e.repo || "?"))}</b><time class="${st}">${esc(hhmm(new Date(e.ts)))}</time><span>${esc(sub)}</span>${ask ? `<span class="task">${esc(ask)}</span>` : ""}`;
   };
-  const shown = [...chipEntries.values()].filter((e) => e.live || showDead || e.session === pin).slice(0, isMobileUA ? 12 : 5); // スマホは一覧がスクロールするので多めに出す (2 列では上の chip の代わり)
+  const shown = [...chipEntries.values()].filter((e) => e.live || e.codex || showDead || e.session === pin).slice(0, isMobileUA ? 12 : 5); // スマホは一覧がスクロールするので多めに出す (2 列では上の chip の代わり)
   // 許可待ちはプロジェクトの絞り込みと 5 件の枠に関係なく先頭に出す (別 repo の foyer の画面の許可待ちが見えなかった、2026-10-15)
   const perms = [...new Map(all.filter((e) => e.session && e.live && e.perm).map((e) => [e.session, e])).values()];
   renderTstat(isMobileUA ? perms : [...perms, ...shown.filter((e) => e.live && !perms.some((p) => p.session === e.session))]);
@@ -1736,7 +1772,7 @@ function renderChat() {
     document.getElementById("ddot").className = to?.live ? stOf(to).st : "";
     document.getElementById("dwait").innerHTML = (wait ? `<b>待ち </b>${wait}` : "") + (run ? `<span>${wait ? " / " : ""}動作中 ${run}</span>` : "");
   }
-  let html = chipBtn("", !pin, "追従", "表示中の返事の端末へ送る") + shown.map((e) => chipBtn(e.session, e.session === pin, (isMobileUA ? mobRow : row)(e), `送り先をここに固定: ${chipLabels.get(e.session)}`, true, e.repo)).join("");
+  let html = chipBtn("", !pin, "追従", "表示中の会話へ送る") + shown.map((e) => chipBtn(e.session, e.session === pin, (isMobileUA ? mobRow : row)(e), `送り先をここに固定: ${chipLabels.get(e.session)}`, true, e.repo)).join("");
   if (pin && !chipLabels.has(pin)) html += chipBtn(pin, true, "固定中 (返事なし)", pin);
   if (html === cchipsHtml) return; // 毎 poll 描き直すと横スクロール位置が飛ぶ
   cchipsHtml = html;
@@ -1821,27 +1857,52 @@ async function pickChip(s) {
 }
 async function sendText(text, clear) {
   const to = chatTo(), say = document.getElementById("cmsg");
-  const images = clear ? pending.map((p) => p.path) : []; // 定型ボタン (ok / A …) は画像を連れていかない
-  if (!to?.terminal || chatBusy || (!text.trim() && !images.length)) return;
+  if (!to || (to.codex ? !clear : !to.terminal) || chatBusy) return;
+  const attachments = clear && !to.codex ? [...pending] : [];
+  if (!text.trim() && !attachments.length) return;
+  const key = to.codex ? to.session : null;
+  const sameTarget = () => {
+    const next = chatTo();
+    return next?.session === to.session && next.sid === to.sid;
+  };
   chatBusy = true;
   say.textContent = "";
   renderChat();
   try {
-    const r = await fetch("/send", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: to.name, text, images, focus: false, reset: !clear }) }); // 数字キー (clear=false) は端末の入力欄を空にしてから送る
-    if (!r.ok) throw new Error((await r.text()) || String(r.status)); // server の本文 (409 terminal closed: … 等) をそのまま出す
-    if (clear) { ctext.value = ""; pending.forEach((p) => URL.revokeObjectURL(p.url)); pending = []; renderImgs(); }
-  } catch (e) { say.textContent = e.message ?? String(e); }
-  chatBusy = false;
-  renderChat();
-  ctext.focus();
+    const r = await fetch("/send", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: to.name, text, images: attachments.map((p) => p.path), focus: false, reset: !clear }) });
+    if (!r.ok) {
+      const reason = (await r.text()) || String(r.status);
+      if (sameTarget()) say.textContent = reason;
+      return;
+    }
+    if (clear && (draftSession === key ? ctext.value : chatDrafts.get(key)) === text) {
+      chatDrafts.delete(key);
+      if (draftSession === key) ctext.value = "";
+    }
+    if (attachments.length) {
+      for (const p of attachments) {
+        const at = pending.indexOf(p);
+        if (at >= 0) { URL.revokeObjectURL(p.url); pending.splice(at, 1); }
+      }
+      renderImgs();
+    }
+    if (to.codex && sameTarget()) say.innerHTML = '<span class="queue-accepted">キューに登録</span>';
+  } catch (e) {
+    if (sameTarget()) say.textContent = to.codex ? "通信が切れ、登録できたか分かりません。Codexのキューを確認してください" : e.message ?? String(e);
+  } finally {
+    chatBusy = false;
+    renderChat();
+    if (sameTarget()) ctext.focus();
+  }
 }
 csend.onclick = () => sendText(ctext.value, true);
 // 画像の貼り付け (⌘V): server が state/paste/ に保存し、欄の上に縮小表示で並べる。
 // 送信時に server が 1 枚ずつクリップボード経由で端末に貼る (Claude Code の欄に [Image #N] で入る)
 const cimgs = document.getElementById("cimgs");
-let pending = []; // [{ path, url }]
+const pending = []; // Claude の共有下書きに付ける [{ path, url }]
 function renderImgs() {
-  cimgs.hidden = !pending.length;
+  const to = chatTo();
+  cimgs.hidden = !to || to.codex || !pending.length;
   cimgs.innerHTML = pending.map((p, i) => `<span class="cimg">${thumb(p)}<button data-i="${i}" title="外す">×</button></span>`).join("");
 }
 cimgs.addEventListener("click", (ev) => {
@@ -1871,18 +1932,23 @@ ctext.addEventListener("paste", (ev) => {
   const fs = [...(ev.clipboardData?.files ?? [])].filter(isMedia);
   if (!fs.length) return; // 文字の貼り付けは既定動作のまま
   ev.preventDefault();
-  addImages(fs, pending, renderImgs, document.getElementById("cmsg"));
+  addChatImages(fs);
 });
 const cfile = document.getElementById("cfile"), cattach = document.getElementById("cattach");
-cattach.onclick = () => cfile.click();
-cfile.onchange = () => { addImages([...cfile.files].filter(isMedia), pending, renderImgs, document.getElementById("cmsg")); cfile.value = ""; }; // 同じ写真をもう一度選べるように空に戻す
+function addChatImages(fs) {
+  const to = chatTo();
+  if (!to?.terminal || to.codex || chatBusy || !fs.length) return;
+  addImages(fs, pending, renderImgs, document.getElementById("cmsg"));
+}
+cattach.onclick = () => { if (!cattach.disabled) cfile.click(); };
+cfile.onchange = () => { addChatImages([...cfile.files].filter(isMedia)); cfile.value = ""; }; // 同じ写真をもう一度選べるように空に戻す
 // Finder からのドラッグも同じ経路 (2026-10-10: 落とした写真が拾われず添付できなかった)。
 // ファイルを運んでいる時だけページ全体で既定動作を止める: 止めないと欄で drop が起きず、欄の外に落とすと画面がそのファイルに置き換わる
 const draggedFiles = (ev) => ev.dataTransfer?.types.includes("Files");
 addEventListener("dragover", (ev) => { if (draggedFiles(ev)) ev.preventDefault(); });
 addEventListener("drop", (ev) => { if (draggedFiles(ev)) ev.preventDefault(); });
 const droppedImages = (ev) => [...(ev.dataTransfer?.files ?? [])].filter(isMedia);
-ctext.addEventListener("drop", (ev) => addImages(droppedImages(ev), pending, renderImgs, document.getElementById("cmsg")));
+ctext.addEventListener("drop", (ev) => addChatImages(droppedImages(ev)));
 document.getElementById("pfold").onclick = () => { penFold = true; document.activeElement?.blur(); refresh(); };
 if (isMobileUA) document.getElementById("dpen").onclick = () => { penFold = false; refresh(); };
 const ffile = document.getElementById("ffile");
@@ -1909,7 +1975,7 @@ function fillPick(sel) {
 async function switchTo(sel) {
   const to = chatTo(), say = document.getElementById("cmsg"), c = sel.dataset.cmd, v = sel.value;
   sel.blur(); // 選んだ後もフォーカスが残ると ↑↓ が送り先の切り替えと取り合う
-  if (!v || !to?.terminal || chatBusy) return fillPick(sel);
+  if (!v || !to?.terminal || to.codex || chatBusy) return fillPick(sel);
   chatBusy = true;
   say.textContent = "";
   renderChat();
@@ -1952,7 +2018,7 @@ function renderKeys(m) {
   const all = { ...KEYS_DEFAULT, ...m }, ok = (k) => typeof all[k] === "string" && all[k];
   const label = (b, k) => { b.dataset.k = k; b.dataset.t = all[k]; b.title = `${all[k]} を送る (${k})`; b.replaceChildren(all[k], Object.assign(document.createElement("sup"), { textContent: k })); };
   document.querySelectorAll("#cact > .q").forEach((b) => ok(b.dataset.k) && label(b, b.dataset.k));
-  document.getElementById("copt").replaceChildren(...["6", "7", "8", "9", "0"].filter(ok).map((k) => { const b = Object.assign(document.createElement("button"), { className: "q", disabled: csend.disabled }); label(b, k); return b; }));
+  document.getElementById("copt").replaceChildren(...["6", "7", "8", "9", "0"].filter(ok).map((k) => { const b = Object.assign(document.createElement("button"), { className: "q", disabled: csend.disabled || !!chatTo()?.codex }); label(b, k); return b; }));
 }
 renderKeys({});
 fetch("/keys").then((r) => r.json()).then(renderKeys).catch(() => {});
@@ -1960,7 +2026,9 @@ fetch("/keys").then((r) => r.json()).then(renderKeys).catch(() => {});
 const sug = document.getElementById("sug");
 let skillList = [], skillCwd = null, skillAt = 0, sugItems = [], sugI = 0;
 async function loadSkills() {
-  const cwd = chatTo()?.cwd ?? "";
+  const to = chatTo();
+  if (!to?.terminal || to.codex) return;
+  const cwd = to.cwd ?? "";
   if (skillCwd === cwd && Date.now() - skillAt < 60000) return;
   skillCwd = cwd; skillAt = Date.now();
   try { skillList = await (await fetch("/skills" + (cwd ? "?cwd=" + encodeURIComponent(cwd) : ""))).json(); } catch { skillList = []; }
@@ -1968,7 +2036,8 @@ async function loadSkills() {
 }
 function renderSug() {
   const m = ctext.value.match(/^\/(\S*)$/);
-  if (!m) { sugItems = []; sug.hidden = true; return; }
+  const to = chatTo();
+  if (!m || !to?.terminal || to.codex) { sugItems = []; sug.hidden = true; return; }
   const q = m[1].toLowerCase();
   let hit = skillList.filter((s) => s.name.toLowerCase().startsWith(q));
   if (!hit.length) hit = skillList.filter((s) => s.name.toLowerCase().includes(q));
@@ -2191,7 +2260,11 @@ async function poll() {
     const hr = await fetch("/history", { cache: "no-store" });
     // index.html が更新されたら読み直す (サーバー再起動では開いたままの画面は変わらない、2026-09-29 実害)。赤ペンの下書き中は消さない
     const page = hr.headers.get("x-rmv-page");
-    if (page) { if (pageVer && page !== pageVer && !drafts.size && !busy()) return location.reload(); pageVer = page; }
+    if (page) {
+      const savedChat = [...chatDrafts].some(([key, text]) => key !== draftSession && text.trim());
+      if (pageVer && page !== pageVer && !drafts.size && !savedChat && !busy()) return location.reload();
+      pageVer = page;
+    }
     liveState = hr.headers.get("x-rmv-live");
     all = await hr.json();
     // 選んでいた repo が履歴から消えたら (repo の決め方が変わった・古い URL 等) すべてに戻す。空の画面で止めない
