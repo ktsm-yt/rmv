@@ -96,9 +96,13 @@
   #codex-panes { flex: 0 0 auto; max-height: 9em; overflow-y: auto; }
   #codex-panes h2 { margin: 0 0 4px; font: inherit; font-weight: 600; }
   #codex-panes ul { margin: 0; padding: 0; list-style: none; }
-  #codex-panes li { display: flex; gap: 6px; align-items: baseline; padding: 2px 0; }
+  #codex-panes button { display: flex; width: 100%; gap: 6px; align-items: baseline; padding: 4px 7px; margin: 2px 0; color: var(--fg); font: inherit; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; cursor: pointer; text-align: left; }
+  #codex-panes button[aria-pressed="true"] { border-color: var(--link); }
   #codex-panes li small { flex: 1; min-width: 0; color: var(--muted); overflow-wrap: anywhere; }
   #codex-panes li span { color: var(--muted); white-space: nowrap; }
+  body.codex-pane-open :is(#bar, #chips, #ask, #reply, #margin, #tray) { display: none !important; }
+  #codex-pane-view h2 { font-size: 16px; }
+  #codex-pane-view pre { white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 4; font-family: ui-monospace, monospace; }
   #cform { display: flex; flex-direction: column; gap: 6px; }
   #tstat { flex: none; display: grid; gap: 2px; font-size: 12px; color: var(--muted); } /* 端末ごとの待ち状態 (chip と同じ集合) */
   #tstat .trow { display: flex; gap: 8px; overflow: hidden; white-space: nowrap; cursor: pointer; border-left: 3px solid var(--rc, var(--line)); padding-left: 6px; }
@@ -656,6 +660,11 @@ if (isMobileUA && window.visualViewport) {
   <nav id="chips"></nav>
   <details id="ask" hidden><summary></summary><div></div></details>
   <article id="reply"></article>
+  <section id="codex-pane-view" hidden>
+    <h2></h2>
+    <button type="button">返信の表示に戻る</button>
+    <pre></pre>
+  </section>
   <div id="margin" hidden></div>
   <div id="tray" hidden>
     <div id="pins"></div>
@@ -1277,6 +1286,7 @@ document.addEventListener("keydown", (ev) => {
     return;
   }
   if (ev.ctrlKey && !ev.metaKey && !ev.altKey && /^[-=+;^0]$/.test(ev.key)) { ev.preventDefault(); return setPageZoom(ev.key === "0" ? 1 : (+document.documentElement.style.zoom || 1) + (ev.key === "-" ? -0.1 : 0.1)); } // Ctrl + / - / 0 = 拡大 / 縮小 / 戻す (JIS の ; ^ も +。Cmd +/- はブラウザの拡大のまま)
+  if (selectedCodexPane && ev.target !== ctext) return;
   if (ev.code === "KeyN" && ev.ctrlKey && !ev.metaKey && !ev.altKey && !ev.shiftKey) { ev.preventDefault(); return newpop.hidden ? openNew().then(() => newpop.querySelector(".it")?.focus()) : closeNew(); } // Ctrl+N = 新規セッションの一覧を開く / 閉じる (入力欄の中でも。Cmd+N はブラウザ・Orca の新規ウィンドウ、Option+N は ˜ の入力なので空いている Ctrl に置いた)
   if (!newpop.hidden && (ev.key === "ArrowUp" || ev.key === "ArrowDown")) { ev.preventDefault(); const its = [...newpop.querySelectorAll(".it")], i = its.indexOf(document.activeElement); return its.at(i < 0 && ev.key === "ArrowUp" ? -1 : (i + (ev.key === "ArrowDown" ? 1 : -1)) % its.length)?.focus(); } // 一覧が開いている間の ↑↓ = 行の移動 (Enter で起動、Esc で閉じる)
   if (ev.key === "Enter" && (ev.metaKey || ev.ctrlKey) && !ev.isComposing) { ev.preventDefault(); return document.getElementById(ev.target === ctext ? "csend" : "send").click(); } // Cmd+Enter = 送信 (入力欄の中でも。チャット欄にいる時はチャット欄の送信)
@@ -1672,6 +1682,7 @@ const chat = document.getElementById("chat"), ctext = document.getElementById("c
 let chipLabels = new Map(), chatBusy = false;
 const chatDrafts = new Map(); // Codex の会話ごと。null は従来どおり共通の Claude 下書き。
 let draftSession = null, chatStatusSession = null;
+let selectedCodexPane = null;
 // 送り先の固定: プロジェクト列の選択 (repo 小文字、"すべて" は "") → session key を localStorage "rmx.chat.pin" に。無ければ追従 (表示中の返事の端末)。
 // 固定中に送る entry = /history 一覧 (all、新しい順) でそのセッションの最新。表示中の返事が切り替わっても変わらない。
 const cchips = document.getElementById("cchips");
@@ -1727,13 +1738,15 @@ cmedia.addEventListener("click", (ev) => {
   zoomGallery(zoomSet.indexOf(t));
 });
 const chatTo = () => {
+  if (selectedCodexPane) return selectedCodexPane;
   const p = chatPin();
   if (p) return all.find((e) => e.session === p) ?? null;
   const next = list[idx];
   return cur && (shownName === cur.name || (shownName === next?.name && next.session === cur.session && next.sid === cur.sid)) ? cur : null;
 };
 function renderChat() {
-  const pin = chatPin(), to = chatTo();
+  const to = chatTo(), pane = selectedCodexPane;
+  const pin = pane ? pane.session : chatPin();
   if (to) {
     const key = to.codex ? to.session : null;
     if (key !== draftSession) {
@@ -1747,15 +1760,17 @@ function renderChat() {
     document.getElementById("cmsg").textContent = "";
     renderSug();
   }
-  loadMedia(to);
-  loadNow(to);
-  const lbl = to ? (to.codex ? "Codex · " : "") + (chipLabels.get(to.session) ?? `${to.repo || "?"} · ${to.session}`) : pin;
+  loadMedia(pane ? null : to);
+  loadNow(pane ? null : to);
+  const lbl = pane ? `Codex · ${pane.label}` : to ? (to.codex ? "Codex · " : "") + (chipLabels.get(to.session) ?? `${to.repo || "?"} · ${to.session}`) : pin;
   document.getElementById("cto").textContent = (isMobileUA ? "" : "→ ") + (lbl ? `${pin ? "📌 " : ""}${lbl}` : "(送り先なし)"); // スマホは名前に幅を回す (左の ▲▼ と点が送り先の印)
-  const why = !to ? (pin ? "固定先のセッションの返事が一覧に無い (送れない)" : "表示中の返事が無い (送れない)")
+  const why = pane ? (pane.status === "missing" ? "選んだ端末が見つかりません" : codexPaneReady(pane) ? "" : "Codexが入力できる状態になるまで待ってください")
+    : !to ? (pin ? "固定先のセッションの返事が一覧に無い (送れない)" : "表示中の返事が無い (送れない)")
     : !to.terminal && !to.codex ? (pin ? "固定先は Orca / herdr 外の端末 (送れない)" : "この返事は Orca / herdr 外の端末 (送れない)") : "";
   document.getElementById("cwhy").textContent = why;
-  ctext.placeholder = (to?.codex ? "Codexへ文字を送る" : "端末へ送る") + (isMobileUA ? "" : " (⌘+Enter)");
-  ctext.disabled = csend.disabled = !!why || chatBusy;
+  ctext.placeholder = (pane ? "Codexへ1行送る" : to?.codex ? "Codexへ文字を送る" : "端末へ送る") + (isMobileUA ? "" : " (⌘+Enter)");
+  ctext.disabled = pane ? chatBusy : !!why || chatBusy;
+  csend.disabled = !!why || chatBusy;
   const terminalControlsDisabled = csend.disabled || !!to?.codex;
   document.getElementById("cattach").disabled = terminalControlsDisabled;
   document.querySelectorAll("#cact .q, #cact .cpick").forEach((b) => { b.disabled = terminalControlsDisabled; });
@@ -1783,7 +1798,7 @@ function renderChat() {
     document.getElementById("dwait").innerHTML = (wait ? `<b>待ち </b>${wait}` : "") + (run ? `<span>${wait ? " / " : ""}動作中 ${run}</span>` : "");
   }
   let html = chipBtn("", !pin, "追従", "表示中の会話へ送る") + shown.map((e) => chipBtn(e.session, e.session === pin, (isMobileUA ? mobRow : row)(e), `送り先をここに固定: ${chipLabels.get(e.session)}`, true, e.repo)).join("");
-  if (pin && !chipLabels.has(pin)) html += chipBtn(pin, true, "固定中 (返事なし)", pin);
+  if (pin && !pane && !chipLabels.has(pin)) html += chipBtn(pin, true, "固定中 (返事なし)", pin);
   if (html === cchipsHtml) return; // 毎 poll 描き直すと横スクロール位置が飛ぶ
   cchipsHtml = html;
   cchips.innerHTML = html;
@@ -1858,6 +1873,7 @@ cchips.addEventListener("click", (ev) => {
   pickChip(b.dataset.s);
 });
 async function pickChip(s) {
+  selectCodexPane(null);
   if (s) chatPins[REPO.toLowerCase()] = s; else delete chatPins[REPO.toLowerCase()];
   try { localStorage.setItem("rmx.chat.pin", JSON.stringify(chatPins)); } catch {}
   // 送り先と表示は同じセッション集合なので、表示もそこへ切り替える (追従 = 最新に戻す)。上の chip を押したのと同じ (2026-09-29 user)
@@ -1868,6 +1884,7 @@ async function pickChip(s) {
 async function sendText(text, clear) {
   const to = chatTo(), say = document.getElementById("cmsg");
   if (!to || (to.codex ? !clear : !to.terminal) || chatBusy) return;
+  if (to.pane && !codexPaneReady(to)) return;
   const attachments = clear && !to.codex ? [...pending] : [];
   if (!text.trim() && !attachments.length) return;
   const key = to.codex ? to.session : null;
@@ -1879,7 +1896,9 @@ async function sendText(text, clear) {
   say.textContent = "";
   renderChat();
   try {
-    const r = await fetch("/send", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: to.name, text, images: attachments.map((p) => p.path), focus: false, reset: !clear }) });
+    const url = to.pane ? "/herdr/codex-pane/send" : "/send";
+    const body = to.pane ? { pane: to.pane, terminal: to.terminalId, text } : { name: to.name, text, images: attachments.map((p) => p.path), focus: false, reset: !clear };
+    const r = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
     if (!r.ok) {
       const reason = (await r.text()) || String(r.status);
       if (sameTarget()) say.textContent = reason;
@@ -1896,9 +1915,15 @@ async function sendText(text, clear) {
       }
       renderImgs();
     }
-    if (to.codex && sameTarget()) say.innerHTML = '<span class="queue-accepted">キューに登録</span>';
+    if (to.codex && sameTarget()) {
+      const accepted = document.createElement("span");
+      accepted.className = "queue-accepted";
+      accepted.textContent = to.pane ? "端末へ送信" : "キューに登録";
+      say.replaceChildren(accepted);
+      if (to.pane) void pollCodexPaneScreen();
+    }
   } catch (e) {
-    if (sameTarget()) say.textContent = to.codex ? "通信が切れ、登録できたか分かりません。Codexのキューを確認してください" : e.message ?? String(e);
+    if (sameTarget()) say.textContent = to.pane ? "送信結果を確認できません。端末を確認してください" : to.codex ? "通信が切れ、登録できたか分かりません。Codexのキューを確認してください" : e.message ?? String(e);
   } finally {
     chatBusy = false;
     renderChat();
@@ -2263,7 +2288,52 @@ document.addEventListener("keydown", (ev) => { if (ev.code === "Escape" && !newp
 let fragMod = null;
 const codexPanes = document.getElementById("codex-panes");
 const codexPaneList = codexPanes.querySelector("ul");
+const codexPaneView = document.getElementById("codex-pane-view");
+const codexPaneScreen = codexPaneView.querySelector("pre");
 const codexPaneStatus = new Map([["working", "作業中"], ["idle", "待機中"], ["blocked", "入力待ち"], ["done", "完了"]]);
+const codexPaneReady = (pane) => pane.status === "idle" || pane.status === "done";
+const livePaneKey = (pane) => `herdr:${pane.pane}:${pane.terminal}`;
+let paneRows = [], readingPane = null;
+function markSelectedPane() {
+  for (const button of codexPaneList.querySelectorAll("button")) {
+    button.setAttribute("aria-pressed", String(button.dataset.paneKey === selectedCodexPane?.session));
+  }
+}
+function selectCodexPane(pane) {
+  if (!pane && !selectedCodexPane) return;
+  selectedCodexPane = pane ? { ...pane, terminalId: pane.terminal, terminal: false, codex: true, session: livePaneKey(pane) } : null;
+  document.body.classList.toggle("codex-pane-open", !!pane);
+  codexPaneView.hidden = !pane;
+  codexPaneScreen.textContent = pane ? "端末の表示を読み込み中…" : "";
+  if (pane) {
+    stopSpeak();
+    codexPaneView.querySelector("h2").textContent = `Codex · ${pane.label} · ${pane.repo ? pane.repo + " · " : ""}${pane.pane}`;
+    void pollCodexPaneScreen();
+  }
+  markSelectedPane();
+  renderChat();
+}
+codexPaneList.addEventListener("click", (ev) => {
+  const key = ev.target.closest("button")?.dataset.paneKey;
+  const pane = paneRows.find((p) => livePaneKey(p) === key);
+  if (pane) selectCodexPane(pane);
+});
+codexPaneView.querySelector("button").onclick = () => pickChip("");
+async function pollCodexPaneScreen() {
+  const to = selectedCodexPane;
+  if (!to || to.status === "missing" || readingPane?.session === to.session) return;
+  const request = { session: to.session };
+  readingPane = request;
+  let text;
+  try {
+    const query = new URLSearchParams({ pane: to.pane, terminal: to.terminalId });
+    const r = await fetch("/herdr/codex-pane?" + query, { cache: "no-store" });
+    text = r.ok ? await r.text() : "端末の画面を取得できません";
+  } catch { text = "端末の画面を取得できません"; }
+  if (readingPane !== request) return;
+  readingPane = null;
+  if (selectedCodexPane?.session === to.session && selectedCodexPane.status !== "missing") codexPaneScreen.textContent = text;
+}
 let codexPaneHtml = "", fetchingCodexPanes = false;
 async function pollCodexPanes() {
   if (fetchingCodexPanes) return;
@@ -2274,13 +2344,23 @@ async function pollCodexPanes() {
     if (res.ok) panes = await res.json();
   } catch {}
   finally { fetchingCodexPanes = false; }
-  const html = Array.isArray(panes) ? panes.map(({ pane, label, repo, status }) =>
-    `<li><b>${esc(label)}</b><small>${esc([repo, pane].filter(Boolean).join(" · "))}</small><span>${codexPaneStatus.get(status) ?? "状態不明"}</span></li>`
-  ).join("") : "";
-  if (html === codexPaneHtml) return;
-  codexPaneHtml = html;
-  codexPaneList.innerHTML = html;
-  codexPanes.hidden = !html;
+  paneRows = Array.isArray(panes) ? panes : [];
+  const html = paneRows.map((p) =>
+    `<li><button type="button" data-pane-key="${esc(livePaneKey(p))}" aria-pressed="false"><b>${esc(p.label)}</b><small>${esc([p.repo, p.pane].filter(Boolean).join(" · "))}</small><span>${codexPaneStatus.get(p.status) ?? "状態不明"}</span></button></li>`
+  ).join("");
+  if (html !== codexPaneHtml) {
+    codexPaneHtml = html;
+    codexPaneList.innerHTML = html;
+    codexPanes.hidden = !html;
+    markSelectedPane();
+  }
+  if (selectedCodexPane) {
+    const row = paneRows.find((p) => livePaneKey(p) === selectedCodexPane.session);
+    selectedCodexPane.status = row?.status ?? "missing";
+    if (!row) codexPaneScreen.textContent = "選んだ端末は現在見つかりません。";
+    renderChat();
+    void pollCodexPaneScreen();
+  }
 }
 // 入力中 = 右の欄か、カーソルのある入力欄に文字がある。この間は画面を差し替えない (送信後も右の欄にカーソルが残るので、空なら追従を止めない)
 const typing = () => { const a = document.activeElement; return !!ctext.value.trim() || (!!a?.matches?.("textarea, input") && !!a.value.trim()); };

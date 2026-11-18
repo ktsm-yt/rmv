@@ -758,7 +758,7 @@ async function herdrRun(args: string[], sock: string | null = null): Promise<{ o
   const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
   return { out, err, code };
 }
-type HerdrPane = { agent?: unknown; pane_id?: unknown; label?: unknown; cwd?: unknown; agent_status?: unknown };
+type HerdrPane = { agent?: unknown; pane_id?: unknown; terminal_id?: unknown; label?: unknown; cwd?: unknown; agent_status?: unknown };
 async function readHerdrPanes(sock: string | null = null): Promise<HerdrPane[] | null> {
   try {
     const r = await herdrRun(["pane", "list"], sock);
@@ -767,21 +767,75 @@ async function readHerdrPanes(sock: string | null = null): Promise<HerdrPane[] |
   } catch { return null; }
 }
 
-// 稼働表示専用。Herdr の pane ID を Codex の会話 ID として送信に使わない。
-type CodexPane = { pane: string; label: string; repo: string; status: string };
+// Herdr の pane は端末の ID と組み合わせて選ぶ。Codex の会話 ID は従来どおり履歴のメタデータから取る。
+const CODEX_PANE_ID = /^w[\da-z]+:p[\da-z]+$/i;
+const PANE_TERMINAL_ID = /^term_[\da-z]+$/i;
+type CodexPane = { pane: string; terminal: string; label: string; repo: string; status: string };
+function codexPaneRef(pane: unknown, terminal: unknown): pane is string {
+  return typeof pane === "string" && pane.length <= 64 && CODEX_PANE_ID.test(pane) && !/\s/.test(pane)
+    && typeof terminal === "string" && terminal.length <= 100 && PANE_TERMINAL_ID.test(terminal) && !/\s/.test(terminal);
+}
+function codexPaneInfo(p: HerdrPane | null | undefined): CodexPane | null {
+  if (p?.agent !== "codex" || !codexPaneRef(p.pane_id, p.terminal_id)) return null;
+  const label = typeof p.label === "string" ? p.label.trim() : "";
+  const repo = typeof p.cwd === "string" ? p.cwd.split("/").filter(Boolean).at(-1) ?? "" : "";
+  return { pane: p.pane_id, terminal: String(p.terminal_id), label: label || p.pane_id, repo, status: typeof p.agent_status === "string" ? p.agent_status : "unknown" };
+}
 let codexPaneCache: { at: number; panes: Promise<CodexPane[] | null> } | null = null;
 async function liveCodexPanes(): Promise<Response> {
   if (!codexPaneCache || Date.now() - codexPaneCache.at >= LIVE_TTL) {
-    const panes = readHerdrPanes().then((panes) => panes?.flatMap((p) => {
-      if (p?.agent !== "codex" || typeof p.pane_id !== "string" || !HERDR_PANE.test(p.pane_id)) return [];
-      const label = typeof p.label === "string" ? p.label.trim() : "";
-      const repo = typeof p.cwd === "string" ? p.cwd.split("/").filter(Boolean).at(-1) ?? "" : "";
-      return [{ pane: p.pane_id, label: label || p.pane_id, repo, status: typeof p.agent_status === "string" ? p.agent_status : "unknown" }];
-    }) ?? null);
+    const panes = readHerdrPanes().then((panes) => panes?.map(codexPaneInfo).filter((p): p is CodexPane => p !== null) ?? null);
     codexPaneCache = { at: Date.now(), panes };
   }
   const panes = await codexPaneCache.panes;
   return Response.json(panes, { status: panes ? 200 : 503, headers: { "cache-control": "no-store" } });
+}
+async function currentCodexPane(pane: string, terminal: string): Promise<CodexPane | null> {
+  const r = await herdrRun(["pane", "get", pane]);
+  const p = r.code === 0 ? codexPaneInfo(JSON.parse(r.out)?.result?.pane) : null;
+  return p?.pane === pane && p.terminal === terminal ? p : null;
+}
+function paneChanged(): Response { return new Response("選んだCodexの端末が見つからないか、入れ替わりました", { status: 409 }); }
+async function codexPaneScreen(pane: string | null, terminal: string | null): Promise<Response> {
+  if (!terminal || !codexPaneRef(pane, terminal)) return new Response("bad pane or terminal", { status: 400 });
+  try {
+    if (!await currentCodexPane(pane, terminal)) return paneChanged();
+    const r = await herdrRun(["pane", "read", pane, "--source", "visible", "--format", "text"]);
+    if (r.code !== 0) return new Response("端末の画面を取得できません", { status: 502 });
+    if (!await currentCodexPane(pane, terminal)) return paneChanged();
+    return new Response(r.out.slice(0, 65_536), { headers: TEXT });
+  } catch { return new Response("端末の画面を取得できません", { status: 502 }); }
+}
+
+const codexPaneReady = (status: string) => status === "idle" || status === "done";
+const sendingCodexPanes = new Set<string>();
+async function sendCodexPane(req: Request): Promise<Response> {
+  if (!ORIGINS.has(req.headers.get("origin") ?? "")) return new Response("forbidden origin", { status: 403 });
+  const { pane, terminal, text } = await req.json().catch(() => ({})) ?? {};
+  if (!codexPaneRef(pane, terminal)) return new Response("bad pane or terminal", { status: 400 });
+  if (typeof text !== "string" || !text.trim() || text.length > 16_000 || /[\x00-\x1f\x7f-\x9f\u2028\u2029]/.test(text) || /^[!/]/.test(text.trimStart())) {
+    return new Response("ペインに送れるのはコマンドを除く16,000字以内の1行のテキストです", { status: 400 });
+  }
+  if (sendingCodexPanes.has(pane)) return new Response("この端末へ送信中です", { status: 409 });
+  sendingCodexPanes.add(pane);
+  const unavailable = () => new Response("Codexが入力できる状態になるまで待ってください", { status: 409 });
+  try {
+    const first = await currentCodexPane(pane, terminal);
+    if (!first) return paneChanged();
+    if (!codexPaneReady(first.status)) return unavailable();
+    const screen = await herdrRun(["pane", "read", pane, "--source", "visible", "--format", "ansi"]);
+    const draft = screen.code === 0 ? codexDraftOnScreen(screen.out) : null;
+    if (draft !== false) return new Response(draft ? "端末に書きかけがあります" : "Codexの入力欄が空か確認できません", { status: 409 });
+    const current = await currentCodexPane(pane, terminal);
+    if (!current) return paneChanged();
+    if (!codexPaneReady(current.status)) return unavailable();
+    if (req.signal.aborted) return new Response("送信は中断されました", { status: 499 });
+    // v0.9.5 は第2引数をそのまま本文にする。Herdr が入力と Enter を順に送る。
+    const r = await herdrRun(["agent", "prompt", pane, text]);
+    if (r.code !== 0) return new Response("送信結果を確認できませんでした。端末を確認してください", { status: 502 });
+    return Response.json({ ok: true, via: "herdr" }, { headers: { "cache-control": "no-store" } });
+  } catch { return new Response("送信結果を確認できませんでした。端末を確認してください", { status: 502 }); }
+  finally { sendingCodexPanes.delete(pane); }
 }
 // 送れる pane か。pane が無い (閉じた / herdr が別の server) → 409、herdr が呼べない・応答が読めない → 502、
 // pane はあるが Claude が居ない (終了して素のシェルが残った: 赤ペンの文がコマンドとして走る) → 409
@@ -1141,6 +1195,18 @@ function dropDim(line: string): string {
   }
   return out;
 }
+function codexDraftOnScreen(screen: string): boolean | null {
+  const raw = screen.split("\n"), plain = raw.map((line) => line.replace(/\x1b\[[0-9;:?]*[A-Za-z]/g, ""));
+  const marker = plain.findLastIndex((line) => /^›(?:\s|$)/.test(line));
+  if (marker < 0) return null;
+  const separator = plain.findIndex((line, i) => i > marker && !line.trim());
+  // Codex 0.169 の入力の後ろには空行と状態表示がある。確認画面の選択肢にも › が出る。
+  const status = plain[separator + 1] ?? "";
+  const usage = /\b\d{1,3}% (?:left|used)\b/.test(plain.slice(separator + 1, separator + 4).join(" "));
+  const shortcuts = /^\s+(?:← for agents · )?\? for shortcuts\s*$/.test(plain[separator + 2] ?? "");
+  if (separator < 0 || !/^\s+\S.* · /.test(status) || !(usage || (shortcuts && /^\s+(?:gpt-|o\d)\S+/.test(status)))) return null;
+  return raw.slice(marker, separator).map(dropDim).join("").replace(/^\s*›/, "").trim() !== "";
+}
 // herdr の pane は見えている画面 (色付き、薄字は dropDim で落とす)、Orca の端末は描画された画面 (--screen) を読む。Orca が画面を描けない時 (source が screen でない) は読めない扱い
 async function inputDraft(t: SendTarget): Promise<boolean | null> {
   try {
@@ -1343,6 +1409,8 @@ Bun.serve({
     }
     if (pathname === "/sessions") return sessions();
     if (pathname === "/herdr/codex-panes" && req.method === "GET") return liveCodexPanes();
+    if (pathname === "/herdr/codex-pane" && req.method === "GET") return codexPaneScreen(searchParams.get("pane"), searchParams.get("terminal"));
+    if (pathname === "/herdr/codex-pane/send" && req.method === "POST") return sendCodexPane(req);
     // 外部ツールの口: Origin が RMV_EXT_ORIGINS に無ければ (未設定なら全部) 本文を読む前に 403
     if (pathname.startsWith("/ext/")) {
       const origin = req.headers.get("origin") ?? "";

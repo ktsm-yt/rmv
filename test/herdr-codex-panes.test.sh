@@ -10,6 +10,18 @@ cat > "$TMP/herdr" <<'STUB'
 #!/bin/sh
 case "$1 $2" in
   'pane list') cat "$TEST_TMP/panes.json" ;;
+  'pane get')
+    python3 -c 'import json,os,sys; from pathlib import Path; root=Path(os.environ["TEST_TMP"]); panes=json.loads((root/"panes.json").read_text())["result"]["panes"]; p=next((p for p in panes if p["pane_id"]==sys.argv[1]),None); print(json.dumps({"result":{"pane":p}}))' "$3" ;;
+  'pane read')
+    if [ "$7" = ansi ]; then
+      cat "$TEST_TMP/${3}-input.txt"
+      if [ -f "$TEST_TMP/replace-after-read.json" ]; then mv "$TEST_TMP/replace-after-read.json" "$TEST_TMP/panes.json"; fi
+    else
+      printf '<literal-node> visible from %s\n' "$3"
+    fi ;;
+  'agent prompt')
+    python3 -c 'import json,os,sys; from pathlib import Path; p=Path(os.environ["TEST_TMP"])/"prompt.jsonl"; p.open("a").write(json.dumps(sys.argv[1:])+"\n")' "$@"
+    sleep 1 ;;
   'agent list') echo '{"result":{"agents":[]}}' ;;
   'tab list') echo '{"result":{"tabs":[]}}' ;;
   *) printf '%s\n' "$*" >> "$TEST_TMP/unexpected"; exit 1 ;;
@@ -25,11 +37,12 @@ uv run --with playwright python - "$BASE" "$TMP" <<'PY'
 import json
 from pathlib import Path
 import sys
+import time
 from playwright.sync_api import expect, sync_playwright
 
 base, tmp = sys.argv[1], Path(sys.argv[2])
-first = dict(agent="codex", pane_id="wF:pC", label="依頼1", cwd="/x/Usher", agent_status="working")
-second = dict(agent="codex", pane_id="wF:pD", label="", cwd="/x/Usher", agent_status="idle")
+first = dict(agent="codex", pane_id="wF:pC", terminal_id="term_a", label="依頼1", cwd="/x/Usher", agent_status="working")
+second = dict(agent="codex", pane_id="wF:pD", terminal_id="term_b", label="", cwd="/x/Usher", agent_status="idle")
 claude = dict(agent="claude", pane_id="wF:pH", label="Claude", cwd="/x/Usher", agent_status="working")
 def panes(*rows):
     path = tmp / "panes.json"
@@ -37,6 +50,8 @@ def panes(*rows):
     pending.write_text(json.dumps({"result": {"panes": list(rows)}}))
     pending.replace(path)
 
+empty = "\x1b[0m\x1b[1m› \x1b[0m\x1b[2mAsk Codex to do anything\x1b[0m\n\n  gpt-5.4 default · /tmp/demo\n  ← for agents · ? for shortcuts\n"
+(tmp / "wF:pD-input.txt").write_text(empty)
 panes(first, second, claude)
 with sync_playwright() as p:
     browser = p.chromium.launch()
@@ -51,21 +66,74 @@ with sync_playwright() as p:
     expect(rows.nth(0)).to_contain_text("作業中")
     expect(rows.nth(1)).to_contain_text("wF:pD")
     expect(rows.nth(1)).to_contain_text("待機中")
-    expect(status.locator("button, a, [data-s], [data-approve]")).to_have_count(0)
-    expect(page.locator("#csend")).to_be_disabled()
+    expect(status.locator("button")).to_have_count(2)
+    expect(status.locator("[data-s], [data-approve]")).to_have_count(0)
+    send_button = page.locator("#csend")
+    expect(send_button).to_be_disabled()
     assert page.request.get(f"{base}/history").json() == []
     assert page.request.get(f"{base}/sessions").json() == []
     assert page.request.get(f"{base}/herdr/codex-panes").json() == [
-        {"label": "依頼1", "repo": "Usher", "pane": "wF:pC", "status": "working"},
-        {"label": "wF:pD", "repo": "Usher", "pane": "wF:pD", "status": "idle"},
+        {"label": "依頼1", "repo": "Usher", "pane": "wF:pC", "terminal": "term_a", "status": "working"},
+        {"label": "wF:pD", "repo": "Usher", "pane": "wF:pD", "terminal": "term_b", "status": "idle"},
     ]
     assert page.request.post(f"{base}/herdr/codex-panes").status == 404
     assert page.request.post(f"{base}/send", headers={"Origin": base},
                              data={"name": "wF-pC.md", "text": "dummy"}).status == 404
+    rows.nth(0).locator("button").click()
+    expect(page.locator("#cto")).to_contain_text("Codex · 依頼1")
+    expect(send_button).to_be_disabled()
+    rows.nth(1).locator("button").press("Enter")
+    expect(rows.nth(1).locator("button")).to_have_attribute("aria-pressed", "true")
+    expect(page.locator("#cto")).to_contain_text("Codex · wF:pD")
+    output = page.locator("#codex-pane-view pre")
+    expect(output).to_contain_text("<literal-node> visible from wF:pD")
+    expect(output.locator("literal-node")).to_have_count(0)
+
+    def submit(pane="wF:pD", terminal="term_b", text="-literal", origin=base):
+        return page.request.post(f"{base}/herdr/codex-pane/send", headers={"Origin": origin},
+                                 data={"pane": pane, "terminal": terminal, "text": text})
+
+    assert submit(pane="wF:pC", terminal="term_a").status == 409     # busy
+    assert submit(pane="CodexAlias").status == 400                    # no name fallback
+    assert submit(terminal="term_stale").status == 409
+    assert submit(origin="https://evil.example").status == 403
+    for text in ("", "two\nlines", "a\tb", "a\x1b", " /model", "! ls"):
+        assert submit(text=text).status == 400
+    (tmp / "wF:pD-input.txt").write_text(empty.replace("\x1b[2mAsk Codex to do anything", "typed draft"))
+    assert "書きかけ" in submit().text()
+    (tmp / "wF:pD-input.txt").write_text("› 1. Trust and continue\n\n  Press Enter to continue")
+    assert "入力欄が空か確認できません" in submit().text()
+    assert not (tmp / "prompt.jsonl").exists()
+    (tmp / "wF:pD-input.txt").write_text(empty)
+    page.locator("#ctext").fill("-literal")
+    with page.expect_response(lambda r: r.url.endswith("/herdr/codex-pane/send")) as response:
+        send_button.click()
+        for _ in range(50):
+            if (tmp / "prompt.jsonl").exists():
+                break
+            time.sleep(0.01)
+        duplicate = submit(text="duplicate")
+        assert duplicate.status == 409 and "送信中" in duplicate.text()
+    assert response.value.ok
+    expect(page.locator("#cmsg")).to_contain_text("端末へ送信")
+    assert (tmp / "prompt.jsonl").read_text().splitlines() == [
+        json.dumps(["agent", "prompt", "wF:pD", "-literal"])]
+    (tmp / "replace-after-read.json").write_text(json.dumps(
+        {"result": {"panes": [first, dict(second, terminal_id="term_changed"), claude]}}))
+    assert submit().status == 409          # live identity changes after first check
+    assert len((tmp / "prompt.jsonl").read_text().splitlines()) == 1
+    expect(page.locator("#cwhy")).to_contain_text("選んだ端末が見つかりません", timeout=8000)
+    expect(page.locator("#cto")).to_contain_text("Codex · wF:pD")
+    expect(send_button).to_be_disabled()
+    page.get_by_role("button", name="返信の表示に戻る").click()
+    expect(page.locator("#codex-pane-view")).to_be_hidden()
+    expect(page.locator("#cto")).not_to_contain_text("Codex")
+
     panes(dict(first, label="<b>依頼2</b>", agent_status="blocked"), claude)
     expect(rows).to_have_count(1, timeout=8000)
     expect(rows.first).to_contain_text("<b>依頼2</b>")
     expect(rows.first).to_contain_text("入力待ち")
+    assert submit(pane="wF:pC", terminal="term_a").status == 409     # blocked
     panes(claude)
     expect(status).to_be_hidden(timeout=8000)
     expect(rows).to_have_count(0)
