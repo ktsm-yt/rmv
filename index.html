@@ -298,10 +298,11 @@
   #reply iframe { width: 100%; min-height: 240px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
   /* 赤ペン: 段・項目・表の行をクリックでピン留め → 下のトレイから元の端末へ送る */
   .pinable { cursor: pointer; }
-  .blk.pinable:hover, .ln.item.pinable:hover, tr.pinable:hover { background: color-mix(in srgb, var(--red) 5%, transparent); }
+  .blk.pinable:hover, .ln.item.pinable:hover, tr.pinable:hover, .codex-paragraph.pinable:hover { background: color-mix(in srgb, var(--red) 5%, transparent); }
   .blk.pinned { border-left-color: var(--red); background: color-mix(in srgb, var(--red) 6%, transparent); }
   .blk.pinned > .num { background: var(--red); color: #fff; }
   .ln.item.pinned { border-left-color: var(--red); }
+  .codex-paragraph.pinned { box-shadow: inset 3px 0 var(--red); }
   tr.pinned > td:first-child { box-shadow: inset 3px 0 0 var(--red); }
   [data-badge]::before { content: attr(data-badge); display: inline-block; margin-right: .5em; padding: 0 .5em; border-radius: 999px; background: var(--red); color: #fff; font-size: 11px; font-weight: 700; line-height: 1.6; vertical-align: middle; }
   tr.chosen { background: color-mix(in srgb, var(--red) 8%, transparent); }
@@ -867,8 +868,8 @@ async function show(md, entry) {
   cur = entry;
   renderChat();
   document.getElementById("sent").textContent = "";
-  document.getElementById("akmsg").textContent = "";
-  decorate(el);
+  document.getElementById("akmsg").textContent = sendingNotes.has(curName()) ? "送信中…" : "";
+  decorate(el, entry?.codex);
   fitPre();
   refresh();
   try { await mermaid.run({ nodes: el.querySelectorAll("pre.mermaid") }); }
@@ -886,7 +887,7 @@ let REPO = params.get("repo") || ""; // "" = すべて
 // inRepo で落とす = 一覧・← →・追従・chip・送り先リスト・プロジェクト列がモードの entry だけを見る。?mode=agents に残す (localStorage には持たない = 開けば main)
 let AGENTS = params.get("mode") === "agents";
 const inMode = (e) => !!e.agent === AGENTS;
-const agentTag = (e) => (e?.agent ? `🤖 ${String(e.agent.type ?? "").split(":").pop() || "agent"}: ` : ""); // "claude-code-harness:worker" → "🤖 worker: "
+const agentTag = (e) => (e?.agent ? `🤖 ${String(e.agent.type ?? "").split(":").pop() || "agent"}: ` : e?.codex ? "Codex: " : ""); // "claude-code-harness:worker" → "🤖 worker: "
 // ponytail: repo の照合は cwd basename の完全一致 (大文字小文字は無視) だけ。上限 = 1 repo ずつ切り替えて見る用途。
 const inRepo = (es) => es.filter((e) => inMode(e) && (!REPO || e.repo.toLowerCase() === REPO.toLowerCase()));
 // repo 名 → 決定的な色 (文字列 hash → hue)。照合と同じく大文字小文字は無視
@@ -1291,6 +1292,7 @@ document.addEventListener("keydown", (ev) => {
 // 下書きは表示中の返事ごとに drafts (name → 下書き) に持つ。← → で行き来しても消えない。
 // ponytail: 下書きはメモリだけ (リロードで消える)。上限 = 1 タブで書いてすぐ送る用途。
 const drafts = new Map();
+const sendingNotes = new Set();
 let pageVer = null; // 読み込んだ index.html の版 (/history の x-rmv-page)
 let cur = null; // 表示中の履歴 entry。latest.html だけ映している間は null (送信不可・コピーのみ)
 const curName = () => cur?.name ?? "";
@@ -1305,6 +1307,7 @@ const cut = (s, n) => { const t = s.replace(/\s+/g, " ").trim(); return t.length
 const textOf = (el) => {
   const c = el.cloneNode(true);
   c.querySelectorAll(".pick").forEach((b) => b.remove());
+  if (c.classList.contains("codex-paragraph")) return [...c.children].map((line) => line.textContent).join(" ");
   return el.tagName === "TR" ? [...c.cells].map((td) => td.textContent.trim()).join(" | ") : (c.querySelector(".body") ?? c).textContent;
 };
 const hhmm = (d) => d.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit", hour12: false });
@@ -1342,11 +1345,23 @@ document.fonts?.ready.then(fitPre);
 document.fonts?.addEventListener("loadingdone", fitPre);
 
 // 描画後の DOM に錨を付ける: data-anchor = 表示名 (2 / 2-ⅱ / 表 A)、data-pin = 返事内の通し番号 (本文は不変なので番号で同定できる)
-function decorate(el) {
+function decorate(el, codex) {
   el.querySelectorAll(".blk").forEach((b) => {
     const a = b.classList.contains("nonum") ? b.dataset.label : b.querySelector(".num").textContent;
     if (a) b.dataset.anchor = a; // 見出しの無い番号なし段 (返事冒頭など) は従来どおり対象外
   });
+  if (codex) {
+    let paragraph, n = 0;
+    for (const line of el.querySelectorAll(".blk.nonum:not([data-anchor]) > .body > .ln:not(.item)")) {
+      if (!paragraph || line.previousElementSibling !== paragraph) {
+        paragraph = document.createElement("div");
+        paragraph.className = "codex-paragraph";
+        paragraph.dataset.anchor = `段落 ${++n}`;
+        line.before(paragraph);
+      }
+      paragraph.append(line);
+    }
+  }
   el.querySelectorAll(".ln.item").forEach((it) => {
     const n = it.closest(".blk")?.dataset.anchor;
     const r = it.dataset.item;
@@ -1494,8 +1509,8 @@ function renderTray() {
   fimgs.hidden = !(d?.imgs.length);
   fimgs.innerHTML = d?.imgs.map((p, i) => `<span class="cimg">${thumb(p)}<button data-i="${i}" title="外す">×</button></span>`).join("") ?? "";
   const send = document.getElementById("send");
-  send.disabled = !cur?.terminal;
-  send.title = cur?.terminal ? "返事を出した端末へ打ち込む" : "この返事は Orca / herdr の外で出たので送れません。コピーして貼ってください";
+  send.disabled = sendingNotes.has(curName()) || (!cur?.terminal && !cur?.codex);
+  send.title = cur?.codex ? "Codex の会話のキューに積む (文字だけ)" : cur?.terminal ? "返事を出した端末へ打ち込む" : "この返事は Orca / herdr の外で出たので送れません。コピーして貼ってください";
 }
 const refresh = () => { applyMarks(); renderTray(); };
 
@@ -1594,20 +1609,39 @@ document.getElementById("copy").onclick = async () => {
   try { await navigator.clipboard.writeText(message(draftOf(curName()))); say.textContent = "コピーしました"; }
   catch (e) { say.textContent = `コピーできませんでした: ${e.message ?? e}`; }
 };
+const noteDraftState = (d) => JSON.stringify([[...d.pins], [...d.choices], d.free, d.imgs]);
 document.getElementById("send").onclick = async () => {
   const say = document.getElementById("akmsg");
-  const n = curName();
-  if (!cur?.terminal || !drafts.has(n)) return;
+  const n = curName(), codex = cur?.codex, d = drafts.get(n);
+  if (!(cur?.terminal || codex) || !d || sendingNotes.has(n)) return;
+  if (codex && d.imgs.length) { say.textContent = "Codex には画像を送れません。画像を外してから送ってください"; return; }
+  const before = noteDraftState(d);
+  const body = JSON.stringify({ name: n, text: message(d), images: d.imgs.map((p) => p.path) });
+  sendingNotes.add(n);
+  renderTray();
   say.textContent = "送信中…";
   try {
-    const r = await fetch("/send", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: n, text: message(drafts.get(n)), images: drafts.get(n).imgs.map((p) => p.path) }) });
-    if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
-    drafts.get(n).imgs.forEach((p) => URL.revokeObjectURL(p.url));
-    drafts.delete(n);
-    say.textContent = "";
-    document.getElementById("sent").textContent = `送信済 ${hhmm(new Date())}`;
-    refresh();
-  } catch (e) { say.textContent = `送れませんでした: ${e.message ?? e}`; }
+    const r = await fetch("/send", { method: "POST", headers: { "content-type": "application/json" }, body });
+    if (!r.ok) {
+      const reason = await r.text();
+      if (curName() === n) say.textContent = `送れませんでした: ${r.status} ${reason}`;
+      return;
+    }
+    const unchanged = drafts.get(n) === d && noteDraftState(d) === before;
+    if (unchanged) {
+      d.imgs.forEach((p) => URL.revokeObjectURL(p.url));
+      drafts.delete(n);
+    }
+    if (curName() === n) {
+      say.textContent = unchanged ? "" : "送信中に編集した下書きを残しました";
+      document.getElementById("sent").textContent = `${codex ? "キューに登録" : "送信済"} ${hhmm(new Date())}`;
+    }
+  } catch (e) {
+    if (curName() === n) say.textContent = codex ? "通信が切れ、登録できたか分かりません。Codex のキューを確認してください" : `送れませんでした: ${e.message ?? e}`;
+  } finally {
+    sendingNotes.delete(n);
+    if (curName() === n) refresh();
+  }
 };
 
 // チャット欄: ピン無しで自由文を送る。送り先は赤ペンと同じ (表示中 entry の name → server がその entry の terminal へ)。
@@ -1645,7 +1679,12 @@ async function loadMedia(to) {
   if (name === mediaFor) return;
   mediaFor = name;
   let list = [], svgs = [];
-  try { if (name) [list, svgs] = await Promise.all([fetch("/media?name=" + encodeURIComponent(name)).then((r) => r.json()), sessionDiagrams(to)]); } catch {}
+  try {
+    if (name) [list, svgs] = await Promise.all([
+      to.codex ? [] : fetch("/media?name=" + encodeURIComponent(name)).then((r) => r.json()),
+      sessionDiagrams(to),
+    ]);
+  } catch {}
   if (mediaFor !== name) return; // 取っている間に送り先が変わった
   // 図と画像・PDF を、セッションで出た順 (新しい順) に混ぜる。時刻が同じ・無い (0) 時は図が先 (sort は安定)
   const cards = [...svgs.map(({ svg, t }) => ({ t, html: `<button class="mt mm" title="mermaid 図">${svg}</button>` })), ...list.map(({ p, t }) => {
@@ -1669,6 +1708,7 @@ function renderChat() {
   const lbl = to ? chipLabels.get(to.session) ?? `${to.repo || "?"} · ${to.session}` : pin;
   document.getElementById("cto").textContent = (isMobileUA ? "" : "→ ") + (lbl ? `${pin ? "📌 " : ""}${lbl}` : "(送り先なし)"); // スマホは名前に幅を回す (左の ▲▼ と点が送り先の印)
   const why = !to ? (pin ? "固定先のセッションの返事が一覧に無い (送れない)" : "表示中の返事が無い (送れない)")
+    : to.codex ? "Codex の会話へは赤ペンの送信から送る (送信欄は未対応)"
     : !to.terminal ? (pin ? "固定先は Orca / herdr 外の端末 (送れない)" : "この返事は Orca / herdr 外の端末 (送れない)") : "";
   document.getElementById("cwhy").textContent = why;
   ctext.disabled = csend.disabled = !!why || chatBusy;
@@ -1898,7 +1938,7 @@ async function loadNow(to) {
   if (name === nowFor) return;
   nowFor = name;
   let r = {};
-  try { if (name) r = await (await fetch("/now?name=" + encodeURIComponent(name))).json(); } catch {}
+  try { if (name && !to.codex) r = await (await fetch("/now?name=" + encodeURIComponent(name))).json(); } catch {}
   if (nowFor !== name) return; // 取っている間に送り先が変わった
   nowVal.model = r.model || null; nowVal.effort = r.effort || null;
   showCtx(r.ctx);
@@ -1979,7 +2019,7 @@ function renderChips() {
   chipEntries = seen;
   renderChat();
   // 既定は live なセッションだけ (終了したものは #pdead で出す)。選択中は live でなくても出す (消えると迷子)
-  const shown = ss.filter((e) => e.live || showDead || e.session === SESS);
+  const shown = ss.filter((e) => e.live || e.codex || showDead || e.session === SESS); // Codex の返事は live にならないが終了扱いで隠さない
   let html = ss.length || SESS ? chip("", "最新", "最後に返事したセッションを追う") + shown.map((e) => chipBtn(e.session, e.session === SESS, rcDot + esc(label(e)), `${e.repo} / ${e.session}`, true, e.repo)).join("") : "";
   if (SESS && !seen.has(SESS)) html += chip(SESS, "選択中 (返事なし)", SESS); // 履歴から消えたセッションを URL で指している
   if (html === chipsHtml) return; // 毎 poll 描き直すと横スクロール位置が飛ぶ
@@ -2025,7 +2065,7 @@ function renderProjects() {
     if (!e.agent && !mainLatest.has(k)) mainLatest.set(k, e);
     if (!inMode(e)) continue;
     if (!latest.has(k)) latest.set(k, e);
-    if (e.live) alive.add(k);
+    if (e.live || e.codex) alive.add(k);
   }
   if (!lastSeen) { lastSeen = Object.fromEntries([...mainLatest].map(([k, e]) => [k, tsOf(e)])); saveSeen(); } // 初回は全部既読から始める
   const sel = REPO.toLowerCase();
@@ -2041,7 +2081,7 @@ function renderProjects() {
     return `<button class="prow${k === sel ? " on" : ""}${dead ? " dead" : ""}" data-r="${esc(e.repo)}" title="${esc(e.repo)}"><span class="pn" style="--rc:${repoColor(e.repo)}">${dot ? '<i class="dot" title="未読"></i>' : ""}<b>${rcDot}${esc(e.repo || "?")}</b><time>${e.ts ? hhmm(new Date(e.ts)) : ""}</time></span><span class="ph">${esc(cut(agentTag(e) + (e.head ?? ""), 30))}</span></button>`;
   });
   if (sel && !latest.has(sel)) rows.push(`<button class="prow on" data-r="${esc(REPO)}"><span class="pn"><b>${esc(REPO)}</b></span><span class="ph">返事なし</span></button>`); // URL が履歴に無い repo を指している
-  const deadSess = judged && inRepo(all).some((e) => !e.live); // repo は活きていても、その中の終了したセッション (chip・送り先) を出すためのトグル
+  const deadSess = judged && inRepo(all).some((e) => !e.live && !e.codex); // repo は活きていても、その中の終了したセッション (chip・送り先) を出すためのトグル
   const deadBtn = !hidden && !deadSess ? "" : showDead ? "終了したものを隠す" : `終了したものも表示${hidden ? ` (${hidden}${hiddenUnread ? "・未読あり" : ""})` : ""}`;
   const tabs = `<div class="ptabs"><button class="prow${sel || AGENTS ? "" : " on"}" data-r="" data-m=""><span class="pn"><b>メイン</b></span></button><button class="prow${AGENTS ? " on" : ""}" data-r="" data-m="agents" title="subagent の返事だけを見る"><span class="pn"><b>🤖 ワーカー</b></span></button></div>`;
   const html = tabs + rows.join("") + (deadBtn ? `<button id="pdead" title="Claude が走っている端末が無い repo / セッション">${deadBtn}</button>` : "");

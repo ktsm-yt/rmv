@@ -16,6 +16,8 @@ const HERDR = process.env.RMV_HERDR_BIN || "herdr"; // 同上 (herdr 配下の C
 const OSASCRIPT = process.env.RMV_OSASCRIPT_BIN || "osascript"; // 同上
 const PBPASTE = process.env.RMV_PBPASTE_BIN || "pbpaste"; // 同上 (クリップボードの文字の退避と復元)
 const PBCOPY = process.env.RMV_PBCOPY_BIN || "pbcopy";
+const CODEX = process.env.RMV_CODEX_BIN || "codex"; // 同上。Codex の会話への赤ペンを `codex queue` で積む (launchd の PATH では /opt/homebrew/bin/codex)
+const CODEX_QUEUE_TIMEOUT = 30_000;
 const SIPS = "/usr/bin/sips"; // 貼った画像の縮小 (macOS 標準)
 const PROJECTS = process.env.RMV_PROJECTS_DIR || `${process.env.HOME}/.claude/projects`; // transcript の置き場 (同上)
 const MONO_FONT = process.env.RMV_MONO_FONT || `${process.env.HOME}/Library/Fonts/HackGenConsole-Regular.ttf`; // スマホに配る等幅フォント (罫線図用)。テストの差し替え口
@@ -140,7 +142,8 @@ async function historyItems() {
       // 名前付き herdr session は stop で socket が消える。list が取れず fail open で『稼働中』に残るので live にしない (一覧には残す。2026-11-16 rmp の試験の rmp-direct-demo が浮いて送れなかった)
       const gone = Boolean(sock && herdrSessionName(sock) && !existsSync(sock));
       const shown = paneView(pane, await agentsOf(sock), byHandle.get(meta.terminal));
-      return { name, prompt: typeof meta.prompt === "string" ? meta.prompt : null, ts: meta.ts ?? null, cwd, root, label: labelOf(meta), repo: root.split("/").filter(Boolean).pop() ?? "", head: body.replace(/\s+/g, " ").trim().slice(0, 40), end: endOf(body), sid: typeof meta.session_id === "string" && meta.session_id ? meta.session_id : null, terminal: Boolean(meta.terminal) || pane !== null, live: gone ? false : shown.herdr ? shown.alive : (pane !== null && !meta.terminal ? true : terms ? Boolean(meta.terminal) && handles.has(meta.terminal) : claude ? Boolean(meta.terminal) && claude.has(meta.terminal) : true) && shown.alive, session, perm: perm ? { id: perm.id, tool: perm.tool, detail: perm.detail, ts: perm.ts } : null, agent: meta.agent ?? null, sub: subType(meta, shown.tab, await firstTabsOf(herdrSockOf(meta))), title: shown.title, status: shown.status, lastOutputAt: shown.lastOutputAt, bg: await readBg(session, typeof meta.session_id === "string" ? meta.session_id : null) };
+      const codex = meta.agent_kind === "codex"; // hooks/codex-stop.py の記録。端末を持たないので live にしない (稼働中・/sessions・/ext/deliver に出さない)
+      return { name, codex, prompt: typeof meta.prompt === "string" ? meta.prompt : null, ts: meta.ts ?? null, cwd, root, label: labelOf(meta), repo: root.split("/").filter(Boolean).pop() ?? "", head: body.replace(/\s+/g, " ").trim().slice(0, 40), end: endOf(body), sid: typeof meta.session_id === "string" && meta.session_id ? meta.session_id : null, terminal: Boolean(meta.terminal) || pane !== null, live: codex || gone ? false : shown.herdr ? shown.alive : (pane !== null && !meta.terminal ? true : terms ? Boolean(meta.terminal) && handles.has(meta.terminal) : claude ? Boolean(meta.terminal) && claude.has(meta.terminal) : true) && shown.alive, session, perm: perm ? { id: perm.id, tool: perm.tool, detail: perm.detail, ts: perm.ts } : null, agent: meta.agent ?? null, sub: subType(meta, shown.tab, await firstTabsOf(herdrSockOf(meta))), title: shown.title, status: shown.status, lastOutputAt: shown.lastOutputAt, bg: await readBg(session, typeof meta.session_id === "string" ? meta.session_id : null) };
     }),
   )).filter((e): e is NonNullable<typeof e> => e !== null);
   // 1 つの端末で順に別の repo を開くと、端末が生きている限り昔の repo まで live になる (2026-09-29 実機: 1 端末で 4 repo)。
@@ -821,7 +824,7 @@ async function dbg(req: Request): Promise<Response> {
   return new Response(null, { status: 204 });
 }
 
-async function send(req: Request, opt: { exact?: boolean; check?: (t: SendTarget) => Promise<Response | null> } = {}): Promise<Response> {
+async function send(req: Request, opt: { exact?: boolean; check?: (t: SendTarget) => Promise<Response | null>; extendCodexTimeout?: () => void } = {}): Promise<Response> {
   if (!ORIGINS.has(req.headers.get("origin") ?? "")) return new Response("forbidden origin", { status: 403 });
   const body = await req.json().catch(() => null);
   const name = typeof body?.name === "string" ? body.name : "";
@@ -837,6 +840,11 @@ async function send(req: Request, opt: { exact?: boolean; check?: (t: SendTarget
   // asking-<session>.md (返事ゼロの仮 entry、待機中の最初の依頼の送り先) は history に meta が無いので、state/prompt の記録 (terminal・herdr_pane・cwd 付き) を meta に使う
   let meta = await metaOf(name);
   if (!meta) return new Response("not found", { status: 404 });
+  if (meta.agent_kind === "codex") {
+    if (opt.exact || opt.check) return new Response("codex: 外部配送・モデル切り替えは Codex の会話に送らない", { status: 409 });
+    opt.extendCodexTimeout?.();
+    return codexQueue(name, meta, text, images, reset);
+  }
   let pane = herdrPaneOf(meta);
   let sock = herdrSockOf(meta);
   if (!pane && (typeof meta.terminal !== "string" || !meta.terminal)) return new Response("entry has no terminal", { status: 409 });
@@ -937,6 +945,37 @@ async function send(req: Request, opt: { exact?: boolean; check?: (t: SendTarget
     return new Response(out || "{}", { headers: { "content-type": "application/json; charset=utf-8" } });
   } catch (e) {
     return new Response(`orca spawn failed: ${e}`, { status: 502 });
+  }
+}
+
+// Codex の会話の返事 (hooks/codex-stop.py が agent_kind: "codex" で記録) への赤ペン: 端末には打たず、Codex 自身のキューに積む (`codex queue`)。
+// 宛先の UUID は記録 (history の meta) からだけ取る。HTTP から受けるのは name だけで、同じ cwd への差し替え・--resume・自動の再送はしない。
+// 成功 = キューに積めた。Codex が実行中・承認待ちなら Codex 側で順番を待ち、読み込み済みで手が空いた会話なら Codex が次の turn を始める (2026-11-18 隔離 app-server で実測)。
+// 画像・数字キーの reset・内部呼び出し (/ext/deliver と /switch の exact / check) は Codex に通さない (黙って捨てずに断る)。shell を通さず argv で渡す
+async function codexQueue(name: string, meta: Record<string, unknown>, text: string, images: unknown[], reset: boolean): Promise<Response> {
+  const sid = typeof meta.session_id === "string" ? meta.session_id : "";
+  if (images.length) return new Response("codex: 画像は送れない (文字だけ)。画像を外して送る", { status: 400 });
+  if (reset) return new Response("codex: 入力欄を空にする送り方は使えない", { status: 400 });
+  if (sid.length !== 36 || !EXT_SID.test(sid)) return new Response("codex: 記録の会話 ID が UUID でない", { status: 409 });
+  if (!text.trim() || text.includes("\0")) return new Response("codex: text must be non-empty without NUL", { status: 400 });
+  await appendFile(`${STATE}/send.jsonl`, JSON.stringify({ ts: new Date().toISOString(), name, sid, codex: true }) + "\n").catch(() => {});
+  try {
+    // --message=<text>: 本文が "-" で始まっても flag にしない
+    const p = Bun.spawn([CODEX, "queue", "--thread", sid, `--message=${text}`], { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+    // 時間切れは登録済みか判明しない。確認せずに再送すると 2 回積まれうる。
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const result = await Promise.race([
+        Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]),
+        new Promise<null>((resolve) => { timer = setTimeout(() => { p.kill(); resolve(null); }, CODEX_QUEUE_TIMEOUT); }),
+      ]);
+      if (!result || p.signalCode) return new Response("codex queue: 登録できたか不明。Codex のキューを確認してください", { status: 504 });
+      const [out, err, code] = result;
+      if (code !== 0) return new Response(`codex queue exit ${code}: ${(err.trim() || out.trim()).slice(0, 500)}`, { status: 502 });
+      return Response.json({ ok: true, via: "codex-queue", out: out.trim() }, { headers: { "cache-control": "no-store" } });
+    } finally { clearTimeout(timer); }
+  } catch (e) {
+    return new Response(`codex spawn failed: ${e}`, { status: 502 });
   }
 }
 
@@ -1260,7 +1299,7 @@ async function skills(cwd: string | null): Promise<Response> {
 Bun.serve({
   hostname: "127.0.0.1",
   port: PORT,
-  async fetch(req) {
+  async fetch(req, server) {
     const { pathname, searchParams } = new URL(req.url);
     // DNS rebinding 対策: 他サイトが自分のドメインを 127.0.0.1 に向けても Host が違うので読ませない
     if (!HOSTS.has(req.headers.get("host") ?? "")) return new Response("forbidden host", { status: 403 });
@@ -1293,7 +1332,9 @@ Bun.serve({
       for (const [k, v] of Object.entries(cors)) headers.set(k, v);
       return new Response(r.body, { status: r.status, statusText: r.statusText, headers });
     }
-    if (pathname === "/send" && req.method === "POST") return send(req);
+    if (pathname === "/send" && req.method === "POST") return send(req, {
+      extendCodexTimeout: () => server.timeout(req, CODEX_QUEUE_TIMEOUT / 1000 + 5), // CLI の打ち切りを待って 504 を返せるようにする
+    });
     if (pathname === "/dbg" && req.method === "POST") return dbg(req);
     if (pathname === "/switch" && req.method === "POST") return switchTo(req);
     if (pathname === "/approve" && req.method === "POST") return approve(req);

@@ -154,6 +154,24 @@ RMV_VOICEVOX_SPEAKER=3 # ずんだもん / ノーマル
 
 `RMV_TTS_PROVIDER` を設定しなければ Gemini のままです。
 
+## Codex の返事を載せて赤ペンを返す (試作・opt-in)
+
+Codex の会話の返事を一覧に出し、段落に付けた赤ペンを同じ Codex の会話へ返せます。
+既定では何もしません。使う時は Codex の `~/.codex/hooks.json` の `Stop` に、返事を保存する hook を自分で足します。
+
+```json
+{ "hooks": [{ "type": "command", "command": "python3 ~/rmv/hooks/codex-stop.py", "timeout": 10 }] }
+```
+
+足した後、Codex が hook の確認を出したら信頼してください。
+
+- 一覧には『Codex:』と付いて出ます。本文に番号や見出しがなくても、段落を押して赤ペンを付けられます。端末の稼働状態や外部ツール (rmp) の送り先は Claude Code 用です。
+- Codex の記録が対話セッション (`cli` または `vscode`) を示す返事を載せます。herdr の pane で対話版として動かした委譲 worker も表示されます。
+- 赤ペンの送信は端末に打たず、`codex queue --thread <会話の ID> --message=<本文>` で Codex 自身のキューに積みます。送り先の ID は記録から取り、同じフォルダの別の会話に回すことはしません。
+- 積めたら『キューに登録』と出ます。登録した赤ペンをいつ処理するかは Codex が決めます。失敗したら下書きが残ります。時間切れや通信の切断があった時は、登録されているか Codex 側で確かめてください。
+- 送れるのは文字だけです。画像付きの赤ペン、送信欄 (チャット欄)、数字キー、モデルの切り替え、許可ボタンは Codex には使えません。
+- launchd で常駐させている時、server は `/opt/homebrew/bin/codex` を使います。別の codex を使うなら `state/env` に `RMV_CODEX_BIN=<パス>` を書きます。
+
 ## 返事に出てきたファイルの扱い
 
 画像・動画・PDF などは、ホーム配下と一時ディレクトリにあればページの中に表示します。
