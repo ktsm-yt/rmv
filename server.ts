@@ -1,8 +1,8 @@
 // 実験 A: 固定シェル (index.html) + AI 断片 (state/latest.html, state/history/) を配る最小サーバ。Bun 専用、依存なし。
 // ponytail: 127.0.0.1 固定・認証なし。上限 = 単一ユーザのローカル実験。他の端末からは tailscale serve 等の中継 + RMV_ORIGINS で開く (docs/config.md)。他人に見せる段階で認証を足す。
-import { appendFile, readdir, stat } from "node:fs/promises";
-import { existsSync } from "node:fs";
-import { extname, normalize } from "node:path";
+import { appendFile, open as openFile, readdir, stat, type FileHandle } from "node:fs/promises";
+import { constants, existsSync } from "node:fs";
+import { basename, extname, isAbsolute, normalize } from "node:path";
 import { homedir } from "node:os";
 
 // 旧名 RMX_* (2026-10 まで) も読む: RMV_* が未設定なら写す。RMX_ は harness-rmx 時代の名残で v0.19.0 に改名した
@@ -230,11 +230,14 @@ async function history(repo: string | null): Promise<Response> {
   // sub は出口でだけ agent にする (上の集計は sub を本体の返事として数える: 端末ごとの最新の返事・今のセッションの判定が pane ごとに要る)
   const replies = items.map(({ root, sub, label, ...e }) => ({ ...e, agent: sub ? { type: sub, id: e.session } : e.agent, asking: (e.name.startsWith("asking-") || curSid.get(e.session) === replySid.get(e.session) ? asking.get(e.session) : null) ?? null })); // 次のセッションの依頼は前のセッションの返事に付けない
   // 本文のある履歴や /sessions・/ext/deliver には混ぜず、viewer の一覧だけに出す。
-  const out = [...replies, ...panes.map((p) => {
+  const livePanes = await Promise.all(panes.map(async (p) => {
     const session = `codex-pane-${p.pane.replace(":", "-")}-${p.terminal}`;
-    return { name: session + ".md", session, codex: true, codexPane: true, sid: null, repo: p.repo, head: p.label, label: p.label,
+    const name = session + ".md";
+    const reply = await completedCodexReply(name);
+    return { name, session, codex: true, codexPane: true, replyTurn: reply?.identity ?? null, sid: null, repo: p.repo, head: p.label, label: p.label,
       title: p.pane, status: p.status, live: true, terminal: false, ts: null, agent: null, perm: null, asking: null };
-  })];
+  }));
+  const out = [...replies, ...livePanes];
   const want = repo?.toLowerCase();
   return Response.json(want ? out.filter((e) => e.repo.toLowerCase() === want) : out, { headers: { "cache-control": "no-store", "x-rmv-live": live } });
 }
@@ -807,10 +810,79 @@ async function currentCodexPane(pane: string, terminal: string): Promise<CodexPa
   return p?.pane === pane && p.terminal === terminal ? p : null;
 }
 function paneChanged(): Response { return new Response("選んだCodexの端末が見つからないか、入れ替わりました", { status: 409 }); }
-async function codexPaneStatus({ pane, terminal }: { pane: string; terminal: string }): Promise<Response> {
+type CompletedReply = { identity: string; text: string };
+type CodexReplyBinding = { path: string; sid: string; pending?: Promise<CompletedReply | null>; cached?: {
+  version: string; fileId: string; size: number; reply: CompletedReply | null;
+} };
+const codexReplyBindings = new Map<string, CodexReplyBinding>();
+try {
+  for (const [name, path] of Object.entries(JSON.parse(process.env.RMV_CODEX_PANE_REPLIES || "{}"))) {
+    if (!codexPaneFromName(name) || typeof path !== "string" || !isAbsolute(path)) continue;
+    const sid = basename(path).match(/^rollout-.+-([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})\.jsonl$/)?.[1];
+    if (sid) codexReplyBindings.set(name, { path, sid });
+  }
+} catch { /* An absent or invalid binding leaves the pane status-only. */ }
+
+// Read only the bound regular file and only complete, newline-terminated records.
+const CODEX_REPLY_WINDOW = 2 * 1024 * 1024;
+async function readCodexRollout(binding: CodexReplyBinding): Promise<CompletedReply | null> {
+  let file: FileHandle | undefined;
+  try {
+    const opened = file = await openFile(binding.path, constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW);
+    const st = await opened.stat();
+    if (!st.isFile()) return null;
+    const { size } = st;
+    const fileId = `${st.dev}:${st.ino}`;
+    const version = `${fileId}:${size}:${st.mtimeMs}:${st.ctimeMs}`;
+    const prior = binding.cached;
+    if (prior?.version === version) return prior.reply;
+    const read = async (position: number, length: number) => {
+      const buffer = Buffer.alloc(length);
+      const { bytesRead } = await opened.read(buffer, 0, length, position);
+      if (bytesRead !== length) throw new Error("rollout changed");
+      return buffer.toString("utf8");
+    };
+    const first = await read(0, Math.min(size, 64 * 1024));
+    const newline = first.indexOf("\n");
+    if (newline < 0) return null;
+    const header = JSON.parse(first.slice(0, newline));
+    const meta = header?.payload;
+    if (header?.type !== "session_meta" || meta?.id !== binding.sid ||
+        (meta.source !== "cli" && meta.source !== "vscode") || (meta.thread_source != null && meta.thread_source !== "user")) return null;
+
+    const start = Math.max(0, size - CODEX_REPLY_WINDOW);
+    const lines = (await read(start, size - start)).split("\n");
+    lines.pop(); // A writer may still be appending the final record.
+    let reply: CompletedReply | null = null;
+    for (let i = lines.length - 1; i >= (start ? 1 : 0); i--) {
+      try {
+        const record = JSON.parse(lines[i]), event = record?.payload;
+        if (record?.type !== "event_msg" || event?.type !== "task_complete" || typeof event.turn_id !== "string" ||
+            !event.turn_id || event.root_turn_id !== event.turn_id || typeof event.last_agent_message !== "string" ||
+            !event.last_agent_message.trim()) continue;
+        const text = event.last_agent_message;
+        reply = { identity: Bun.hash(event.turn_id + "\0" + text).toString(), text };
+        break;
+      } catch { /* Invalid records never become replies. */ }
+    }
+    if (!reply && prior?.fileId === fileId && size > prior.size) reply = prior.reply;
+    binding.cached = { version, fileId, size, reply };
+    return reply;
+  } catch { return null; }
+  finally { await file?.close().catch(() => {}); }
+}
+function completedCodexReply(name: string): Promise<CompletedReply | null> | null {
+  const binding = codexReplyBindings.get(name);
+  if (!binding) return null;
+  return binding.pending ??= readCodexRollout(binding).finally(() => { binding.pending = undefined; });
+}
+
+async function codexPaneHistory(name: string, { pane, terminal }: { pane: string; terminal: string }): Promise<Response> {
   try {
     const p = await currentCodexPane(pane, terminal);
     if (!p) return paneChanged();
+    const reply = await completedCodexReply(name);
+    if (reply) return new Response(reply.text, { headers: TEXT });
     const messages = new Map([["working", "作業中"], ["idle", "待機中"], ["blocked", "入力待ち"], ["done", "完了"]]);
     return new Response(`Codex · ${messages.get(p.status) ?? "状態不明"}`, { headers: TEXT });
   } catch { return new Response("Codexの状態を確認できません", { status: 502 }); }
@@ -1454,7 +1526,7 @@ Bun.serve({
     const m = pathname.match(/^\/history\/(.+)$/);
     if (m && NAME.test(m[1])) {
       const codexPane = codexPaneFromName(m[1]);
-      if (codexPane && req.method === "GET") return codexPaneStatus(codexPane);
+      if (codexPane && req.method === "GET") return codexPaneHistory(m[1], codexPane);
       if (m[1].startsWith("asking-")) { // 返事ゼロの仮 entry: 本文は依頼文そのもの
         const p = await Bun.file(`${PROMPT}/${m[1].slice(7, -3)}.json`).json().catch(() => null);
         return typeof p?.prompt === "string" ? new Response(p.waiting === true ? "(待機中: 最初の依頼を待っています)" : `(返事待ち)\n\n${p.prompt}`, { headers: TEXT }) : new Response("not found", { status: 404 });

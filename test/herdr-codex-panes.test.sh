@@ -28,6 +28,7 @@ case "$1 $2" in
 esac
 STUB
 chmod +x "$TMP/herdr"
+export RMV_CODEX_PANE_REPLIES="{\"codex-pane-wF-pC-term_a.md\":\"$TMP/rollout-demo-01a1edc0-a35a-7e11-ac64-09ebd9ae1a2c.jsonl\",\"codex-pane-wF-pD-term_b.md\":\"$TMP/rollout-demo-01a1edc0-a35a-7e11-ac64-09ebd9ae1a2d.jsonl\"}"
 TEST_TMP="$TMP" RMV_STATE_DIR="$TMP/state" RMV_PORT="$PORT" RMV_LIVE_TTL_MS=0 RMV_HERDR_BIN="$TMP/herdr" RMV_ORCA_BIN=/usr/bin/false RMV_PS_BIN=/usr/bin/false RMV_CODEX_BIN=/usr/bin/false bun "$RMV_DIR/server.ts" >"$TMP/server.log" 2>&1 &
 SV=$!
 trap 'kill "$SV" 2>/dev/null || true; wait "$SV" 2>/dev/null || true; rm -r "$TMP"' EXIT
@@ -49,6 +50,22 @@ def panes(*rows):
     pending = path.with_suffix(".tmp")
     pending.write_text(json.dumps({"result": {"panes": list(rows)}}))
     pending.replace(path)
+
+sid = "01a1edc0-a35a-7e11-ac64-09ebd9ae1a2c"
+rollout = tmp / f"rollout-demo-{sid}.jsonl"
+wrong_rollout = tmp / "rollout-demo-01a1edc0-a35a-7e11-ac64-09ebd9ae1a2d.jsonl"
+header = dict(type="session_meta", payload=dict(id=sid, source="cli", thread_source="user"))
+def record(path, entry, end="\n"):
+    with path.open("a") as out:
+        out.write(json.dumps(entry) + end)
+
+def final(turn, text, root=None):
+    return dict(type="event_msg", payload=dict(type="task_complete", turn_id=turn, root_turn_id=root or turn, last_agent_message=text))
+
+record(rollout, header)
+record(rollout, dict(type="event_msg", payload=dict(type="agent_message", message="RAW COMMENTARY")))
+record(wrong_rollout, header)
+record(wrong_rollout, final("wrong", "OTHER THREAD"))
 
 empty = "\x1b[0m\x1b[1m› \x1b[0m\x1b[2mAsk Codex to do anything\x1b[0m\n\n  gpt-5.4 default · /tmp/demo\n  ← for agents · ? for shortcuts\n"
 (tmp / "wF:pD-input.txt").write_text(empty)
@@ -82,6 +99,19 @@ with sync_playwright() as p:
     expect(page.locator("#cto")).to_contain_text("Codex · 依頼1")
     expect(reply).to_have_text("Codex · 作業中")
     expect(send_button).to_be_disabled()
+    record(rollout, final("turn-1", "**First final**"))
+    expect(reply).to_have_text("First final", timeout=8000)
+    record(rollout, dict(type="response_item", payload=dict(type="task_complete", turn_id="fake", last_agent_message="RAW TOOL")))
+    record(rollout, final("child", "RAW CHILD", root="turn-1"))
+    record(rollout, final("turn-2", "**Second final**"), end="")
+    url = f"{base}/history/codex-pane-wF-pC-term_a.md"
+    assert page.request.get(url).text() == "**First final**"
+    with rollout.open("a") as out:
+        out.write("\n")
+    expect(reply).to_have_text("Second final", timeout=8000)
+    rollout.unlink()
+    expect(reply).to_have_text("Codex · 作業中", timeout=8000)
+    assert "RAW" not in (tmp / "server.log").read_text()
     rows.nth(1).press("Enter")
     expect(rows.nth(1)).to_have_attribute("aria-pressed", "true")
     expect(page.locator("#cto")).to_contain_text("Codex · wF:pD")

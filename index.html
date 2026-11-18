@@ -909,7 +909,8 @@ async function showIdx(i) {
   following = idx === 0;
   const e = list[idx];
   renderBar();
-  if (!e || (e.name === shownName && (!e.codexPane || cur?.status === e.status))) return;
+  const samePaneBody = cur?.replyTurn === e?.replyTurn && (!!e?.replyTurn || cur?.status === e?.status);
+  if (!e || (e.name === shownName && (!e.codexPane || samePaneBody))) return;
   const request = ++showRequest;
   shownName = e.name;
   renderChat();
