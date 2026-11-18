@@ -342,13 +342,10 @@ async function herdrCwds(): Promise<string[] | null> {
   const cwds = new Set<string>();
   let got = false;
   for (const sock of [null, ...(await recordedSockets())]) {
-    try {
-      const r = await herdrRun(["pane", "list"], sock);
-      const panes = r.code === 0 ? JSON.parse(r.out)?.result?.panes : null;
-      if (!Array.isArray(panes)) continue;
-      got = true;
-      for (const c of panes.map((p) => p?.cwd)) if (typeof c === "string" && c.startsWith("/")) cwds.add(c);
-    } catch {}
+    const panes = await readHerdrPanes(sock);
+    if (!panes) continue;
+    got = true;
+    for (const p of panes) if (typeof p?.cwd === "string" && p.cwd.startsWith("/")) cwds.add(p.cwd);
   }
   return got ? [...cwds] : null;
 }
@@ -760,6 +757,31 @@ async function herdrRun(args: string[], sock: string | null = null): Promise<{ o
   const p = Bun.spawn([HERDR, ...args], { stdout: "pipe", stderr: "pipe", ...(sock ? { env: { ...process.env, HERDR_SOCKET_PATH: sock } } : {}) });
   const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
   return { out, err, code };
+}
+type HerdrPane = { agent?: unknown; pane_id?: unknown; label?: unknown; cwd?: unknown; agent_status?: unknown };
+async function readHerdrPanes(sock: string | null = null): Promise<HerdrPane[] | null> {
+  try {
+    const r = await herdrRun(["pane", "list"], sock);
+    const panes = r.code === 0 ? JSON.parse(r.out)?.result?.panes : null;
+    return Array.isArray(panes) ? panes : null;
+  } catch { return null; }
+}
+
+// 稼働表示専用。Herdr の pane ID を Codex の会話 ID として送信に使わない。
+type CodexPane = { pane: string; label: string; repo: string; status: string };
+let codexPaneCache: { at: number; panes: Promise<CodexPane[] | null> } | null = null;
+async function liveCodexPanes(): Promise<Response> {
+  if (!codexPaneCache || Date.now() - codexPaneCache.at >= LIVE_TTL) {
+    const panes = readHerdrPanes().then((panes) => panes?.flatMap((p) => {
+      if (p?.agent !== "codex" || typeof p.pane_id !== "string" || !HERDR_PANE.test(p.pane_id)) return [];
+      const label = typeof p.label === "string" ? p.label.trim() : "";
+      const repo = typeof p.cwd === "string" ? p.cwd.split("/").filter(Boolean).at(-1) ?? "" : "";
+      return [{ pane: p.pane_id, label: label || p.pane_id, repo, status: typeof p.agent_status === "string" ? p.agent_status : "unknown" }];
+    }) ?? null);
+    codexPaneCache = { at: Date.now(), panes };
+  }
+  const panes = await codexPaneCache.panes;
+  return Response.json(panes, { status: panes ? 200 : 503, headers: { "cache-control": "no-store" } });
 }
 // 送れる pane か。pane が無い (閉じた / herdr が別の server) → 409、herdr が呼べない・応答が読めない → 502、
 // pane はあるが Claude が居ない (終了して素のシェルが残った: 赤ペンの文がコマンドとして走る) → 409
@@ -1320,6 +1342,7 @@ Bun.serve({
       return r;
     }
     if (pathname === "/sessions") return sessions();
+    if (pathname === "/herdr/codex-panes" && req.method === "GET") return liveCodexPanes();
     // 外部ツールの口: Origin が RMV_EXT_ORIGINS に無ければ (未設定なら全部) 本文を読む前に 403
     if (pathname.startsWith("/ext/")) {
       const origin = req.headers.get("origin") ?? "";

@@ -156,8 +156,10 @@ RMV_VOICEVOX_SPEAKER=3 # ずんだもん / ノーマル
 
 ## Codex の返事を載せて赤ペンを返す (試作・opt-in)
 
+右側の『HerdrのCodex』には、RMVが接続しているHerdrで動くCodexのペイン名、フォルダ、状態が出ます。Codexの設定や返信履歴がなくても表示できる参照専用の一覧です。
+
 Codexの返事を一覧に出せます。段落に付けた赤ペンも、右の送信欄に書いた依頼も、選んだCodexの会話に届きます。
-既定では何もしません。使う時は Codex の `~/.codex/hooks.json` の `Stop` に、返事を保存する hook を自分で足します。
+返事の保存と送信を使う時は、Codexの `~/.codex/hooks.json` の `Stop` に保存用のhookを足します。
 
 ```json
 { "hooks": [{ "type": "command", "command": "python3 ~/rmv/hooks/codex-stop.py", "timeout": 10 }] }
