@@ -819,6 +819,7 @@ async function codexPaneStatus({ pane, terminal }: { pane: string; terminal: str
 const codexPaneReady = (status: string) => status === "idle" || status === "done";
 const sendingCodexPanes = new Set<string>();
 async function sendCodexPane(req: Request, { pane, terminal }: { pane: string; terminal: string }, text: string): Promise<Response> {
+  text = text.replace(/[ \t\r\n]+$/, "");
   if (!text.trim() || text.length > 16_000 || /[\x00-\x1f\x7f-\x9f\u2028\u2029]/.test(text) || /^[!/]/.test(text.trimStart())) {
     return new Response("ペインに送れるのはコマンドを除く16,000字以内の1行のテキストです", { status: 400 });
   }

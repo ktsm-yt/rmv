@@ -98,7 +98,7 @@ with sync_playwright() as p:
     assert submit(origin="https://evil.example").status == 403
     assert submit(reset=True).status == 400
     assert submit(images=[f"{tmp}/state/paste/1-0123abcd.png"]).status == 400
-    for text in ("", "two\nlines", "a\tb", "a\x1b", " /model", "! ls"):
+    for text in ("", " \t\r\n", "two\nlines", "a\tb", "a\x1b\n", "a\x85", " /model\n", "! ls"):
         assert submit(text=text).status == 400
     (tmp / "wF:pD-input.txt").write_text(empty.replace("\x1b[2mAsk Codex to do anything", "typed draft"))
     assert "書きかけ" in submit().text()
@@ -111,7 +111,7 @@ with sync_playwright() as p:
     assert "入力欄が空か確認できません" in submit().text()
     assert not (tmp / "prompt.jsonl").exists()
     (tmp / "wF:pD-input.txt").write_text(empty)
-    page.locator("#ctext").fill("-literal")
+    page.locator("#ctext").fill("test\n")
     with page.expect_response(lambda r: r.url.endswith("/send")) as response:
         send_button.click()
         for _ in range(50):
@@ -122,12 +122,14 @@ with sync_playwright() as p:
         assert duplicate.status == 409 and "送信中" in duplicate.text()
     assert response.value.ok
     expect(page.locator("#cmsg")).to_contain_text("端末へ送信")
+    assert submit(text="-literal \t\r\n").ok
     assert (tmp / "prompt.jsonl").read_text().splitlines() == [
+        json.dumps(["agent", "prompt", "wF:pD", "test"]),
         json.dumps(["agent", "prompt", "wF:pD", "-literal"])]
     (tmp / "replace-after-read.json").write_text(json.dumps(
         {"result": {"panes": [first, dict(second, terminal_id="term_changed"), claude]}}))
     assert submit().status == 409          # live identity changes after first check
-    assert len((tmp / "prompt.jsonl").read_text().splitlines()) == 1
+    assert len((tmp / "prompt.jsonl").read_text().splitlines()) == 2
     history = tmp / "state" / "history"
     history.mkdir(parents=True)
     (history / "20261119T100000000-saved.json").write_text(json.dumps(dict(
