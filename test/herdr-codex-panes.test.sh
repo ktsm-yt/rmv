@@ -17,7 +17,7 @@ case "$1 $2" in
       cat "$TEST_TMP/${3}-input.txt"
       if [ -f "$TEST_TMP/replace-after-read.json" ]; then mv "$TEST_TMP/replace-after-read.json" "$TEST_TMP/panes.json"; fi
     else
-      printf '<literal-node> visible from %s\n' "$3"
+      printf '%s\n' "$*" >> "$TEST_TMP/unexpected"; exit 1
     fi ;;
   'agent prompt')
     python3 -c 'import json,os,sys; from pathlib import Path; p=Path(os.environ["TEST_TMP"])/"prompt.jsonl"; p.open("a").write(json.dumps(sys.argv[1:])+"\n")' "$@"
@@ -58,55 +58,61 @@ with sync_playwright() as p:
     page = browser.new_page(viewport={"width": 1440, "height": 900})
     page.add_init_script("localStorage.setItem('rmx.chat.open', '1')")
     page.goto(base)
-    status = page.locator("#codex-panes")
-    rows = status.locator("li")
+    rows = page.locator('#cchips button[data-s^="codex-pane-"]')
     expect(rows).to_have_count(2)
     expect(rows.nth(0)).to_contain_text("依頼1")
-    expect(rows.nth(0)).to_contain_text("Usher · wF:pC")
+    expect(rows.nth(0)).to_contain_text("Usher")
     expect(rows.nth(0)).to_contain_text("作業中")
     expect(rows.nth(1)).to_contain_text("wF:pD")
     expect(rows.nth(1)).to_contain_text("待機中")
-    expect(status.locator("button")).to_have_count(2)
-    expect(status.locator("[data-s], [data-approve]")).to_have_count(0)
+    expect(page.locator("#codex-panes")).to_have_count(0)
     send_button = page.locator("#csend")
     expect(send_button).to_be_disabled()
-    assert page.request.get(f"{base}/history").json() == []
-    assert page.request.get(f"{base}/sessions").json() == []
-    assert page.request.get(f"{base}/herdr/codex-panes").json() == [
-        {"label": "依頼1", "repo": "Usher", "pane": "wF:pC", "terminal": "term_a", "status": "working"},
-        {"label": "wF:pD", "repo": "Usher", "pane": "wF:pD", "terminal": "term_b", "status": "idle"},
+    reply = page.locator("#reply")
+    expect(reply).to_have_text("")
+    assert [(e["name"], e["sid"], e["status"], e["live"]) for e in page.request.get(f"{base}/history").json()] == [
+        ("codex-pane-wF-pC-term_a.md", None, "working", True),
+        ("codex-pane-wF-pD-term_b.md", None, "idle", True),
     ]
-    assert page.request.post(f"{base}/herdr/codex-panes").status == 404
+    assert page.request.get(f"{base}/sessions").json() == []
+    assert page.request.get(f"{base}/herdr/codex-panes").status == 404
     assert page.request.post(f"{base}/send", headers={"Origin": base},
                              data={"name": "wF-pC.md", "text": "dummy"}).status == 404
-    rows.nth(0).locator("button").click()
+    rows.nth(0).click()
     expect(page.locator("#cto")).to_contain_text("Codex · 依頼1")
+    expect(reply).to_have_text("Codex · 作業中")
     expect(send_button).to_be_disabled()
-    rows.nth(1).locator("button").press("Enter")
-    expect(rows.nth(1).locator("button")).to_have_attribute("aria-pressed", "true")
+    rows.nth(1).press("Enter")
+    expect(rows.nth(1)).to_have_attribute("aria-pressed", "true")
     expect(page.locator("#cto")).to_contain_text("Codex · wF:pD")
-    output = page.locator("#codex-pane-view pre")
-    expect(output).to_contain_text("<literal-node> visible from wF:pD")
-    expect(output.locator("literal-node")).to_have_count(0)
+    expect(reply).to_have_text("Codex · 待機中")
+    expect(reply.locator("[data-pin], pre")).to_have_count(0)
 
-    def submit(pane="wF:pD", terminal="term_b", text="-literal", origin=base):
-        return page.request.post(f"{base}/herdr/codex-pane/send", headers={"Origin": origin},
-                                 data={"pane": pane, "terminal": terminal, "text": text})
+    def submit(pane="wF-pD", terminal="term_b", text="-literal", origin=base, **flags):
+        return page.request.post(f"{base}/send", headers={"Origin": origin},
+                                 data={"name": f"codex-pane-{pane}-{terminal}.md", "text": text, **flags})
 
-    assert submit(pane="wF:pC", terminal="term_a").status == 409     # busy
-    assert submit(pane="CodexAlias").status == 400                    # no name fallback
+    assert submit(pane="wF-pC", terminal="term_a").status == 409     # busy
+    assert submit(pane="CodexAlias").status == 404                   # no name fallback
     assert submit(terminal="term_stale").status == 409
     assert submit(origin="https://evil.example").status == 403
+    assert submit(reset=True).status == 400
+    assert submit(images=[f"{tmp}/state/paste/1-0123abcd.png"]).status == 400
     for text in ("", "two\nlines", "a\tb", "a\x1b", " /model", "! ls"):
         assert submit(text=text).status == 400
     (tmp / "wF:pD-input.txt").write_text(empty.replace("\x1b[2mAsk Codex to do anything", "typed draft"))
     assert "書きかけ" in submit().text()
+    (tmp / "wF:pD-input.txt").write_text(empty.replace("\x1b[2mAsk Codex to do anything", "typed draft")
+                                        .replace("  ← for agents · ? for shortcuts\n", ""))
+    assert "書きかけ" in submit().text()
+    (tmp / "wF:pD-input.txt").write_text(empty.replace("\x1b[1m› ", "\x1b[2m› "))
+    assert "入力欄が空か確認できません" in submit().text()
     (tmp / "wF:pD-input.txt").write_text("› 1. Trust and continue\n\n  Press Enter to continue")
     assert "入力欄が空か確認できません" in submit().text()
     assert not (tmp / "prompt.jsonl").exists()
     (tmp / "wF:pD-input.txt").write_text(empty)
     page.locator("#ctext").fill("-literal")
-    with page.expect_response(lambda r: r.url.endswith("/herdr/codex-pane/send")) as response:
+    with page.expect_response(lambda r: r.url.endswith("/send")) as response:
         send_button.click()
         for _ in range(50):
             if (tmp / "prompt.jsonl").exists():
@@ -122,22 +128,28 @@ with sync_playwright() as p:
         {"result": {"panes": [first, dict(second, terminal_id="term_changed"), claude]}}))
     assert submit().status == 409          # live identity changes after first check
     assert len((tmp / "prompt.jsonl").read_text().splitlines()) == 1
+    history = tmp / "state" / "history"
+    history.mkdir(parents=True)
+    (history / "20261119T100000000-saved.json").write_text(json.dumps(dict(
+        agent_kind="codex", session_id="01a1edc0-a35a-7e11-ac64-09ebd9ae1a2c",
+        cwd="/x/Usher", ts="2026-11-19T10:00:00+09:00")))
+    (history / "20261119T100000000-saved.md").write_text("**保存した返事**\n\n本文")
     expect(page.locator("#cwhy")).to_contain_text("選んだ端末が見つかりません", timeout=8000)
-    expect(page.locator("#cto")).to_contain_text("Codex · wF:pD")
+    assert "codex-pane-wF-pD-term_b" in page.url
     expect(send_button).to_be_disabled()
-    page.get_by_role("button", name="返信の表示に戻る").click()
-    expect(page.locator("#codex-pane-view")).to_be_hidden()
-    expect(page.locator("#cto")).not_to_contain_text("Codex")
+    page.locator('#cchips button[data-s=""]').click()
+    expect(reply).to_contain_text("保存した返事")
+    expect(reply).to_contain_text("本文")
+    expect(page.locator("#cto")).not_to_contain_text("codex-pane-")
 
     panes(dict(first, label="<b>依頼2</b>", agent_status="blocked"), claude)
     expect(rows).to_have_count(1, timeout=8000)
     expect(rows.first).to_contain_text("<b>依頼2</b>")
     expect(rows.first).to_contain_text("入力待ち")
-    assert submit(pane="wF:pC", terminal="term_a").status == 409     # blocked
+    assert submit(pane="wF-pC", terminal="term_a").status == 409     # blocked
     panes(claude)
-    expect(status).to_be_hidden(timeout=8000)
-    expect(rows).to_have_count(0)
+    expect(rows).to_have_count(0, timeout=8000)
     assert not (tmp / "unexpected").exists()
     browser.close()
-print("PASS: live Herdr Codex panes, status change, exit and read-only separation")
+print("PASS: shared Codex/Claude viewer, exact live pane send and no terminal logs")
 PY
