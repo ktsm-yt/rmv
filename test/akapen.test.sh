@@ -1084,6 +1084,14 @@ C: 三つ目。
 D：全角コロンの四つ目。
 
 4\. 次の一手は ...
+ⅰ ローマ数字
+a. 英字
+B) 英字
+- **(c)** 英字
+  d：英字
+z\. 英字
+API の説明
+A.txt の説明
 MD
 cat > "$TMP/pins.ts" <<'TS'
 import { readFileSync } from "node:fs";
@@ -1095,8 +1103,11 @@ const esc = (x: string) => x, cut = (x: string, n: number) => x.slice(0, n), med
 const renderLowLoad: (md: string) => string = new Function("marked", "linkPaths", "esc", "cut", "mediaHTML", "RAWPATH", html.slice(a, b) + "\nreturn renderLowLoad;")(marked, linkPaths, esc, cut, mediaHTML, RAWPATH);
 const out = renderLowLoad(readFileSync(process.argv[3], "utf8"));
 console.log([...out.matchAll(/<div class="num">([^<]*)<\/div>/g)].map((m) => m[1]).join(","));
+console.log([...out.matchAll(/data-item="([^"]+)"/g)].map((m) => m[1]).join(","));
 TS
-check "page: 表の下の A:〜D: 段が番号段落とは別のピンになる (3,A,B,C,D,4)" "$(bun run "$TMP/pins.ts" "$A/index.html" "$TMP/pins.md" 2>&1)" "3,A,B,C,D,4"
+pin_layout="$(bun run "$TMP/pins.ts" "$A/index.html" "$TMP/pins.md" 2>&1)"
+check "page: 表の下の A:〜D: 段が番号段落とは別のピンになる (3,A,B,C,D,4)" "$(printf '%s\n' "$pin_layout" | head -n 1)" "3,A,B,C,D,4"
+check "page: ローマ数字と英字の箇条書きを項目ごとのピンにする" "$(printf '%s\n' "$pin_layout" | sed -n '2p')" "ⅰ,a,B,c,d,z"
 
 # 送り先の固定: 終了した端末 (entry が全部 live=false) への固定は無視して追従 ("")、生きている端末・履歴に無い鍵はそのまま
 cat > "$TMP/chatpin.ts" <<'TS'

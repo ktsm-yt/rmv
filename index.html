@@ -790,9 +790,10 @@ marked.use({
 });
 
 // Low-Load の型を固定の置き場所へ写す。行単位で読み、フェンスと表だけ marked に丸ごと渡す。
-// ponytail: 認識するのは 行頭 "N. " の段 / ⅰ〜 の項目 / 🔴🟡🟢 / 表 / ``` / 見出し / 検証: DECIDE: だけ。上限 = Low-Load 型の返事。
+// ponytail: 認識するのは 行頭 "N. " の段 / ⅰ〜・英字の項目 / 🔴🟡🟢 / 表 / ``` / 見出し / 検証: DECIDE: だけ。上限 = Low-Load 型の返事。
 // それ以外の markdown (- 箇条書き・引用・4 スペース code) は 1 行ずつ inline で描き、字下げは幅で表す。
 const ROMAN = /^[ⅰ-ⅿ]/;
+const LETTER_ITEM = /^(?:[-+*]\s+)?(?:\*\*)?(?:\(([A-Za-z])\)|([A-Za-z])(?:\\?\.|[)）:：．、]))(?:\*\*)?(?=\s|$|[^\x00-\x7F])/;
 const PRI = [["🔴", "red"], ["🟡", "yellow"], ["🟢", "green"]];
 function renderLowLoad(md) {
   const lines = md.replace(/\r\n?/g, "\n").split("\n");
@@ -827,7 +828,7 @@ function renderLowLoad(md) {
     // 太字だけの行・# 見出しも段の区切りにする (番号段落を使わない返事でも段ごとにピンが付く)
     const h = !m && ind === 0 && (t.match(/^\*\*(.+)\*\*$/) ?? t.match(/^#{1,6}\s+(.+)$/));
     // パスだけの行 (「ⅱ /b.png」等) が画像の直後に続いたら、行を出さずに前の格子へ足す (画像 1・2・3 を 1 つの格子に)
-    const pathOnly = media.length && !t.replace(RAWPATH, "").replace(/^[ⅰ-ⅿ]/, "").trim();
+    const pathOnly = media.length && !t.replace(RAWPATH, "").replace(ROMAN, "").trim();
     const last = cur?.html.at(-1) ?? "";
     if (!m && !h && pathOnly && last.startsWith('<div class="media">')) { cur.html[cur.html.length - 1] = last.replace(/<\/div>$/, mediaHTML(media).slice('<div class="media">'.length)); continue; }
     if (m) { open(m[1]); if (m[2].trim()) push(`<div class="ln head">${marked.parseInline(linkPaths(m[2]).md)}</div>`); }
@@ -836,7 +837,11 @@ function renderLowLoad(md) {
       open(null, s.match(/^\d+(?:-[ⅰ-ⅿ]+)*(?=\s|$)/)?.[0] ?? cut(s, 12)); // "3-ⅴ 🟢 ui-design" → 3-ⅴ
       push(`<div class="ln head">${marked.parseInline(linkPaths(h[1]).md)}</div>`);
     }
-    else push(`<div class="ln${ROMAN.test(t) ? " item" : ""}" style="--ind:${ind}">${marked.parseInline(lt)}</div>`);
+    else {
+      const letter = t.match(LETTER_ITEM);
+      const item = t.match(ROMAN)?.[0] ?? letter?.[1] ?? letter?.[2];
+      push(`<div class="ln${item ? " item" : ""}"${item ? ` data-item="${item}"` : ""} style="--ind:${ind}">${marked.parseInline(lt)}</div>`);
+    }
     if (!h && media.length) push(mediaHTML(media)); // .ln 行の直後に出す。見出し・表・フェンスは対象外
     const lead = m ? m[2].trim() : t; // "1. 🔴 …" の段見出しも拾う
     for (const [e, c] of PRI) if (lead.startsWith(e)) cur.pri.add(c);
@@ -1344,7 +1349,7 @@ function decorate(el) {
   });
   el.querySelectorAll(".ln.item").forEach((it) => {
     const n = it.closest(".blk")?.dataset.anchor;
-    const r = it.textContent.trim()[0];
+    const r = it.dataset.item;
     it.dataset.anchor = n ? `${n}-${r}` : r;
   });
   const isPickRow = (tr) => /^[A-E]$/.test(tr.cells[0]?.textContent.trim() ?? "");
