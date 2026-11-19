@@ -26,6 +26,8 @@ with sync_playwright() as p:
     b = p.chromium.launch()
     pg = b.new_page(viewport={"width": 1200, "height": 700})
     pg.goto(base)
+    # 最初の描画 (renderChat) が送り先無しで欄を無効にし直すので、それを待ってから開ける。待たないと速い runner で fill の前に無効へ戻る
+    pg.wait_for_function("document.getElementById('cwhy').textContent !== ''")
     pg.evaluate("document.body.classList.remove('chat-closed'); document.getElementById('ctext').disabled = false")  # 送り先が無いと欄は無効なので開けておく
     pg.locator("#ctext").fill("書きかけ")
     pg.locator("#ctext").focus()
