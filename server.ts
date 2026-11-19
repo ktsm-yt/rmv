@@ -4,6 +4,8 @@ import { appendFile, open as openFile, readdir, stat, type FileHandle } from "no
 import { constants, existsSync } from "node:fs";
 import { basename, extname, isAbsolute, normalize } from "node:path";
 import { homedir } from "node:os";
+import { codexDraftOnScreen } from "./screen.ts";
+import { ORCA, CLIP_CLASS, HERDR_PANE, herdrRun, herdrSend, typeInto, attachImages, submit, inputDraft, failure } from "./terminal.ts";
 
 // 旧名 RMX_* (2026-10 まで) も読む: RMV_* が未設定なら写す。RMX_ は harness-rmx 時代の名残で v0.19.0 に改名した
 for (const [k, v] of Object.entries(process.env)) if (k.startsWith("RMX_") && process.env["RMV_" + k.slice(4)] === undefined && v !== undefined) process.env["RMV_" + k.slice(4)] = v;
@@ -11,15 +13,6 @@ const DIR = import.meta.dir;
 const STATE = process.env.RMV_STATE_DIR || `${DIR}/state`; // RMV_STATE_DIR はテスト用の上書き口
 const FRAGMENT = `${STATE}/latest.html`;
 const HIST = `${STATE}/history`;
-const ORCA = process.env.RMV_ORCA_BIN || "orca"; // env はテストの stub 差し替え用
-const HERDR = process.env.RMV_HERDR_BIN || "herdr"; // 同上 (herdr 配下の Claude へ pane 単位で送る)
-// 本文を打ってから Enter を送るまで: 入力欄に本文が見えるまで最大 ENTER_WAIT_MS 待ち (ENTER_POLL_MS ごとに読む)、見えたら ENTER_SETTLE_MS 置いて送る。
-// 入力欄が読めない時は ENTER_BLIND_MS だけ待って送る。送った後も同じ ENTER_WAIT_MS の間、欄が空になるのを待つ。env はテストの時間短縮用
-const ENTER_WAIT_MS = Number(process.env.RMV_ENTER_WAIT_MS ?? 2000);
-const ENTER_POLL_MS = 50, ENTER_SETTLE_MS = 80, ENTER_BLIND_MS = 150;
-const OSASCRIPT = process.env.RMV_OSASCRIPT_BIN || "osascript"; // 同上
-const PBPASTE = process.env.RMV_PBPASTE_BIN || "pbpaste"; // 同上 (クリップボードの文字の退避と復元)
-const PBCOPY = process.env.RMV_PBCOPY_BIN || "pbcopy";
 const CODEX = process.env.RMV_CODEX_BIN || "codex"; // 同上。Codex の会話への赤ペンを `codex queue` で積む (launchd の PATH では /opt/homebrew/bin/codex)
 const CODEX_QUEUE_TIMEOUT = 30_000;
 const SIPS = "/usr/bin/sips"; // 貼った画像の縮小 (macOS 標準)
@@ -737,7 +730,6 @@ async function now(name: string | null): Promise<Response> {
 // ponytail: 古い画像は消さない。上限 = state/paste/ が貼った分だけ増える。溜まったら日数で消す掃除を足す
 // 動画・PDF と CLIP_MAX 超の画像はクリップボードに載せず、/send が保存先のパスを本文に足す (Claude Code は動画を画像にできない。67 MB の gif・15 MB の mp4 が貼れなかった、2026-10-25)
 const PASTE_EXT: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "video/mp4": "mp4", "video/quicktime": "mov", "video/webm": "webm", "application/pdf": "pdf" };
-const CLIP_CLASS: Record<string, string> = { png: "PNGf", jpg: "JPEG", gif: "GIFf" }; // osascript でクリップボードに載せられる型だけ
 const PASTED = /^\d+-[0-9a-f]{8}\.(png|jpg|gif|mp4|mov|webm|pdf)$/; // /paste が付けた名前だけ (任意ファイルをクリップボードに載せさせない)
 // ponytail: CLIP_MAX は旧い受付上限をそのまま使った。Claude Code が実際に取り込める上限は未計測。PASTE_MAX は Bun.serve の maxRequestBodySize 既定 (128 MB) の手前
 const CLIP_MAX = 20_000_000, PASTE_MAX = 120_000_000;
@@ -764,15 +756,6 @@ async function shrink(path: string) {
   if (edge > MAX_EDGE) await Bun.spawn([SIPS, "-Z", String(MAX_EDGE), path], { stdout: "ignore", stderr: "ignore" }).exited;
 }
 
-// herdr 配下の Claude は ORCA_TERMINAL_HANDLE を herdr 全体で共有するので、orca へ送ると focus 中の pane (別の Claude かもしれない) に入る。
-// hook が記録した herdr_pane があれば herdr CLI で pane に直接送る。orca への fallback はしない (誤送信防止が最優先)
-const HERDR_PANE = /^[A-Za-z0-9][\w:.-]*$/; // 先頭が "-" だと flag に化ける
-// sock = その entry の herdr socket (名前付き session はここで切り替わる)。null は呼び出し元の env のまま = 既定 session
-async function herdrRun(args: string[], sock: string | null = null): Promise<{ out: string; err: string; code: number }> {
-  const p = Bun.spawn([HERDR, ...args], { stdout: "pipe", stderr: "pipe", ...(sock ? { env: { ...process.env, HERDR_SOCKET_PATH: sock } } : {}) });
-  const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
-  return { out, err, code };
-}
 type HerdrPane = { agent?: unknown; pane_id?: unknown; terminal_id?: unknown; label?: unknown; cwd?: unknown; agent_status?: unknown };
 async function readHerdrPanes(sock: string | null = null): Promise<HerdrPane[] | null> {
   try {
@@ -1023,13 +1006,6 @@ async function checkHerdrPane(pane: string, sock: string | null): Promise<Respon
     return new Response(`herdr spawn failed: ${e}`, { status: 502 });
   }
 }
-// orca の terminal send に流している制御文字 (Enter / Ctrl+V / 入力欄クリア) は herdr では send-keys のキー名で送る。それ以外は literal text。send-text に `--` は付けない: herdr は `--` も本文として送り、`-h` 始まりの文も flag にせず届く (2026-10-13 実測)。
-// 複数行も印を付けず生で送る: Claude の入力欄に複数行のまま入り途中で送信されない。bracketed paste で囲むと『貼り付けた文』扱いになり指示として読まれにくい (2026-10-13 実 Claude で確認)
-const HERDR_KEYS: Record<string, string[]> = { "\r": ["enter"], "\x16": ["ctrl+v"], "\x15\x7f": ["ctrl+u", "backspace"] };
-function herdrSend(pane: string, t: string, sock: string | null): ReturnType<typeof herdrRun> {
-  const keys = HERDR_KEYS[t];
-  return herdrRun(keys ? ["pane", "send-keys", pane, ...keys] : ["pane", "send-text", pane, t], sock);
-}
 
 // 会話を別の pane で再開すると (claude --resume)、前の pane で書いた記録は前の pane を向いたまま残る
 // (2026-10-14 実害: 3709da0b が wF:p9 → wF:p1 に移り、p9 時代の記録から送ると「Claude が居ない」で止まった)。
@@ -1134,104 +1110,26 @@ async function send(req: Request, opt: { exact?: boolean; check?: (t: SendTarget
   await appendFile(`${STATE}/send.jsonl`, JSON.stringify({ ts: new Date().toISOString(), name, sid: asked?.session_id ?? null, recPane: asked ? herdrPaneOf(asked) : null, recTerm: asked?.terminal ?? null, sid2: meta.session_id ?? null, pane, handle, exact: opt.exact === true }) + "\n").catch(() => {});
   if (!pane && !handle) return new Response(`terminal closed: 元の端末は閉じられ、同じフォルダ (${meta.cwd ?? ""}) の端末も無い`, { status: 409 });
   if (opt.check) { const why = await opt.check({ meta, pane, sock, handle: handle || null }); if (why) return why; }
-  // 本文と Enter を分けて送る: `--enter` は Claude 端末だと「turn が始まったか」を最大 8 秒観察してから戻る
-  // (2026-09-29 実測: --enter 8.2s / 本文 + "\r" 別送り 0.4s、--wait-submit では変わらない)。複数行は生送りでも 1 メッセージで届く
-  const typed = async (t: string) => {
-    if (pane) return herdrSend(pane, t, sock);
-    const p = Bun.spawn([ORCA, "terminal", "send", "--terminal", handle, "--text", t, "--json"], { stdout: "pipe", stderr: "pipe" });
-    const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
-    return { out, err, code };
-  };
-  // 端末の下書き欄にある [Image #N] の数。読めない時は -1
-  const drafted = async () => {
-    // herdr には draft フィールドが無い: 画面 (visible) 上の [Image #N] を数える。送信済みの分も数えるが attach は増減だけ見るので足りる
-    if (pane) { const r = await herdrRun(["pane", "read", pane, "--source", "visible"], sock).catch(() => null); return r && r.code === 0 ? (r.out.match(/\[Image #\d+\]/g) ?? []).length : -1; }
-    const p = Bun.spawn([ORCA, "terminal", "read", "--terminal", handle, "--json"], { stdout: "pipe", stderr: "ignore" });
-    const [out, code] = await Promise.all([new Response(p.stdout).text(), p.exited]);
-    try { return code === 0 ? (String(JSON.parse(out)?.result?.terminal?.draft ?? "").match(/\[Image #\d+\]/g) ?? []).length : -1; } catch { return -1; }
-  };
-  // 画像はクリップボード経由で貼る: パスを文字で送っても Claude Code は画像にしない (文字のまま残る)。
-  // クリップボードに画像を載せて Ctrl+V (\x16) を送ると [Image #N] で入る (2026-09-29 実測)。
-  // 次の画像でクリップボードを上書きする前に、下書きの [Image #N] が増えるのを待つ (最大 10 秒)。
-  // 3 秒だと 663 KB のスクショで、実際は入っているのに「入らなかった」と返していた (2026-09-30)。大きい画像ほど取り込みが遅い
-  // 送る前のクリップボードの文字を控えて、貼り終えたら戻す (Mac 側で user が持っていたコピーを潰さない)。
-  // ponytail: 戻せるのは文字 (と空) だけ。画像・ファイルなど文字以外が入っていた時は戻せず、最後の画像のまま残る。文字と画像が両方入っていた時は文字だけ戻る。上限 = pbpaste / pbcopy で往復できる型
-  const saveClip = async (): Promise<string | null> => {
-    try {
-      const i = Bun.spawn([OSASCRIPT, "-e", "clipboard info"], { stdout: "pipe", stderr: "ignore" });
-      const [info, icode] = await Promise.all([new Response(i.stdout).text(), i.exited]);
-      if (icode !== 0) return null;
-      if (!/utf8|«class ut16»|string|\bTEXT\b/.test(info)) return info.trim() === "" || info.trim() === "{}" ? "" : null; // 空 = 空に戻す / 文字以外 = 戻せない
-      const p = Bun.spawn([PBPASTE], { stdout: "pipe", stderr: "ignore", env: { ...process.env, LANG: "en_US.UTF-8" } });
-      const [txt, pcode] = await Promise.all([new Response(p.stdout).text(), p.exited]);
-      return pcode === 0 ? txt : null;
-    } catch { return null; }
-  };
-  const restoreClip = async (txt: string | null) => {
-    if (txt === null) return;
-    try {
-      const p = Bun.spawn([PBCOPY], { stdin: "pipe", stdout: "ignore", stderr: "ignore", env: { ...process.env, LANG: "en_US.UTF-8" } });
-      p.stdin.write(txt); p.stdin.end();
-      await p.exited;
-    } catch {}
-  };
-  const attach = async (path: string): Promise<string | null> => {
-    if (!(await Bun.file(path).exists())) return `image not found: ${path}`;
-    const before = await drafted();
-    const o = Bun.spawn([OSASCRIPT, "-e", `set the clipboard to (read (POSIX file "${path}") as «class ${CLIP_CLASS[path.split(".").pop()!]}»)`], { stdout: "ignore", stderr: "pipe" });
-    const [oerr, ocode] = await Promise.all([new Response(o.stderr).text(), o.exited]);
-    if (ocode !== 0) return `osascript exit ${ocode}: ${oerr.trim()}`;
-    const v = await typed("\x16");
-    if (v.code !== 0) return `${pane ? "herdr" : "orca"} exit ${v.code}: ${v.err.trim() || v.out.trim()}`;
-    for (const t0 = Date.now(); Date.now() - t0 < 10_000; await Bun.sleep(150)) { // 回数でなく時間で区切る (orca terminal read 自体に時間がかかる)
-      if ((await drafted()) > before) return null;
-    }
-    return "画像が端末に入らなかった (10 秒待っても [Image #N] が増えない)";
-  };
+  const target: SendTarget = { meta, pane, sock, handle: handle || null };
   const clips = (images as string[]).filter((p) => !asText(p)), files = (images as string[]).filter(asText);
   if (files.length) text = [text, ...files].filter((t) => t.trim()).join("\n"); // 動画・大きい画像はパスを本文の末尾に 1 行ずつ
   try {
-    const clip = clips.length ? await saveClip() : null;
-    try {
-      for (const img of clips) {
-        const why = await attach(img);
-        if (why) return new Response(why, { status: 502 });
-      }
-    } finally { await restoreClip(clip); }
+    const why = await attachImages(target, clips);
+    if (why) return new Response(why, { status: 502 });
     // /media 用: クリップボード経由の画像は transcript にパスが残らないので、セッションごとに控える
     if (clips.length && /^[\w-]+$/.test(String(meta.session_id ?? ""))) await appendFile(`${STATE}/paste/${meta.session_id}.txt`, clips.join("\n") + "\n");
     // 数字キー (reset) は先に端末の入力欄を空にする: 失敗したコマンドなどが残っていると後ろにつながって効かない (2026-10-04)。
     // Ctrl+U で文字を消し、Backspace で `!` (シェル入力の状態) を外す。空の欄に送っても何も起きない (実測)。複数行の書きかけは今の行しか消えない
     if (reset) {
-      const r = await typed("\x15\x7f");
-      if (r.code !== 0) return new Response(`${pane ? "herdr" : "orca"} exit ${r.code}: ${r.err.trim() || r.out.trim()}`, { status: 502 });
+      const r = await typeInto(target, "\x15\x7f");
+      if (r.code !== 0) return new Response(failure(target, r), { status: 502 });
     }
-    let { out, err, code } = text ? await typed(text) : { out: "", err: "", code: 0 };
-    // 本文を打った直後に Enter を送ると、Claude Code が本文を取り込み終える前に Enter が届き、送信されずに本文が入力欄に残ることがあった
-    // (2026-11 user: Cmd+Enter が時々効かない)。入力欄に本文が見えてから Enter を送り、送った後に欄が空にならなければ 1 回だけ Enter を送り直す。
-    // 入力欄が読めない時 (Claude Code の画面の形が違う・読み取りの失敗) は確かめずに少し待って送る (今までどおり送る側に倒す)。
-    // Enter を 2 回送っても二重送信にはならない: 1 回目が効いていれば 2 回目は空の欄への Enter で何も起きない。
-    // ponytail: Orca の --screen は薄字の入力例も書きかけに見えるので、送信後に入力例が出る画面では送り直しが 1 回余計に出る (空の欄への Enter なので害は無い)
-    const target: SendTarget = { meta, pane, sock, handle: handle || null };
-    const until = async (want: boolean): Promise<boolean | null> => {
-      for (const t0 = Date.now(); ; await Bun.sleep(ENTER_POLL_MS)) {
-        const d = await inputDraft(target);
-        if (d === null || d === want || Date.now() - t0 >= ENTER_WAIT_MS) return d;
-      }
-    };
-    const shown = code === 0 && text ? await until(true) : null;
-    if (code === 0 && text) await Bun.sleep(shown ? ENTER_SETTLE_MS : ENTER_BLIND_MS);
-    // orca は失敗理由を stdout の JSON に出し stderr が空のことがある (terminal_not_writable、2026-09-29 実測)
-    if (code === 0) ({ out, err, code } = await typed("\r"));
-    if (code === 0 && shown && (await until(false))) {
-      ({ out, err, code } = await typed("\r"));
-      const stuck = code === 0 ? await until(false) : null;
-      await appendFile(`${STATE}/send.jsonl`, JSON.stringify({ ts: new Date().toISOString(), name, pane, handle, enterRetry: true, stuck: stuck === true }) + "\n").catch(() => {});
-    }
-    if (code !== 0) return new Response(`${pane ? "herdr" : "orca"} exit ${code}: ${err.trim() || out.trim()}`, { status: 502 });
+    const r = await submit(target, text);
+    if (r.retry) await appendFile(`${STATE}/send.jsonl`, JSON.stringify({ ts: new Date().toISOString(), name, pane, handle, enterRetry: true, stuck: r.retry.stuck }) + "\n").catch(() => {});
+    if (r.code !== 0) return new Response(failure(target, r), { status: 502 });
     // herdr 内で特定 pane を選ぶ CLI は無い (pane focus は方向指定のみ): Orca のタブを前に出すところまで
     if (focus && handle) await focusTerminal(handle);
-    return new Response(out || "{}", { headers: { "content-type": "application/json; charset=utf-8" } });
+    return new Response(r.out || "{}", { headers: { "content-type": "application/json; charset=utf-8" } });
   } catch (e) {
     return new Response(`orca spawn failed: ${e}`, { status: 502 });
   }
@@ -1383,63 +1281,6 @@ async function extCheck(t: SendTarget, sid: string): Promise<Response | null> {
   if (draft === null) return unverified("端末の入力欄を読めず、書きかけがあるか確かめられない");
   if (draft) return new Response("draft: 宛先の端末の入力欄に書きかけがあるので打ち込まない (打つと書きかけと合図が 1 つの依頼で送られる)", { status: 409 });
   return null;
-}
-// Claude Code の入力欄 = 画面の最後の 2 本の罫線 (─ で始まる行) の間で、先頭の行が ❯ (古い版は >) で始まる。true = 書きかけあり / false = 空 / null = 入力欄が見つからない。
-// ponytail: 画面の見た目で判定する。Claude Code が入力欄の形を変えたら null (打たない) で止まる。
-// 新しい会話の入力欄に薄字 (SGR 2) で出る入力例 (`Try "…"`) は、herdr では色付きで読んで dropDim で落とす。Orca の --screen は色を返さないので、入力例も書きかけに見えて『打たない』側に倒れる
-function draftOnScreen(lines: string[]): boolean | null {
-  const rules = lines.flatMap((l, i) => (/^\s*─{3}/.test(l) ? [i] : []));
-  if (rules.length < 2) return null;
-  const box = lines.slice(rules[rules.length - 2] + 1, rules[rules.length - 1]);
-  if (!box.length || !/^\s*[❯>]/.test(box[0])) return null;
-  return box.join("").replace(/^\s*[❯>]/, "").replace(/[\s ]/g, "") !== "";
-}
-// 色付きの 1 行 (herdr pane read --format ansi) から薄字 (SGR 2) の文字と制御列を落とす。38;2;r;g;b などの色指定の中の 2 は薄字と数えない
-function dropDim(line: string): string {
-  let dim = false;
-  let out = "";
-  for (const m of line.matchAll(/\x1b\[([0-9;:]*)m|\x1b\[[0-9;:?]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|([^\x1b]+)/g)) {
-    if (m[2] !== undefined) { if (!dim) out += m[2]; continue; }
-    if (m[1] === undefined) continue;
-    const ps = m[1].split(/[;:]/);
-    for (let i = 0; i < ps.length; i++) {
-      const p = ps[i];
-      if (p === "" || p === "0" || p === "22") dim = false;
-      else if (p === "2") dim = true;
-      else if (p === "38" || p === "48" || p === "58") i += ps[i + 1] === "5" ? 2 : ps[i + 1] === "2" ? 4 : 0;
-    }
-  }
-  return out;
-}
-function codexDraftOnScreen(screen: string): boolean | null {
-  const raw = screen.split("\n"), plain = raw.map((line) => line.replace(/\x1b\[[0-9;:?]*[A-Za-z]/g, ""));
-  const marker = plain.findLastIndex((line) => /^›(?:\s|$)/.test(line));
-  if (marker < 0 || !/^›(?:\s|$)/.test(dropDim(raw[marker]))) return null;
-  const separator = plain.findIndex((line, i) => i > marker && !line.trim());
-  // Codex 0.169 の入力の後ろには空行と状態表示がある。確認画面の選択肢にも › が出る。
-  const status = plain[separator + 1] ?? "";
-  const model = /^\s+(?:gpt-|o\d)\S+/.test(status);
-  const usage = /\b\d{1,3}% (?:left|used)\b/.test(plain.slice(separator + 1, separator + 4).join(" "));
-  const shortcuts = /^\s+(?:← for agents · )?\? for shortcuts\s*$/.test(plain[separator + 2] ?? "");
-  if (separator < 0 || !/^\s+\S.* · /.test(status) || !(usage || model)) return null;
-  if (raw.slice(marker, separator).map(dropDim).join("").replace(/^›/, "").trim()) return true;
-  return usage || shortcuts ? false : null;
-}
-// herdr の pane は見えている画面 (色付き、薄字は dropDim で落とす)、Orca の端末は描画された画面 (--screen) を読む。Orca が画面を描けない時 (source が screen でない) は読めない扱い
-async function inputDraft(t: SendTarget): Promise<boolean | null> {
-  try {
-    if (t.pane) {
-      const r = await herdrRun(["pane", "read", t.pane, "--source", "visible", "--format", "ansi"], t.sock);
-      return r.code === 0 ? draftOnScreen(r.out.split("\n").map(dropDim)) : null;
-    }
-    if (!t.handle) return null;
-    const p = Bun.spawn([ORCA, "terminal", "read", "--terminal", t.handle, "--screen", "--json"], { stdout: "pipe", stderr: "ignore" });
-    const [out, code] = await Promise.all([new Response(p.stdout).text(), p.exited]);
-    const term = code === 0 ? JSON.parse(out)?.result?.terminal : null;
-    return term?.source === "screen" && Array.isArray(term.tail) ? draftOnScreen(term.tail.map(String)) : null;
-  } catch {
-    return null;
-  }
 }
 // Claude Code の pid ごとの記録の置き場。その Claude の CLAUDE_CONFIG_DIR に従う。RMV_SESSIONS_DIR はテストの上書き口 (hooks/stop-to-fragment.py と同じ)
 function ccSessionsDir(env: string): string {
