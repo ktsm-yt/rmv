@@ -1,0 +1,34 @@
+# PR と main への push で test/ の試験を回す。
+# macOS で回す: akapen.test.sh の画像の貼り付け・縮小は sips など macOS の道具を使い、launchd も macOS のもの。
+# 画面の試験は playwright の Chromium で、marked / mermaid は CDN (jsdelivr) から読む。
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: astral-sh/setup-uv@v6
+      - name: playwright の Chromium
+        run: uv run --with playwright python -m playwright install chromium
+      - name: bun の試験
+        run: bun test test/
+      - name: シェルの試験 (1 本ずつ、落ちた分を最後にまとめて出す)
+        run: |
+          failed=""
+          for t in test/*.test.sh; do
+            echo "::group::$t"
+            if bash "$t"; then echo "ok: $t"; else failed="$failed $t"; fi
+            echo "::endgroup::"
+          done
+          if [ -n "$failed" ]; then echo "落ちた試験:$failed"; exit 1; fi
