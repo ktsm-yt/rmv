@@ -13,6 +13,10 @@ const FRAGMENT = `${STATE}/latest.html`;
 const HIST = `${STATE}/history`;
 const ORCA = process.env.RMV_ORCA_BIN || "orca"; // env はテストの stub 差し替え用
 const HERDR = process.env.RMV_HERDR_BIN || "herdr"; // 同上 (herdr 配下の Claude へ pane 単位で送る)
+// 本文を打ってから Enter を送るまで: 入力欄に本文が見えるまで最大 ENTER_WAIT_MS 待ち (ENTER_POLL_MS ごとに読む)、見えたら ENTER_SETTLE_MS 置いて送る。
+// 入力欄が読めない時は ENTER_BLIND_MS だけ待って送る。送った後も同じ ENTER_WAIT_MS の間、欄が空になるのを待つ。env はテストの時間短縮用
+const ENTER_WAIT_MS = Number(process.env.RMV_ENTER_WAIT_MS ?? 2000);
+const ENTER_POLL_MS = 50, ENTER_SETTLE_MS = 80, ENTER_BLIND_MS = 150;
 const OSASCRIPT = process.env.RMV_OSASCRIPT_BIN || "osascript"; // 同上
 const PBPASTE = process.env.RMV_PBPASTE_BIN || "pbpaste"; // 同上 (クリップボードの文字の退避と復元)
 const PBCOPY = process.env.RMV_PBCOPY_BIN || "pbcopy";
@@ -1203,8 +1207,27 @@ async function send(req: Request, opt: { exact?: boolean; check?: (t: SendTarget
       if (r.code !== 0) return new Response(`${pane ? "herdr" : "orca"} exit ${r.code}: ${r.err.trim() || r.out.trim()}`, { status: 502 });
     }
     let { out, err, code } = text ? await typed(text) : { out: "", err: "", code: 0 };
+    // 本文を打った直後に Enter を送ると、Claude Code が本文を取り込み終える前に Enter が届き、送信されずに本文が入力欄に残ることがあった
+    // (2026-11 user: Cmd+Enter が時々効かない)。入力欄に本文が見えてから Enter を送り、送った後に欄が空にならなければ 1 回だけ Enter を送り直す。
+    // 入力欄が読めない時 (Claude Code の画面の形が違う・読み取りの失敗) は確かめずに少し待って送る (今までどおり送る側に倒す)。
+    // Enter を 2 回送っても二重送信にはならない: 1 回目が効いていれば 2 回目は空の欄への Enter で何も起きない。
+    // ponytail: Orca の --screen は薄字の入力例も書きかけに見えるので、送信後に入力例が出る画面では送り直しが 1 回余計に出る (空の欄への Enter なので害は無い)
+    const target: SendTarget = { meta, pane, sock, handle: handle || null };
+    const until = async (want: boolean): Promise<boolean | null> => {
+      for (const t0 = Date.now(); ; await Bun.sleep(ENTER_POLL_MS)) {
+        const d = await inputDraft(target);
+        if (d === null || d === want || Date.now() - t0 >= ENTER_WAIT_MS) return d;
+      }
+    };
+    const shown = code === 0 && text ? await until(true) : null;
+    if (code === 0 && text) await Bun.sleep(shown ? ENTER_SETTLE_MS : ENTER_BLIND_MS);
     // orca は失敗理由を stdout の JSON に出し stderr が空のことがある (terminal_not_writable、2026-09-29 実測)
     if (code === 0) ({ out, err, code } = await typed("\r"));
+    if (code === 0 && shown && (await until(false))) {
+      ({ out, err, code } = await typed("\r"));
+      const stuck = code === 0 ? await until(false) : null;
+      await appendFile(`${STATE}/send.jsonl`, JSON.stringify({ ts: new Date().toISOString(), name, pane, handle, enterRetry: true, stuck: stuck === true }) + "\n").catch(() => {});
+    }
     if (code !== 0) return new Response(`${pane ? "herdr" : "orca"} exit ${code}: ${err.trim() || out.trim()}`, { status: 502 });
     // herdr 内で特定 pane を選ぶ CLI は無い (pane focus は方向指定のみ): Orca のタブを前に出すところまで
     if (focus && handle) await focusTerminal(handle);
