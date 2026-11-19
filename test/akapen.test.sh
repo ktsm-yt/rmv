@@ -709,7 +709,7 @@ check "speak: キーが env にもキーチェーンにも無い → 503" "$(spk
 # VOICEVOX ENGINE を模した最小サーバー。query の引数、synthesis の body、WAV の通過を確認する。
 VVPORT="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')"
 python3 - "$VVPORT" "$TMP/voicevox.jsonl" <<'PY' &
-import json, struct, sys
+import json, socketserver, struct, sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 log = sys.argv[2]
 class Handler(BaseHTTPRequestHandler):
@@ -723,9 +723,15 @@ class Handler(BaseHTTPRequestHandler):
       self.send_response(200); self.send_header("content-type", "audio/wav"); self.end_headers(); self.wfile.write(wav)
     else: self.send_error(400)
   def log_message(self, *_): pass
-HTTPServer(("127.0.0.1", int(sys.argv[1])), Handler).serve_forever()
+# server_bind の名前の逆引き (getfqdn) を飛ばす: macOS の runner では 30 秒以上かかり、待ち受ける前に /speak が来て 502 になっていた
+class Server(HTTPServer):
+  def server_bind(self):
+    socketserver.TCPServer.server_bind(self)
+    self.server_name, self.server_port = self.server_address[:2]
+Server(("127.0.0.1", int(sys.argv[1])), Handler).serve_forever()
 PY
 VV=$!
+for _ in $(seq 50); do python3 -c 'import socket,sys; socket.create_connection(("127.0.0.1", int(sys.argv[1])), 0.2)' "$VVPORT" 2>/dev/null && break; sleep 0.1; done
 VP="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')"
 RMV_TTS_PROVIDER=voicevox RMV_VOICEVOX_URL="http://127.0.0.1:$VVPORT" RMV_PROJECTS_DIR="$TMP/projects" RMV_CC_SETTINGS="$TMP/cc-settings.json" RMV_MONO_FONT="$TMP/mono.ttf" RMV_STATE_DIR="$STATE" RMV_PORT="$VP" RMV_ORCA_BIN="$STUB" RMV_HERDR_BIN="$HERDRSTUB" RMV_OSASCRIPT_BIN="$OSASTUB" RMV_PBPASTE_BIN="$TMP/pbpaste-stub" RMV_PBCOPY_BIN="$TMP/pbcopy-stub" RMV_PS_BIN="$PSSTUB" RMV_OPEN_BIN="$TMP/open-stub" RMV_LIVE_TTL_MS=0 RMV_WT_TTL_MS=0 bun run "$SERVER" > "$TMP/voicevox-server.log" 2>&1 &
 VSRV=$!
