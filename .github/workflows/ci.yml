@@ -17,6 +17,9 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      # 試験は bash 4 以降の書き方 (set -u の下の空の配列の展開など) を使う。macOS 標準の /bin/bash は 3.2 なので Homebrew の bash を入れる
+      - name: bash 5
+        run: brew install bash && bash --version | head -1
       - uses: oven-sh/setup-bun@v2
       - uses: astral-sh/setup-uv@v6
       - name: playwright の Chromium
