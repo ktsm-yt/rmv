@@ -1062,7 +1062,7 @@ check "page: 読み上げボタン (#speak) が index.html にある" "$(curl -s
 check "page: 返事の上に依頼文 (details#ask) の描画がある" "$(curl -s "$BASE/" | grep -c '<details id="ask"')" 1
 check "page: 状態行に許可ボタン (data-approve) の描画がある" "$(curl -s "$BASE/" | grep -c 'data-approve="')" 1
 check "page: y キー (KeyY) で許可ボタンを押す処理がある" "$(curl -s "$BASE/" | grep -c 'ev.code === "KeyY"')" 1
-check "page: チャット欄とひとこと欄にドラッグした画像を添付する処理がある" "$(curl -s "$BASE/" | grep -c 'addEventListener("drop", (ev) => addImages(droppedImages(ev)')" 2
+check "page: チャット欄とひとこと欄にドラッグした画像を添付する処理がある" "$(curl -s "$BASE/" | rg -c '^(ctext|document\.getElementById\("free"\))\.addEventListener\("drop", \(ev\) => add(Chat)?Images\(droppedImages\(ev\)')" 2
 
 # --- index.html: 表の下の "A:" 〜 "D:" の段が、直前の番号段落 "3." に吸収されずそれぞれ独立したピン (section.blk) になる ---
 # renderLowLoad だけ index.html から切り出し、marked 等は素通しの stub で評価する (ブラウザ不要)
@@ -1112,12 +1112,13 @@ check "page: ローマ数字と英字の箇条書きを項目ごとのピンに�
 # 送り先の固定: 終了した端末 (entry が全部 live=false) への固定は無視して追従 ("")、生きている端末・履歴に無い鍵はそのまま
 cat > "$TMP/chatpin.ts" <<'TS'
 import { readFileSync } from "node:fs";
-const line = readFileSync(process.argv[2], "utf8").match(/^const chatPin = .*$/m)![0];
-const all = [{ session: "dead", live: false }, { session: "alive", live: true }, { session: "alive", live: false }];
-const pin = (p: string) => new Function("chatPins", "REPO", "all", line + "\nreturn chatPin();")({ r: p }, "R", all);
-console.log(["dead", "alive", "gone"].map(pin).join(","));
+const fn = readFileSync(process.argv[2], "utf8").match(/^const chatPin = (?:.*\{\r?\n[\s\S]*?^\};|.*)$/m)![0];
+const all = [{ session: "dead", live: false }, { session: "alive", live: true },
+  { session: "alive", live: false }, { session: "codex", live: false, codex: true }];
+const pin = (p: string) => new Function("chatPins", "REPO", "all", fn + "\nreturn chatPin();")({ r: p }, "R", all);
+console.log(["dead", "alive", "gone", "codex"].map(pin).join(","));
 TS
-check "page: 終了した端末への送り先固定は外れ、生きている端末への固定は残る (,alive,gone)" "$(bun run "$TMP/chatpin.ts" "$A/index.html" 2>&1)" ",alive,gone"
+check "page: 終了した端末への送り先固定は外れ、稼働中と Codex の固定は残る" "$(bun run "$TMP/chatpin.ts" "$A/index.html" 2>&1)" ",alive,gone,codex"
 
 # 案表の採用は表ごと: 同じ文字 A が 2 つの表にあっても別々に選べ、送信文・tray の表記は表が複数の時だけ `<番号>-A`
 cat > "$TMP/picks.ts" <<'TS'
