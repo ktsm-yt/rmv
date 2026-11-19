@@ -300,11 +300,11 @@
   #reply iframe { width: 100%; min-height: 240px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
   /* 赤ペン: 段・項目・表の行をクリックでピン留め → 下のトレイから元の端末へ送る */
   .pinable { cursor: pointer; }
-  .blk.pinable:hover, .ln.item.pinable:hover, tr.pinable:hover, .codex-paragraph.pinable:hover { background: color-mix(in srgb, var(--red) 5%, transparent); }
+  .blk.pinable:hover, .ln.item.pinable:hover, tr.pinable:hover, .para.pinable:hover { background: color-mix(in srgb, var(--red) 5%, transparent); }
   .blk.pinned { border-left-color: var(--red); background: color-mix(in srgb, var(--red) 6%, transparent); }
   .blk.pinned > .num { background: var(--red); color: #fff; }
   .ln.item.pinned { border-left-color: var(--red); }
-  .codex-paragraph.pinned { box-shadow: inset 3px 0 var(--red); }
+  .para.pinned { box-shadow: inset 3px 0 var(--red); }
   tr.pinned > td:first-child { box-shadow: inset 3px 0 0 var(--red); }
   [data-badge]::before { content: attr(data-badge); display: inline-block; margin-right: .5em; padding: 0 .5em; border-radius: 999px; background: var(--red); color: #fff; font-size: 11px; font-weight: 700; line-height: 1.6; vertical-align: middle; }
   tr.chosen { background: color-mix(in srgb, var(--red) 8%, transparent); }
@@ -871,7 +871,7 @@ async function show(md, entry) {
   renderChat();
   document.getElementById("sent").textContent = "";
   document.getElementById("akmsg").textContent = sendingNotes.has(curName()) ? "送信中…" : "";
-  decorate(el, entry?.codex && !entry.codexPane);
+  decorate(el, !entry?.codexPane); // Codex の状態表示 (待機中・作業中) は返事でないので段落の印を付けない
   fitPre();
   refresh();
   try { await mermaid.run({ nodes: el.querySelectorAll("pre.mermaid") }); }
@@ -1337,7 +1337,7 @@ const cut = (s, n) => { const t = s.replace(/\s+/g, " ").trim(); return t.length
 const textOf = (el) => {
   const c = el.cloneNode(true);
   c.querySelectorAll(".pick").forEach((b) => b.remove());
-  if (c.classList.contains("codex-paragraph")) return [...c.children].map((line) => line.textContent).join(" ");
+  if (c.classList.contains("para")) return [...c.children].map((line) => line.textContent).join(" ");
   return el.tagName === "TR" ? [...c.cells].map((td) => td.textContent.trim()).join(" | ") : (c.querySelector(".body") ?? c).textContent;
 };
 const hhmm = (d) => d.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit", hour12: false });
@@ -1375,23 +1375,31 @@ document.fonts?.ready.then(fitPre);
 document.fonts?.addEventListener("loadingdone", fitPre);
 
 // 描画後の DOM に錨を付ける: data-anchor = 表示名 (2 / 2-ⅱ / 表 A)、data-pin = 返事内の通し番号 (本文は不変なので番号で同定できる)
-function decorate(el, codex) {
+function decorate(el, paras) {
   el.querySelectorAll(".blk").forEach((b) => {
     const a = b.classList.contains("nonum") ? b.dataset.label : b.querySelector(".num").textContent;
     if (a) b.dataset.anchor = a; // 見出しの無い番号なし段 (返事冒頭など) は従来どおり対象外
   });
-  if (codex) {
-    let paragraph, n = 0;
-    for (const line of el.querySelectorAll(".blk.nonum:not([data-anchor]) > .body > .ln:not(.item)")) {
-      if (!paragraph || line.previousElementSibling !== paragraph) {
-        paragraph = document.createElement("div");
-        paragraph.className = "codex-paragraph";
-        paragraph.dataset.anchor = `段落 ${++n}`;
-        line.before(paragraph);
-      }
+  // 空行で区切った普通の段落も印の対象にする (表の下の "d61: …" の段落が直前の番号段落ごとにしか選べなかった)。
+  // 錨のある段は 2 つ目以降のかたまりだけ (最初のかたまりは段の印と同じ)、名前は行頭の "d61:" の語、無ければ 2-段落N。
+  // 錨の無い段 (返事の冒頭、Codex の返事) は全部包み、名前は返事全体の通し番号の 段落 N。ⅰ の項目・表・コードは包まない
+  let n = 0;
+  if (paras) el.querySelectorAll(".blk").forEach((b) => {
+    const a = b.dataset.anchor;
+    let paragraph, k = 1;
+    for (const line of b.querySelectorAll(":scope > .body > .ln:not(.item):not(.head)")) {
+      const prev = line.previousElementSibling;
+      if (paragraph && prev === paragraph) { paragraph.append(line); continue; }
+      paragraph = null;
+      if (a && !prev?.classList.contains("gap")) continue; // 空行を挟まない続きの行は前の段・項目のうち
+      const key = line.textContent.match(/^([\w-]{1,16})[:：](?!\/)/)?.[1], no = ++k;
+      paragraph = document.createElement("div");
+      paragraph.className = "para";
+      paragraph.dataset.anchor = a ? `${a}-${key ?? `段落${no}`}` : `段落 ${++n}`;
+      line.before(paragraph);
       paragraph.append(line);
     }
-  }
+  });
   el.querySelectorAll(".ln.item").forEach((it) => {
     const n = it.closest(".blk")?.dataset.anchor;
     const r = it.dataset.item;
@@ -1437,7 +1445,7 @@ function applyMarks() {
     const on = !!d?.pins.has(x.dataset.pin);
     x.classList.toggle("pinned", on);
     if (x.classList.contains("blk") || x instanceof SVGElement) return; // 段は丸番号、図のノードは赤枠 (CSS) だけ
-    const host = x.tagName === "TR" ? x.cells[0] : x;
+    const host = x.tagName === "TR" ? x.cells[0] : x.classList.contains("para") ? x.firstElementChild : x; // 段落の札は 1 行目の頭に (段落の上に札だけの行を足すと本文が下にずれる)
     if (on) host.dataset.badge = x.dataset.anchor; else delete host.dataset.badge;
   });
   document.querySelectorAll("#reply .pick").forEach((b) => {
