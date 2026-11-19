@@ -98,7 +98,7 @@ python3 -c 'import json,sys,datetime; json.dump({"prompt":"","waiting":True,"ts"
 
 # serve <port> <RMV_EXT_ORIGINS> [RMV_LIVE_TTL_MS] → 起動して pid を返す。TTL の既定は 0 (キャッシュ無し)
 serve() {
-  RMV_LIVE_TTL_MS="${3:-0}" RMV_STATE_DIR="$STATE" RMV_PORT="$1" RMV_EXT_ORIGINS="$2" RMV_ORIGINS= RMV_ORCA_BIN="$TMP/orca" RMV_HERDR_BIN="$TMP/herdr" RMV_PS_BIN="$TMP/ps" RMV_SESSIONS_DIR="$TMP/sessions" RMV_OSASCRIPT_BIN=/usr/bin/false RMV_PBPASTE_BIN=/usr/bin/false RMV_PBCOPY_BIN=/usr/bin/false RMV_OPEN_BIN=/usr/bin/false RMV_PROJECTS_DIR="$TMP/projects" bun run "$SERVER" > "$TMP/server-$1.log" 2>&1 &
+  RMV_ENTER_WAIT_MS=100 RMV_LIVE_TTL_MS="${3:-0}" RMV_STATE_DIR="$STATE" RMV_PORT="$1" RMV_EXT_ORIGINS="$2" RMV_ORIGINS= RMV_ORCA_BIN="$TMP/orca" RMV_HERDR_BIN="$TMP/herdr" RMV_PS_BIN="$TMP/ps" RMV_SESSIONS_DIR="$TMP/sessions" RMV_OSASCRIPT_BIN=/usr/bin/false RMV_PBPASTE_BIN=/usr/bin/false RMV_PBCOPY_BIN=/usr/bin/false RMV_OPEN_BIN=/usr/bin/false RMV_PROJECTS_DIR="$TMP/projects" bun run "$SERVER" > "$TMP/server-$1.log" 2>&1 &
   echo $!
 }
 up() { for _ in $(seq 50); do curl -s -o /dev/null "http://127.0.0.1:$1/history" && return; sleep 0.1; done; }
