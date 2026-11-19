@@ -865,7 +865,9 @@ async function codexPaneThread(pane: string, { url, tokenEnv }: CodexPaneBackend
     const ws = new WebSocket(url, { headers: { Authorization: `Bearer ${token}` } });
     return await new Promise<string | null>((resolve) => {
       let sid: string | null = null;
-      const finish = (thread: string | null) => { clearTimeout(timer); ws.close(); resolve(thread); };
+      // 先に resolve する。Bun 1.3.5 (Mac) では ws.close() の中で onclose が同期で走り、close 由来の finish(null) が先に決まって sid が常に null になっていた
+      let done = false;
+      const finish = (thread: string | null) => { if (done) return; done = true; clearTimeout(timer); resolve(thread); ws.close(); };
       const timer = setTimeout(() => finish(null), 1000);
       const send = (method: string, params?: object, id?: number) => ws.send(JSON.stringify({ method, params, id }));
       ws.onopen = () => send("initialize", { clientInfo: { name: "rmv", version: "1" } }, 1);
