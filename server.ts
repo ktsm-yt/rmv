@@ -234,7 +234,7 @@ async function history(repo: string | null): Promise<Response> {
     const session = `codex-pane-${p.pane.replace(":", "-")}-${p.terminal}`;
     const name = session + ".md";
     const backend = codexPaneBackends.get(name);
-    const sid = backend ? await codexPaneThread(p.pane, backend) : null;
+    const sid = backend ? await cachedCodexPaneThread(name, p.pane, backend) : null;
     const reply = backend ? null : await completedCodexReply(name);
     return { name, session, codex: true, codexPane: true, replyTurn: reply?.identity ?? null, sid, repo: p.repo, head: p.label, label: p.label,
       title: p.pane, status: p.status, live: true, terminal: false, ts: null, agent: null, perm: null, asking: null };
@@ -828,6 +828,28 @@ try {
   }
 } catch { codexPaneBackends.clear(); }
 
+// codex の起動引数から `--flag <値>` / `--flag=<値>` の値を取る。並びや他の引数 (-m など) は問わない。2 回以上・値なしは null (どちらを使うか決められない)
+function codexArg(argv: string[], flag: string): string | null {
+  const values: string[] = [];
+  for (let i = 1; i < argv.length; i++) {
+    if (argv[i] === "--") break;
+    if (argv[i] === flag) { if (typeof argv[i + 1] !== "string") return null; values.push(argv[++i]); }
+    else if (argv[i].startsWith(flag + "=")) values.push(argv[i].slice(flag.length + 1));
+  }
+  return values.length === 1 ? values[0] : null;
+}
+
+// 一覧 (/history、画面が 2 秒ごとに取る) 用の会話 ID はペインごとに数秒覚える。毎回 herdr と App Server に問い合わせると、App Server が落ちている間は一覧が最大 1 秒遅れる。
+// 送信の直前 (liveCodexThread) は覚えた値を使わず、毎回確かめる。覚える長さは端末の稼働状態と同じ LIVE_TTL
+const codexThreadCache = new Map<string, { at: number; key: string; sid: Promise<string | null> }>();
+function cachedCodexPaneThread(name: string, pane: string, backend: CodexPaneBackend): Promise<string | null> {
+  const key = `${pane}\0${backend.url}\0${backend.tokenEnv}`, hit = codexThreadCache.get(name);
+  if (hit && hit.key === key && Date.now() - hit.at < LIVE_TTL) return hit.sid;
+  const sid = codexPaneThread(pane, backend);
+  codexThreadCache.set(name, { at: Date.now(), key, sid });
+  return sid;
+}
+
 // Only dedicated, explicitly configured App Servers are queried. A shared daemon's hook environment belongs to its launch pane.
 async function codexPaneThread(pane: string, { url, tokenEnv }: CodexPaneBackend): Promise<string | null> {
   const token = process.env[tokenEnv];
@@ -839,9 +861,7 @@ async function codexPaneThread(pane: string, { url, tokenEnv }: CodexPaneBackend
     if (info?.pane_id !== pane || !Array.isArray(info.foreground_processes)) return null;
     const clients = info.foreground_processes.filter(({ argv }: { argv?: string[] }) =>
       Array.isArray(argv) && typeof argv[0] === "string" && basename(argv[0]) === "codex");
-    const args = clients[0]?.argv;
-    if (clients.length !== 1 || args[1] !== "--remote" || args[2] !== url ||
-        args[3] !== "--remote-auth-token-env" || args[4] !== tokenEnv) return null;
+    if (clients.length !== 1 || codexArg(clients[0].argv, "--remote") !== url || codexArg(clients[0].argv, "--remote-auth-token-env") !== tokenEnv) return null;
     const ws = new WebSocket(url, { headers: { Authorization: `Bearer ${token}` } });
     return await new Promise<string | null>((resolve) => {
       let sid: string | null = null;

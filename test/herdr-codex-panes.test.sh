@@ -225,10 +225,11 @@ with sync_playwright() as p:
             agent_kind="codex", session_id=thread, cwd="/x/Usher", ts="2026-11-19T10:00:00+09:00")))
         (history / n).write_text(text)
     managed = dict(second, pane_id="wF:pE", terminal_id="term_c", label="専用 App Server")
-    def foreground(url=backend):
+    def foreground_argv(argv):
         (tmp / "foreground.json").write_text(json.dumps(dict(result=dict(process_info=dict(
-            pane_id="wF:pE", foreground_processes=[dict(argv=[
-                "/usr/local/bin/codex", "--remote", url, "--remote-auth-token-env", "RMV_CODEX_TOKEN_TEST"])])))))
+            pane_id="wF:pE", foreground_processes=[dict(argv=argv)])))))
+    def foreground(url=backend):
+        foreground_argv(["/usr/local/bin/codex", "--remote", url, "--remote-auth-token-env", "RMV_CODEX_TOKEN_TEST"])
     def loaded(*ids):
         (tmp / "loaded.json").write_text(json.dumps(ids))
     def managed_post(**body):
@@ -280,6 +281,11 @@ with sync_playwright() as p:
         (sid, "A だけの赤ペン"), (sid_b, "B だけの赤ペン"), (sid_b, "2行目")]
     assert all(q[4:] == ["--remote", backend, "--remote-auth-token-env", "RMV_CODEX_TOKEN_TEST"] for q in queued)
     assert len((tmp / "prompt.jsonl").read_text().splitlines()) == 2
+    # 起動引数の並びや -m などの他の引数は問わない。--remote が 2 つあればどちらか決められないので送らない
+    foreground_argv(["/usr/local/bin/codex", "-m", "gpt-5", "--remote-auth-token-env=RMV_CODEX_TOKEN_TEST", "--remote", backend])
+    assert managed_post(name=name_b, livePane=managed_name, text="並びの違う起動").status == 200
+    foreground_argv(["/usr/local/bin/codex", "--remote", backend, "--remote", "ws://127.0.0.1:1", "--remote-auth-token-env", "RMV_CODEX_TOKEN_TEST"])
+    assert managed_post(name=name_b, livePane=managed_name, text="二重の --remote").status == 409
     foreground("ws://127.0.0.1:1")
     assert managed_post(name=name_b, livePane=managed_name, text="別のサーバー").status == 409
     expect(reply).to_have_text("Codex · 待機中")
