@@ -261,6 +261,13 @@ async function sessions(): Promise<Response> {
     const sid = e.sid ?? askSid.get(e.session) ?? null;
     out.push({ sid, session: e.session, name: e.name, cwd: e.cwd, label: e.label, head: e.head, title: e.title, status: e.status, ts: e.ts, live: e.live, deliverable: e.terminal && e.live && !e.perm && e.status !== "blocked" && !(sid && waiting.has(sid)) });
   }
+  // 専用 App Server (RMV_CODEX_PANE_BACKENDS) で会話 ID を一つに確かめられた Codex の pane だけを、agent: "codex" として足す。
+  // 端末には打たず /ext/deliver が `codex queue` で積むので、作業中でも deliverable (Codex が順番を待たせる)。確かめられない pane は出さない
+  for (const t of await confirmedCodexPanes()) {
+    if (seen.has(t.sid)) continue;
+    seen.add(t.sid);
+    out.push({ sid: t.sid, session: t.session, name: t.name, cwd: t.pane.cwd, label: `Codex · ${t.pane.label}`, head: "", title: t.pane.pane, status: t.pane.status, ts: null, live: true, deliverable: t.pane.status !== "blocked", agent: "codex" });
+  }
   return Response.json(out, { headers: { "cache-control": "no-store", "x-rmv-live": live } });
 }
 
@@ -775,7 +782,7 @@ function codexPaneFromName(name: string): CodexPaneRef | null {
   const pane = parts[1] + ":" + parts[2], terminal = parts[3];
   return codexPaneRef(pane, terminal) ? { pane, terminal } : null;
 }
-type CodexPane = { pane: string; terminal: string; label: string; repo: string; status: string };
+type CodexPane = { pane: string; terminal: string; label: string; repo: string; cwd: string; status: string };
 function codexPaneRef(pane: unknown, terminal: unknown): pane is string {
   return typeof pane === "string" && pane.length <= 64 && CODEX_PANE_ID.test(pane) && !/\s/.test(pane)
     && typeof terminal === "string" && terminal.length <= 100 && PANE_TERMINAL_ID.test(terminal) && !/\s/.test(terminal);
@@ -783,8 +790,9 @@ function codexPaneRef(pane: unknown, terminal: unknown): pane is string {
 function codexPaneInfo(p: HerdrPane | null | undefined): CodexPane | null {
   if (p?.agent !== "codex" || !codexPaneRef(p.pane_id, p.terminal_id)) return null;
   const label = typeof p.label === "string" ? p.label.trim() : "";
-  const repo = typeof p.cwd === "string" ? p.cwd.split("/").filter(Boolean).at(-1) ?? "" : "";
-  return { pane: p.pane_id, terminal: String(p.terminal_id), label: label || p.pane_id, repo, status: typeof p.agent_status === "string" ? p.agent_status : "unknown" };
+  const cwd = typeof p.cwd === "string" ? p.cwd : "";
+  const repo = cwd.split("/").filter(Boolean).at(-1) ?? "";
+  return { pane: p.pane_id, terminal: String(p.terminal_id), label: label || p.pane_id, repo, cwd, status: typeof p.agent_status === "string" ? p.agent_status : "unknown" };
 }
 let codexPaneCache: { at: number; panes: Promise<CodexPane[] | null> } | null = null;
 async function liveCodexPanes(): Promise<CodexPane[]> {
@@ -885,6 +893,20 @@ async function codexPaneThread(pane: string, { url, tokenEnv }: CodexPaneBackend
 }
 async function liveCodexThread({ pane, terminal }: CodexPaneRef, backend: CodexPaneBackend): Promise<string | null> {
   return await currentCodexPane(pane, terminal).catch(() => null) ? codexPaneThread(pane, backend) : null;
+}
+// 外部ツール (/sessions・/ext/deliver) に見せる Codex の会話: 専用 App Server を割り当てた pane のうち、対話の会話 ID を一つに確かめられたもの
+type ConfirmedCodexPane = { sid: string; name: string; session: string; pane: CodexPane; backend: CodexPaneBackend };
+async function confirmedCodexPanes(): Promise<ConfirmedCodexPane[]> {
+  if (!codexPaneBackends.size) return [];
+  const found = await Promise.all((await liveCodexPanes()).map(async (pane) => {
+    const session = `codex-pane-${pane.pane.replace(":", "-")}-${pane.terminal}`, name = session + ".md";
+    const backend = codexPaneBackends.get(name);
+    const sid = backend ? await cachedCodexPaneThread(name, pane.pane, backend) : null;
+    return sid && backend ? { sid, name, session, pane, backend } : null;
+  }));
+  const confirmed = found.filter((t): t is ConfirmedCodexPane => t !== null);
+  // 同じ会話 ID が二つの pane に出たら、どちらに送るか決められないので両方とも出さない
+  return confirmed.filter((t) => confirmed.filter((u) => u.sid === t.sid).length === 1);
 }
 
 type CompletedReply = { identity: string; text: string };
@@ -1177,12 +1199,14 @@ async function codexQueue(name: string, sid: string, text: string, images: unkno
 // 送り先が決まった後、打つ直前に extCheck で端末の Claude の今の会話 (pid ごとの記録) と許可待ちを確かめる (check)
 const EXT_TICKET = /^\d{8}-\d{6}-\d{6}$/;
 const EXT_SID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/; // Claude Code の session_id (小文字の UUID)
-async function extDeliver(req: Request): Promise<Response> {
+async function extDeliver(req: Request, opt: { extendCodexTimeout?: () => void } = {}): Promise<Response> {
   const body = await req.json().catch(() => null);
   if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).some((k) => k !== "sid" && k !== "ticket")) return new Response("body must be {sid, ticket}", { status: 400 });
   const { sid, ticket } = body as { sid?: unknown; ticket?: unknown };
   if (typeof ticket !== "string" || !EXT_TICKET.test(ticket)) return new Response("bad ticket", { status: 400 });
   if (typeof sid !== "string" || !EXT_SID.test(sid)) return new Response("bad sid", { status: 400 });
+  const codex = (await confirmedCodexPanes()).find((t) => t.sid === sid);
+  if (codex) return extDeliverCodex(req, codex, ticket, opt);
   const { items, curSid, askSid } = await historyItems();
   // items は新しい順。返事ゼロの仮 entry (asking-…) は依頼時に hook が記録した session_id で引く。subagent の返事は送り先にしない
   const e = items.find((x) => !x.agent && ("sid" in x && x.sid ? x.sid : x.name.startsWith("asking-") ? askSid.get(x.session) : null) === sid);
@@ -1207,6 +1231,26 @@ async function extDeliver(req: Request): Promise<Response> {
   const r = await send(new Request(`${own}/send`, { method: "POST", headers: { origin: own, host: `127.0.0.1:${PORT}`, "content-type": "application/json" }, body: JSON.stringify({ name: e.name, text: `/rmp ${ticket}`, focus: false, reset: false }) }), { exact: true, check: async (t) => (await extCheck(t, sid)) ?? aborted(req) });
   if (!r.ok) return r;
   return Response.json({ ok: true, via: e.session.includes("__") ? "herdr" : "orca" }, { headers: { "cache-control": "no-store" } });
+}
+
+// /ext/deliver の Codex 版: 端末には打たず、その pane の専用 App Server 経由で `codex queue` に合図を積む。
+// 一覧のキャッシュは使わず、積む直前に pane と会話 ID をもう一度確かめる (/resume で会話が変わっていたら stale)。
+// Codex には /rmp コマンドが無いので、Claude 用に入れた rmp スキルの手順書を読んでもらう文にする。
+// 409 の本文の頭は Claude の時と同じ語 (stale / permission pending / unverified)。504 は登録できたか分からない (再送しない)
+async function extDeliverCodex(req: Request, t: ConfirmedCodexPane, ticket: string, opt: { extendCodexTimeout?: () => void }): Promise<Response> {
+  const ref = codexPaneFromName(t.name);
+  if (!ref) return new Response("unknown session", { status: 404 });
+  const now = await liveCodexThread(ref, t.backend);
+  if (now !== t.sid) return new Response(now ? "stale: この端末では別の Codex の会話が開かれている" : "unverified: Codex の会話を確かめられない。積まない", { status: 409 });
+  const pane = await currentCodexPane(ref.pane, ref.terminal).catch(() => null);
+  if (pane?.status === "blocked") return new Response("permission pending: Codex が承認待ち。積まない", { status: 409 });
+  const abort = aborted(req);
+  if (abort) return abort;
+  opt.extendCodexTimeout?.();
+  const text = `rmp で赤ペンの注釈が届きました (チケット ${ticket})。~/.claude/skills/rmp/SKILL.md の手順で、このチケットの注釈を読んでください (Claude Code の /rmp ${ticket} にあたります)。`;
+  const r = await codexQueue(t.name, t.sid, text, [], false, t.backend);
+  if (!r.ok) return r;
+  return Response.json({ ok: true, via: "codex" }, { headers: { "cache-control": "no-store" } });
 }
 
 // POST /switch {name, cmd, value}: 送信欄のプルダウンから、その返事の会話の端末へ `/model <value>` / `/effort <value>` + Enter を打つ。
@@ -1474,7 +1518,9 @@ Bun.serve({
       // Firefox は拡張の fetch にも CORS をかける (2026-10-30 Zen で実測: 200 でも本文を捨てる)。許可した origin にだけ返し、JSON の事前確認に答える
       const cors = { "access-control-allow-origin": origin, vary: "Origin" };
       if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: { ...cors, "access-control-allow-methods": "POST", "access-control-allow-headers": "content-type", "access-control-max-age": "600" } });
-      const r = pathname === "/ext/deliver" && req.method === "POST" ? await extDeliver(req) : new Response("not found", { status: 404 });
+      const r = pathname === "/ext/deliver" && req.method === "POST" ? await extDeliver(req, {
+        extendCodexTimeout: () => server.timeout(req, CODEX_QUEUE_TIMEOUT / 1000 + 5),
+      }) : new Response("not found", { status: 404 });
       const headers = new Headers(r.headers);
       for (const [k, v] of Object.entries(cors)) headers.set(k, v);
       return new Response(r.body, { status: r.status, statusText: r.statusText, headers });
