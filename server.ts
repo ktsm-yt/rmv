@@ -233,8 +233,10 @@ async function history(repo: string | null): Promise<Response> {
   const livePanes = await Promise.all(panes.map(async (p) => {
     const session = `codex-pane-${p.pane.replace(":", "-")}-${p.terminal}`;
     const name = session + ".md";
-    const reply = await completedCodexReply(name);
-    return { name, session, codex: true, codexPane: true, replyTurn: reply?.identity ?? null, sid: null, repo: p.repo, head: p.label, label: p.label,
+    const backend = codexPaneBackends.get(name);
+    const sid = backend ? await codexPaneThread(p.pane, backend) : null;
+    const reply = backend ? null : await completedCodexReply(name);
+    return { name, session, codex: true, codexPane: true, replyTurn: reply?.identity ?? null, sid, repo: p.repo, head: p.label, label: p.label,
       title: p.pane, status: p.status, live: true, terminal: false, ts: null, agent: null, perm: null, asking: null };
   }));
   const out = [...replies, ...livePanes];
@@ -779,7 +781,8 @@ async function readHerdrPanes(sock: string | null = null): Promise<HerdrPane[] |
 // Herdr の pane は端末の ID と組み合わせて選ぶ。Codex の会話 ID は従来どおり履歴のメタデータから取る。
 const CODEX_PANE_ID = /^w[\da-z]+:p[\da-z]+$/i;
 const PANE_TERMINAL_ID = /^term_[\da-z]+$/i;
-function codexPaneFromName(name: string): { pane: string; terminal: string } | null {
+type CodexPaneRef = { pane: string; terminal: string };
+function codexPaneFromName(name: string): CodexPaneRef | null {
   const parts = /^codex-pane-(w[\da-z]+)-(p[\da-z]+)-(term_[\da-z]+)\.md$/i.exec(name);
   if (!parts) return null;
   const pane = parts[1] + ":" + parts[2], terminal = parts[3];
@@ -810,6 +813,71 @@ async function currentCodexPane(pane: string, terminal: string): Promise<CodexPa
   return p?.pane === pane && p.terminal === terminal ? p : null;
 }
 function paneChanged(): Response { return new Response("選んだCodexの端末が見つからないか、入れ替わりました", { status: 409 }); }
+
+type CodexPaneBackend = { url: string; tokenEnv: string };
+const codexPaneBackends = new Map<string, CodexPaneBackend>();
+try {
+  const registered = new Set<string>();
+  for (const [name, backend] of Object.entries(JSON.parse(process.env.RMV_CODEX_PANE_BACKENDS || "{}"))) {
+    const { url, tokenEnv } = backend as Partial<CodexPaneBackend>;
+    if (!codexPaneFromName(name) || typeof url !== "string" || !/^ws:\/\/127\.0\.0\.1:[1-9]\d{0,4}$/.test(url) ||
+        Number(url.split(":").at(-1)) > 65535 || typeof tokenEnv !== "string" || !/^RMV_CODEX_TOKEN_[A-Z0-9_]+$/.test(tokenEnv)) continue;
+    if (registered.has(url)) throw new Error("one Codex App Server per pane");
+    registered.add(url);
+    codexPaneBackends.set(name, { url, tokenEnv });
+  }
+} catch { codexPaneBackends.clear(); }
+
+// Only dedicated, explicitly configured App Servers are queried. A shared daemon's hook environment belongs to its launch pane.
+async function codexPaneThread(pane: string, { url, tokenEnv }: CodexPaneBackend): Promise<string | null> {
+  const token = process.env[tokenEnv];
+  if (!token) return null;
+  try {
+    const result = await herdrRun(["pane", "process-info", "--pane", pane]);
+    if (result.code !== 0) return null;
+    const info = JSON.parse(result.out)?.result?.process_info;
+    if (info?.pane_id !== pane || !Array.isArray(info.foreground_processes)) return null;
+    const clients = info.foreground_processes.filter(({ argv }: { argv?: string[] }) =>
+      Array.isArray(argv) && typeof argv[0] === "string" && basename(argv[0]) === "codex");
+    const args = clients[0]?.argv;
+    if (clients.length !== 1 || args[1] !== "--remote" || args[2] !== url ||
+        args[3] !== "--remote-auth-token-env" || args[4] !== tokenEnv) return null;
+    const ws = new WebSocket(url, { headers: { Authorization: `Bearer ${token}` } });
+    return await new Promise<string | null>((resolve) => {
+      let sid: string | null = null;
+      const finish = (thread: string | null) => { clearTimeout(timer); ws.close(); resolve(thread); };
+      const timer = setTimeout(() => finish(null), 1000);
+      const send = (method: string, params?: object, id?: number) => ws.send(JSON.stringify({ method, params, id }));
+      ws.onopen = () => send("initialize", { clientInfo: { name: "rmv", version: "1" } }, 1);
+      ws.onclose = ws.onerror = () => finish(null);
+      ws.onmessage = ({ data }) => {
+        if (typeof data !== "string" || data.length > 65536) return finish(null);
+        try {
+          const response = JSON.parse(data);
+          if (response.id === 1 && response.result) {
+            send("initialized");
+            send("thread/loaded/list", { limit: 2 }, 2);
+          } else if (response.id === 2) {
+            const { data, nextCursor } = response.result ?? {};
+            if (!Array.isArray(data) || data.length !== 1 || nextCursor != null || typeof data[0] !== "string" || !EXT_SID.test(data[0])) return finish(null);
+            sid = data[0];
+            send("thread/read", { threadId: sid, includeTurns: false }, 3);
+          } else if (response.id === 3) {
+            const thread = response.result?.thread;
+            const trusted = sid && thread?.id === sid && thread.ephemeral === false && thread.parentThreadId == null &&
+              ["cli", "vscode"].includes(thread.source) && [null, undefined, "user"].includes(thread.threadSource) &&
+              ["idle", "active"].includes(thread.status?.type);
+            finish(trusted ? sid : null);
+          } else if (response.id === 1) finish(null);
+        } catch { finish(null); }
+      };
+    });
+  } catch { return null; }
+}
+async function liveCodexThread({ pane, terminal }: CodexPaneRef, backend: CodexPaneBackend): Promise<string | null> {
+  return await currentCodexPane(pane, terminal).catch(() => null) ? codexPaneThread(pane, backend) : null;
+}
+
 type CompletedReply = { identity: string; text: string };
 type CodexReplyBinding = { path: string; sid: string; pending?: Promise<CompletedReply | null>; cached?: {
   version: string; fileId: string; size: number; reply: CompletedReply | null;
@@ -881,7 +949,7 @@ async function codexPaneHistory(name: string, { pane, terminal }: { pane: string
   try {
     const p = await currentCodexPane(pane, terminal);
     if (!p) return paneChanged();
-    const reply = await completedCodexReply(name);
+    const reply = codexPaneBackends.has(name) ? null : await completedCodexReply(name);
     if (reply) return new Response(reply.text, { headers: TEXT });
     const messages = new Map([["working", "作業中"], ["idle", "待機中"], ["blocked", "入力待ち"], ["done", "完了"]]);
     return new Response(`Codex · ${messages.get(p.status) ?? "状態不明"}`, { headers: TEXT });
@@ -995,6 +1063,13 @@ async function send(req: Request, opt: { exact?: boolean; check?: (t: SendTarget
   const codexPane = codexPaneFromName(name);
   if (codexPane) {
     if (opt.exact || opt.check || images.length || reset) return new Response("Codexのペインへは送信欄から1行のテキストを送ってください", { status: 400 });
+    if (typeof body?.liveThread === "string") {
+      const backend = codexPaneBackends.get(name);
+      if (!backend || await liveCodexThread(codexPane, backend) !== body.liveThread) return codexThreadChanged();
+      if (req.signal.aborted) return new Response("送信は中断されました", { status: 499 });
+      opt.extendCodexTimeout?.();
+      return codexQueue(name, body.liveThread, text, images, reset, backend);
+    }
     return sendCodexPane(req, codexPane, text);
   }
   // asking-<session>.md (返事ゼロの仮 entry、待機中の最初の依頼の送り先) は history に meta が無いので、state/prompt の記録 (terminal・herdr_pane・cwd 付き) を meta に使う
@@ -1002,8 +1077,17 @@ async function send(req: Request, opt: { exact?: boolean; check?: (t: SendTarget
   if (!meta) return new Response("not found", { status: 404 });
   if (meta.agent_kind === "codex") {
     if (opt.exact || opt.check) return new Response("codex: 外部配送・モデル切り替えは Codex の会話に送らない", { status: 409 });
+    if (!(await Bun.file(`${HIST}/${name}`).exists())) return new Response("not found", { status: 404 });
+    const sid = typeof meta.session_id === "string" ? meta.session_id : "";
+    const livePane = typeof body?.livePane === "string" ? body.livePane : "";
+    const backend = livePane ? codexPaneBackends.get(livePane) : undefined;
+    if (livePane) {
+      const target = codexPaneFromName(livePane);
+      if (!target || !backend || await liveCodexThread(target, backend) !== sid) return codexThreadChanged();
+    }
+    if (req.signal.aborted) return new Response("送信は中断されました", { status: 499 });
     opt.extendCodexTimeout?.();
-    return codexQueue(name, meta, text, images, reset);
+    return codexQueue(name, sid, text, images, reset, backend);
   }
   let pane = herdrPaneOf(meta);
   let sock = herdrSockOf(meta);
@@ -1109,11 +1193,13 @@ async function send(req: Request, opt: { exact?: boolean; check?: (t: SendTarget
 }
 
 // Codex の会話の返事 (hooks/codex-stop.py が agent_kind: "codex" で記録) への赤ペン: 端末には打たず、Codex 自身のキューに積む (`codex queue`)。
-// 宛先の UUID は記録 (history の meta) からだけ取る。HTTP から受けるのは name だけで、同じ cwd への差し替え・--resume・自動の再送はしない。
+// 赤ペンの宛先は返事に保存された UUID。稼働ペインから送る時も App Server が確認した UUID と一致する必要がある。
 // 成功 = キューに積めた。Codex が実行中・承認待ちなら Codex 側で順番を待ち、読み込み済みで手が空いた会話なら Codex が次の turn を始める (2026-11-18 隔離 app-server で実測)。
 // 画像・数字キーの reset・内部呼び出し (/ext/deliver と /switch の exact / check) は Codex に通さない (黙って捨てずに断る)。shell を通さず argv で渡す
-async function codexQueue(name: string, meta: Record<string, unknown>, text: string, images: unknown[], reset: boolean): Promise<Response> {
-  const sid = typeof meta.session_id === "string" ? meta.session_id : "";
+function codexThreadChanged(): Response {
+  return new Response("選んだCodexの会話が変わったか確認できません。送り先を選び直してください", { status: 409 });
+}
+async function codexQueue(name: string, sid: string, text: string, images: unknown[], reset: boolean, backend?: CodexPaneBackend): Promise<Response> {
   if (images.length) return new Response("codex: 画像は送れない (文字だけ)。画像を外して送る", { status: 400 });
   if (reset) return new Response("codex: 入力欄を空にする送り方は使えない", { status: 400 });
   if (sid.length !== 36 || !EXT_SID.test(sid)) return new Response("codex: 記録の会話 ID が UUID でない", { status: 409 });
@@ -1121,7 +1207,8 @@ async function codexQueue(name: string, meta: Record<string, unknown>, text: str
   await appendFile(`${STATE}/send.jsonl`, JSON.stringify({ ts: new Date().toISOString(), name, sid, codex: true }) + "\n").catch(() => {});
   try {
     // --message=<text>: 本文が "-" で始まっても flag にしない
-    const p = Bun.spawn([CODEX, "queue", "--thread", sid, `--message=${text}`], { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+    const remote = backend ? ["--remote", backend.url, "--remote-auth-token-env", backend.tokenEnv] : [];
+    const p = Bun.spawn([CODEX, "queue", "--thread", sid, `--message=${text}`, ...remote], { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
     // 時間切れは登録済みか判明しない。確認せずに再送すると 2 回積まれうる。
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {

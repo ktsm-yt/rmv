@@ -158,13 +158,22 @@ RMV_VOICEVOX_SPEAKER=3 # ずんだもん / ノーマル
 
 右側の送り先一覧で『Codex』と表示されたHerdrのペインを選ぶと、左に作業中や待機中などの状態が出ます。返信履歴がなくても、待機中で端末の入力欄が空なら右から1行のテキストを送れます。
 
-既に起動しているペインで完了した返事を表示するには、起動時の `RMV_CODEX_PANE_REPLIES` に、`/history` に出る該当ペインの正確なファイル名と、そのペインで開いたことを確認した会話の rollout の絶対パスを JSON で渡します。
+ペインに専用の Codex App Server を割り当てている場合は、起動時の `RMV_CODEX_PANE_BACKENDS` に、`/history` に出るペインの正確なファイル名、ループバックの WebSocket URL、capability token の環境変数名を JSON で渡します。
+
+```sh
+export RMV_CODEX_PANE_BACKENDS='{"codex-pane-wF-pC-term_example.md":{"url":"ws://127.0.0.1:54321","tokenEnv":"RMV_CODEX_TOKEN_EXAMPLE"}}'
+codex --remote ws://127.0.0.1:54321 --remote-auth-token-env RMV_CODEX_TOKEN_EXAMPLE
+```
+
+App Server はペインごとに別のポートで `--ws-auth capability-token` を使います。同じトークンを Codex と RMV の環境に渡します。ペインにいる Codex が起動引数でそのサーバーを選び、対話の会話 ID を一つだけ確認できた時に、Stop フックで保存済みの返事を表示します。返事に付けた赤ペンは同じ App Server の会話 ID へ入ります。`/resume` などで会話が変わったり、複数になったりした時は、確認が取れるまで赤ペンを送れません。新しい会話として確認できたら、その会話の返事に切り替わります。共有の App Server はこの設定に入れないでください。
+
+既存のペインでは読み取り専用の設定も使えます。起動時の `RMV_CODEX_PANE_REPLIES` に、`/history` に出る該当ペインの正確なファイル名と、そのペインで開いたことを確認した会話の rollout の絶対パスを JSON で渡します。
 
 ```sh
 export RMV_CODEX_PANE_REPLIES='{"codex-pane-wF-pC-term_example.md":"/path/to/rollout-2026-11-19T10-00-00-01a1edc0-a35a-7e11-ac64-09ebd9ae1a2c.jsonl"}'
 ```
 
-末尾2 MiBから完了返信を探し、作業中は直近の完了返信を表示します。`/resume`などで会話を切り替えた場合は設定を更新してください。返事を履歴に残す手順は下にあります。
+末尾2 MiBから完了返信を探し、作業中は直近の完了返信を表示します。`/resume`などで会話を切り替えた場合は設定を更新してください。読み取り専用の返事から赤ペンを送るには、下の手順で保存された履歴の返事を選びます。
 
 送り先は選んだ時の端末です。端末が入れ替わったら選び直してください。Herdrでは入力欄の確認と送信を一度にできないため、送信ボタンを押した直後に同じ端末で入力を始めると内容が重なることがあります。履歴から会話を選ぶと、会話IDへのキュー送信を使います。
 

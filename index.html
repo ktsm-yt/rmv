@@ -897,7 +897,15 @@ const repoColor = (r) => { let h = 0; for (const c of String(r ?? "").toLowerCas
 const rcDot = '<i class="rc">●</i>';
 const inSess = (es) => (SESS ? es.filter((e) => e.session === SESS) : es);
 const codexPaneSession = (s) => s.startsWith("codex-pane-");
-const scope = () => inSess(inRepo(all)).filter((e) => SESS || !e.codexPane);
+const scope = () => {
+  const entries = inRepo(all);
+  const pane = entries.find((e) => e.codexPane && e.session === SESS);
+  if (pane?.sid) {
+    const replies = all.filter((e) => e.codex && !e.codexPane && e.sid === pane.sid);
+    if (replies.length) return replies.map((e) => ({ ...e, livePane: pane.name }));
+  }
+  return inSess(entries).filter((e) => SESS || !e.codexPane);
+};
 const setParam = (k, v) => { const u = new URL(location.href); if (v) u.searchParams.set(k, v); else u.searchParams.delete(k); history.replaceState(null, "", u); };
 function renderBar() {
   document.getElementById("pos").textContent = list.length ? `${list.length - idx} / ${list.length}` : "";
@@ -910,17 +918,18 @@ async function showIdx(i) {
   const e = list[idx];
   renderBar();
   const samePaneBody = cur?.replyTurn === e?.replyTurn && (!!e?.replyTurn || cur?.status === e?.status);
-  if (!e || (e.name === shownName && (!e.codexPane || samePaneBody))) return;
+  if (!e || (e.name === shownName && e.livePane === cur?.livePane && (!e.codexPane || samePaneBody))) return;
   const request = ++showRequest;
   shownName = e.name;
   renderChat();
+  if (cur?.codex) renderTray();
   let md;
   try {
     const reply = await fetch(`/history/${encodeURIComponent(e.name)}`, { cache: "no-store" });
     if (!reply.ok && !e.codexPane) throw new Error(`history: ${reply.status}`);
     md = await reply.text();
   } catch (err) {
-    if (request === showRequest && shownName === e.name) { shownName = null; renderChat(); }
+    if (request === showRequest && shownName === e.name) { shownName = null; renderChat(); if (cur?.codex) renderTray(); }
     throw err;
   }
   if (request === showRequest && shownName === e.name) await show(md, e);
@@ -1312,6 +1321,11 @@ const sendingNotes = new Set();
 let pageVer = null; // 読み込んだ index.html の版 (/history の x-rmv-page)
 let cur = null; // 表示中の履歴 entry。latest.html だけ映している間は null (送信不可・コピーのみ)
 const curName = () => cur?.name ?? "";
+const canSendNotes = () => {
+  if (!cur?.codex) return !!cur?.terminal;
+  if (cur.codexPane || cur.name !== shownName || cur.name !== list[idx]?.name || cur.livePane !== list[idx]?.livePane) return false;
+  return !cur.livePane || all.some((e) => e.codexPane && e.name === cur.livePane && e.sid === cur.sid);
+};
 const draftOf = (n) => { if (!drafts.has(n)) drafts.set(n, { pins: new Map(), choices: new Map(), free: "", imgs: [] }); return drafts.get(n); };
 const hasDraft = (n) => { const d = drafts.get(n ?? ""); return !!d && (d.pins.size > 0 || d.choices.size > 0 || !!d.free.trim() || d.imgs.length > 0); };
 // 案表 (Low-Load、1 列目が A〜E) の採用は表ごとに 1 案。choices = 表の通し番号 → { label, letter }。
@@ -1525,7 +1539,7 @@ function renderTray() {
   fimgs.hidden = !(d?.imgs.length);
   fimgs.innerHTML = d?.imgs.map((p, i) => `<span class="cimg">${thumb(p)}<button data-i="${i}" title="外す">×</button></span>`).join("") ?? "";
   const send = document.getElementById("send");
-  send.disabled = sendingNotes.has(curName()) || !!cur?.codexPane || (!cur?.terminal && !cur?.codex);
+  send.disabled = sendingNotes.has(curName()) || !canSendNotes();
   send.title = cur?.codex ? "Codex の会話のキューに積む (文字だけ)" : cur?.terminal ? "返事を出した端末へ打ち込む" : "この返事は Orca / herdr の外で出たので送れません。コピーして貼ってください";
 }
 const refresh = () => { applyMarks(); renderTray(); };
@@ -1629,10 +1643,10 @@ const noteDraftState = (d) => JSON.stringify([[...d.pins], [...d.choices], d.fre
 document.getElementById("send").onclick = async () => {
   const say = document.getElementById("akmsg");
   const n = curName(), codex = cur?.codex, d = drafts.get(n);
-  if (!(cur?.terminal || codex) || cur?.codexPane || !d || sendingNotes.has(n)) return;
+  if (!canSendNotes() || !d || sendingNotes.has(n)) return;
   if (codex && d.imgs.length) { say.textContent = "Codex には画像を送れません。画像を外してから送ってください"; return; }
   const before = noteDraftState(d);
-  const body = JSON.stringify({ name: n, text: message(d), images: d.imgs.map((p) => p.path) });
+  const body = JSON.stringify({ name: n, livePane: cur.livePane, text: message(d), images: d.imgs.map((p) => p.path) });
   sendingNotes.add(n);
   renderTray();
   say.textContent = "送信中…";
@@ -1666,7 +1680,8 @@ const chat = document.getElementById("chat"), ctext = document.getElementById("c
 let chipLabels = new Map(), chatBusy = false;
 const chatDrafts = new Map(); // Codex の会話ごと。null は従来どおり共通の Claude 下書き。
 let draftSession = null, chatStatusSession = null;
-const codexPaneReady = (pane) => pane.status === "idle" || pane.status === "done";
+const codexPaneReady = (pane) => !!pane.sid || pane.status === "idle" || pane.status === "done";
+const chatDraftKey = (entry) => entry.codexPane && entry.sid ? `${entry.session}:${entry.sid}` : entry.codex ? entry.session : null;
 const codexPaneStatus = new Map([["working", "作業中"], ["idle", "待機中"], ["blocked", "入力待ち"], ["done", "完了"]]);
 // 送り先の固定: プロジェクト列の選択 (repo 小文字、"すべて" は "") → session key を localStorage "rmx.chat.pin" に。無ければ追従 (表示中の返事の端末)。
 // 固定中に送る entry = /history 一覧 (all、新しい順) でそのセッションの最新。表示中の返事が切り替わっても変わらない。
@@ -1733,7 +1748,7 @@ function renderChat() {
   const to = chatTo(), pane = to?.codexPane ? to : null;
   const pin = chatPin();
   if (to) {
-    const key = to.codex ? to.session : null;
+    const key = chatDraftKey(to);
     if (key !== draftSession) {
       if (ctext.value) chatDrafts.set(draftSession, ctext.value); else chatDrafts.delete(draftSession);
       draftSession = key;
@@ -1753,7 +1768,7 @@ function renderChat() {
     : !to ? (codexPaneSession(pin || SESS) ? "選んだ端末が見つかりません" : pin ? "固定先のセッションの返事が一覧に無い (送れない)" : "表示中の返事が無い (送れない)")
     : !to.terminal && !to.codex ? (pin ? "固定先は Orca / herdr 外の端末 (送れない)" : "この返事は Orca / herdr 外の端末 (送れない)") : "";
   document.getElementById("cwhy").textContent = why;
-  ctext.placeholder = (pane ? "Codexへ1行送る" : to?.codex ? "Codexへ文字を送る" : "端末へ送る") + (isMobileUA ? "" : " (⌘+Enter)");
+  ctext.placeholder = (pane && !pane.sid ? "Codexへ1行送る" : to?.codex ? "Codexへ文字を送る" : "端末へ送る") + (isMobileUA ? "" : " (⌘+Enter)");
   ctext.disabled = pane ? chatBusy : !!why || chatBusy;
   csend.disabled = !!why || chatBusy;
   const terminalControlsDisabled = csend.disabled || !!to?.codex;
@@ -1876,7 +1891,7 @@ async function sendText(text, clear) {
   if (to.codexPane && !codexPaneReady(to)) return;
   const attachments = clear && !to.codex ? [...pending] : [];
   if (!text.trim() && !attachments.length) return;
-  const key = to.codex ? to.session : null;
+  const key = chatDraftKey(to);
   const sameTarget = () => {
     const next = chatTo();
     return next?.session === to.session && next.sid === to.sid;
@@ -1885,7 +1900,7 @@ async function sendText(text, clear) {
   say.textContent = "";
   renderChat();
   try {
-    const body = { name: to.name, text, images: attachments.map((p) => p.path), focus: false, reset: !clear };
+    const body = { name: to.name, liveThread: to.codexPane && to.sid ? to.sid : undefined, text, images: attachments.map((p) => p.path), focus: false, reset: !clear };
     const r = await fetch("/send", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
     if (!r.ok) {
       const reason = (await r.text()) || String(r.status);
@@ -1906,11 +1921,11 @@ async function sendText(text, clear) {
     if (to.codex && sameTarget()) {
       const accepted = document.createElement("span");
       accepted.className = "queue-accepted";
-      accepted.textContent = to.codexPane ? "端末へ送信" : "キューに登録";
+      accepted.textContent = to.codexPane && !to.sid ? "端末へ送信" : "キューに登録";
       say.replaceChildren(accepted);
     }
   } catch (e) {
-    if (sameTarget()) say.textContent = to.codexPane ? "送信結果を確認できません。端末を確認してください" : to.codex ? "通信が切れ、登録できたか分かりません。Codexのキューを確認してください" : e.message ?? String(e);
+    if (sameTarget()) say.textContent = to.codexPane && !to.sid ? "送信結果を確認できません。端末を確認してください" : to.codex ? "通信が切れ、登録できたか分かりません。Codexのキューを確認してください" : e.message ?? String(e);
   } finally {
     chatBusy = false;
     renderChat();
@@ -2305,7 +2320,10 @@ async function poll() {
     const sameSess = !!list[idx]?.session && next[0]?.session === list[idx].session;
     const keep = following && !hasDraft(shownName) && (!busy() || sameSess) ? null : list[idx]?.name; // 書きかけの赤ペン・入力中・読んでいる途中は新着で差し替えない (2026-10-16 user: 右の欄で返事を書いている最中に別の返事へ切り替わり、一番上に戻されたように見えた)
     list = next;
-    if (keep) { const j = list.findIndex((e) => e.name === keep); idx = j < 0 ? list.length - 1 : j; renderBar(); return; }
+    if (keep) {
+      const j = list.findIndex((e) => e.name === keep);
+      if (j >= 0) { await showIdx(j); return; }
+    }
     await showIdx(0);
   } catch (e) { console.error(e); }
 }

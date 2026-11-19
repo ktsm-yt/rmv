@@ -6,12 +6,16 @@ RMV_DIR="${RMV_DIR:-$A}"
 TMP="$(mktemp -d)"
 PORT="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')"
 BASE="http://127.0.0.1:$PORT"
+BACKEND_PORT="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')"
+BACKEND="ws://127.0.0.1:$BACKEND_PORT"
+MANAGED="codex-pane-wF-pE-term_c.md"
 cat > "$TMP/herdr" <<'STUB'
 #!/bin/sh
 case "$1 $2" in
   'pane list') cat "$TEST_TMP/panes.json" ;;
   'pane get')
     python3 -c 'import json,os,sys; from pathlib import Path; root=Path(os.environ["TEST_TMP"]); panes=json.loads((root/"panes.json").read_text())["result"]["panes"]; p=next((p for p in panes if p["pane_id"]==sys.argv[1]),None); print(json.dumps({"result":{"pane":p}}))' "$3" ;;
+  'pane process-info') cat "$TEST_TMP/foreground.json" ;;
   'pane read')
     if [ "$7" = ansi ]; then
       cat "$TEST_TMP/${3}-input.txt"
@@ -27,21 +31,51 @@ case "$1 $2" in
   *) printf '%s\n' "$*" >> "$TEST_TMP/unexpected"; exit 1 ;;
 esac
 STUB
-chmod +x "$TMP/herdr"
+cat > "$TMP/codex" <<'STUB'
+#!/bin/sh
+python3 -c 'import json,os,sys; from pathlib import Path; p=Path(os.environ["TEST_TMP"])/"queue.jsonl"; p.open("a").write(json.dumps(sys.argv[1:])+"\n")' "$@"
+STUB
+cat > "$TMP/backend.ts" <<'TS'
+Bun.serve({
+  hostname: "127.0.0.1",
+  port: Number(process.env.TEST_BACKEND_PORT),
+  fetch(req, server) {
+    if (req.headers.get("authorization") !== "Bearer test-token") return new Response("", { status: 401 });
+    if (!server.upgrade(req)) return new Response("", { status: 400 });
+  },
+  websocket: {
+    async message(ws, message) {
+      const req = JSON.parse(String(message));
+      if (req.method === "initialized") return;
+      const threads = await Bun.file(process.env.TEST_TMP + "/loaded.json").json();
+      const result = req.method === "initialize" ? {} :
+        req.method === "thread/loaded/list" ? { data: threads, nextCursor: null } :
+        req.method === "thread/read" ? { thread: { id: req.params.threadId, ephemeral: false, source: "cli",
+          threadSource: "user", status: { type: threads.includes(req.params.threadId) ? "idle" : "notLoaded" } } } : null;
+      ws.send(JSON.stringify({ id: req.id, result }));
+    },
+  },
+});
+TS
+chmod +x "$TMP/herdr" "$TMP/codex"
 export RMV_CODEX_PANE_REPLIES="{\"codex-pane-wF-pC-term_a.md\":\"$TMP/rollout-demo-01a1edc0-a35a-7e11-ac64-09ebd9ae1a2c.jsonl\",\"codex-pane-wF-pD-term_b.md\":\"$TMP/rollout-demo-01a1edc0-a35a-7e11-ac64-09ebd9ae1a2d.jsonl\"}"
-TEST_TMP="$TMP" RMV_STATE_DIR="$TMP/state" RMV_PORT="$PORT" RMV_LIVE_TTL_MS=0 RMV_HERDR_BIN="$TMP/herdr" RMV_ORCA_BIN=/usr/bin/false RMV_PS_BIN=/usr/bin/false RMV_CODEX_BIN=/usr/bin/false bun "$RMV_DIR/server.ts" >"$TMP/server.log" 2>&1 &
+export RMV_CODEX_PANE_BACKENDS="{\"$MANAGED\":{\"url\":\"$BACKEND\",\"tokenEnv\":\"RMV_CODEX_TOKEN_TEST\"}}"
+echo '[]' > "$TMP/loaded.json"
+TEST_TMP="$TMP" TEST_BACKEND_PORT="$BACKEND_PORT" bun "$TMP/backend.ts" >"$TMP/backend.log" 2>&1 &
+WB=$!
+TEST_TMP="$TMP" RMV_STATE_DIR="$TMP/state" RMV_PORT="$PORT" RMV_LIVE_TTL_MS=0 RMV_HERDR_BIN="$TMP/herdr" RMV_ORCA_BIN=/usr/bin/false RMV_PS_BIN=/usr/bin/false RMV_CODEX_BIN="$TMP/codex" RMV_CODEX_TOKEN_TEST=test-token RMV_PROJECTS_DIR="$TMP/projects" RMV_SESSIONS_DIR="$TMP/sessions" RMV_CC_SETTINGS="$TMP/claude-settings.json" bun "$RMV_DIR/server.ts" >"$TMP/server.log" 2>&1 &
 SV=$!
-trap 'kill "$SV" 2>/dev/null || true; wait "$SV" 2>/dev/null || true; rm -r "$TMP"' EXIT
+trap 'kill "$SV" "$WB" 2>/dev/null || true; wait "$SV" "$WB" 2>/dev/null || true; rm -r "$TMP"' EXIT
 for _ in $(seq 1 50); do curl -sf "$BASE/history" >/dev/null 2>&1 && break; sleep 0.1; done
 
-uv run --with playwright python - "$BASE" "$TMP" <<'PY'
+uv run --with playwright python - "$BASE" "$TMP" "$BACKEND" "$MANAGED" <<'PY'
 import json
 from pathlib import Path
 import sys
 import time
 from playwright.sync_api import expect, sync_playwright
 
-base, tmp = sys.argv[1], Path(sys.argv[2])
+base, tmp, backend, managed_name = sys.argv[1], Path(sys.argv[2]), sys.argv[3], sys.argv[4]
 first = dict(agent="codex", pane_id="wF:pC", terminal_id="term_a", label="依頼1", cwd="/x/Usher", agent_status="working")
 second = dict(agent="codex", pane_id="wF:pD", terminal_id="term_b", label="", cwd="/x/Usher", agent_status="idle")
 claude = dict(agent="claude", pane_id="wF:pH", label="Claude", cwd="/x/Usher", agent_status="working")
@@ -182,6 +216,73 @@ with sync_playwright() as p:
     panes(claude)
     expect(rows).to_have_count(0, timeout=8000)
     assert not (tmp / "unexpected").exists()
+
+    # Same cwd and UUID prefix. Only the loaded UUID decides which record appears and receives feedback.
+    sid_b = "01a1edc0-a35a-7e11-ac64-09ebd9ae1a2d"
+    name_a, name_b = "20261119T100001000-a.md", "20261119T100002000-b.md"
+    for n, thread, text in [(name_a, sid, "会話 A の返信"), (name_b, sid_b, "会話 B の返信")]:
+        (history / n.replace(".md", ".json")).write_text(json.dumps(dict(
+            agent_kind="codex", session_id=thread, cwd="/x/Usher", ts="2026-11-19T10:00:00+09:00")))
+        (history / n).write_text(text)
+    managed = dict(second, pane_id="wF:pE", terminal_id="term_c", label="専用 App Server")
+    def foreground(url=backend):
+        (tmp / "foreground.json").write_text(json.dumps(dict(result=dict(process_info=dict(
+            pane_id="wF:pE", foreground_processes=[dict(argv=[
+                "/usr/local/bin/codex", "--remote", url, "--remote-auth-token-env", "RMV_CODEX_TOKEN_TEST"])])))))
+    def loaded(*ids):
+        (tmp / "loaded.json").write_text(json.dumps(ids))
+    def managed_post(**body):
+        return page.request.post(f"{base}/send", headers={"Origin": base}, data=body)
+    foreground()
+    loaded(sid)
+    panes(managed, claude)
+    expect(rows).to_have_count(1)
+    rows.first.click()
+    expect(reply).to_have_text("会話 A の返信")
+    reply.locator("[data-pin]").click()
+    free = page.locator("#free")
+    red_pen = page.locator("#send")
+    free.fill("A だけの赤ペン")
+    page.locator("#ctext").fill("A だけの下書き")
+    expect(red_pen).to_be_enabled()
+
+    loaded(sid_b)
+    assert managed_post(name=name_a, livePane=managed_name, text="古い A の赤ペン").status == 409
+    assert managed_post(name=managed_name, liveThread=sid, text="古い A の入力").status == 409
+    expect(reply).to_have_text("会話 B の返信")
+    expect(page.locator("#ctext")).to_have_value("")
+    assert not (tmp / "queue.jsonl").exists()
+    reply.locator("[data-pin]").click()
+    free.fill("B だけの赤ペン")
+
+    loaded(sid, sid_b)
+    assert managed_post(name=name_b, livePane=managed_name, text="紛らわしい宛先").status == 409
+    expect(reply).to_have_text("Codex · 待機中")
+    expect(reply.locator("[data-pin]")).to_have_count(0)
+    assert not (tmp / "queue.jsonl").exists()
+
+    loaded(sid)
+    expect(reply).to_have_text("会話 A の返信")
+    expect(free).to_have_value("A だけの赤ペン")
+    expect(page.locator("#ctext")).to_have_value("A だけの下書き")
+    red_pen.click()
+    expect(page.locator("#sent")).to_contain_text("キューに登録")
+    loaded(sid_b)
+    expect(reply).to_have_text("会話 B の返信")
+    expect(free).to_have_value("B だけの赤ペン")
+    red_pen.click()
+    expect(page.locator("#sent")).to_contain_text("キューに登録")
+    page.locator("#ctext").fill("1行目\n2行目")
+    send_button.click()
+    expect(page.locator("#cmsg")).to_contain_text("キューに登録")
+    queued = [json.loads(line) for line in (tmp / "queue.jsonl").read_text().splitlines()]
+    assert [(q[2], q[3].splitlines()[-1]) for q in queued] == [
+        (sid, "A だけの赤ペン"), (sid_b, "B だけの赤ペン"), (sid_b, "2行目")]
+    assert all(q[4:] == ["--remote", backend, "--remote-auth-token-env", "RMV_CODEX_TOKEN_TEST"] for q in queued)
+    assert len((tmp / "prompt.jsonl").read_text().splitlines()) == 2
+    foreground("ws://127.0.0.1:1")
+    assert managed_post(name=name_b, livePane=managed_name, text="別のサーバー").status == 409
+    expect(reply).to_have_text("Codex · 待機中")
     browser.close()
-print("PASS: shared Codex/Claude viewer, exact live pane send and no terminal logs")
+print("PASS: shared viewer, exact live pane input, canonical A/B replies and managed Codex queue")
 PY
