@@ -3,7 +3,7 @@
 # 2026-11-15 user「X軸がずれるんだよなぁ」: zoom 0.9 でカードが行より上、1.2 で下にずれた。カード位置 ≒ 行位置 × zoom
 # (見た目の px で測った値を、拡大前の px として描く style.top に入れていた)。スクロールした状態でも見る。
 # 実行: bash rmv/test/margin-zoom.test.sh   (bun / uv / playwright の chromium が要る。ENG=webkit で RMV Float と同じ WebKit)
-#   旧版で FAIL を見る: mkdir -p /tmp/old && cp server.ts /tmp/old && git show <直す前の commit>:index.html > /tmp/old/index.html && RMV_DIR=/tmp/old bash test/margin-zoom.test.sh
+#   旧版で FAIL を見る: mkdir -p /tmp/old && cp server.ts screen.ts terminal.ts /tmp/old && git show <直す前の commit>:index.html > /tmp/old/index.html && RMV_DIR=/tmp/old bash test/margin-zoom.test.sh
 set -u
 A="$(cd "$(dirname "$0")/.." && pwd)"
 RMV_DIR="${RMV_DIR:-$A}"
