@@ -232,6 +232,11 @@ with sync_playwright() as p:
         foreground_argv(["/usr/local/bin/codex", "--remote", url, "--remote-auth-token-env", "RMV_CODEX_TOKEN_TEST"])
     def loaded(*ids):
         (tmp / "loaded.json").write_text(json.dumps(ids))
+    # 段落を押すと、次の描画でその赤ペンの『ひとこと』欄に focus が移る (requestAnimationFrame)。
+    # 移る前に #free や #ctext へ fill すると、文字がひとこと欄に入って下書きが消えたように見え、時々落ちていた
+    def pin_paragraph():
+        reply.locator("[data-pin]").click()
+        page.wait_for_function("document.activeElement?.matches('#tray textarea, #margin textarea') && document.activeElement.id !== 'free'")
     def managed_post(**body):
         return page.request.post(f"{base}/send", headers={"Origin": base}, data=body)
     foreground()
@@ -240,7 +245,7 @@ with sync_playwright() as p:
     expect(rows).to_have_count(1)
     rows.first.click()
     expect(reply).to_have_text("会話 A の返信")
-    reply.locator("[data-pin]").click()
+    pin_paragraph()
     free = page.locator("#free")
     red_pen = page.locator("#send")
     free.fill("A だけの赤ペン")
@@ -253,7 +258,7 @@ with sync_playwright() as p:
     expect(reply).to_have_text("会話 B の返信")
     expect(page.locator("#ctext")).to_have_value("")
     assert not (tmp / "queue.jsonl").exists()
-    reply.locator("[data-pin]").click()
+    pin_paragraph()
     free.fill("B だけの赤ペン")
 
     loaded(sid, sid_b)
