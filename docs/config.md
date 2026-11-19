@@ -154,6 +154,46 @@ RMV_VOICEVOX_SPEAKER=3 # ずんだもん / ノーマル
 
 `RMV_TTS_PROVIDER` を設定しなければ Gemini のままです。
 
+## Codex の返事を載せて赤ペンを返す (試作・opt-in)
+
+右側の送り先一覧で『Codex』と表示されたHerdrのペインを選ぶと、左に作業中や待機中などの状態が出ます。返信履歴がなくても、待機中で端末の入力欄が空なら右から1行のテキストを送れます。
+
+ペインに専用の Codex App Server を割り当てている場合は、起動時の `RMV_CODEX_PANE_BACKENDS` に、`/history` に出るペインの正確なファイル名、ループバックの WebSocket URL、capability token の環境変数名を JSON で渡します。
+
+```sh
+export RMV_CODEX_PANE_BACKENDS='{"codex-pane-wF-pC-term_example.md":{"url":"ws://127.0.0.1:54321","tokenEnv":"RMV_CODEX_TOKEN_EXAMPLE"}}'
+codex --remote ws://127.0.0.1:54321 --remote-auth-token-env RMV_CODEX_TOKEN_EXAMPLE
+```
+
+App Server はペインごとに別のポートで `--ws-auth capability-token` を使います。同じトークンを Codex と RMV の環境に渡します。ペインにいる Codex が起動引数でそのサーバーを選び、対話の会話 ID を一つだけ確認できた時に、Stop フックで保存済みの返事を表示します。返事に付けた赤ペンは同じ App Server の会話 ID へ入ります。`/resume` などで会話が変わったり、複数になったりした時は、確認が取れるまで赤ペンを送れません。新しい会話として確認できたら、その会話の返事に切り替わります。共有の App Server はこの設定に入れないでください。
+
+既存のペインでは読み取り専用の設定も使えます。起動時の `RMV_CODEX_PANE_REPLIES` に、`/history` に出る該当ペインの正確なファイル名と、そのペインで開いたことを確認した会話の rollout の絶対パスを JSON で渡します。
+
+```sh
+export RMV_CODEX_PANE_REPLIES='{"codex-pane-wF-pC-term_example.md":"/path/to/rollout-2026-11-19T10-00-00-01a1edc0-a35a-7e11-ac64-09ebd9ae1a2c.jsonl"}'
+```
+
+末尾2 MiBから完了返信を探し、作業中は直近の完了返信を表示します。`/resume`などで会話を切り替えた場合は設定を更新してください。読み取り専用の返事から赤ペンを送るには、下の手順で保存された履歴の返事を選びます。
+
+送り先は選んだ時の端末です。端末が入れ替わったら選び直してください。Herdrでは入力欄の確認と送信を一度にできないため、送信ボタンを押した直後に同じ端末で入力を始めると内容が重なることがあります。履歴から会話を選ぶと、会話IDへのキュー送信を使います。
+
+Codexの返事を一覧に出せます。段落に付けた赤ペンも、右の送信欄に書いた依頼も、選んだCodexの会話に届きます。
+返事の保存と送信を使う時は、Codexの `~/.codex/hooks.json` の `Stop` に保存用のhookを足します。
+
+```json
+{ "hooks": [{ "type": "command", "command": "python3 ~/rmv/hooks/codex-stop.py", "timeout": 10 }] }
+```
+
+足した後、Codex が hook の確認を出したら信頼してください。
+
+- 一覧には『Codex:』と付いて出ます。本文に番号や見出しがなくても、段落を押して赤ペンを付けられます。端末の稼働状態や外部ツール (rmp) の送り先は Claude Code 用です。
+- Codex の記録が対話セッション (`cli` または `vscode`) を示す返事を載せます。herdr の pane で対話版として動かした委譲 worker も表示されます。
+- 赤ペンの送信は端末に打たず、`codex queue --thread <会話の ID> --message=<本文>` で Codex 自身のキューに積みます。送り先の ID は記録から取り、同じフォルダの別の会話に回すことはしません。
+- 積めたら『キューに登録』と出ます。登録した赤ペンをいつ処理するかは Codex が決めます。失敗したら下書きが残ります。時間切れや通信の切断があった時は、登録されているか Codex 側で確かめてください。
+- 右の送信欄では、表示中の会話に追従するか、一覧からCodexの会話を送り先に固定します。下書きは会話ごとにブラウザのタブ内に残ります。
+- Codexに送れるのは文字だけです。ファイル添付、数字キー、コマンドの補完、モデルの切り替え、許可ボタンはClaude Codeの会話で使えます。
+- launchd で常駐させている時、server は `/opt/homebrew/bin/codex` を使います。別の codex を使うなら `state/env` に `RMV_CODEX_BIN=<パス>` を書きます。
+
 ## 返事に出てきたファイルの扱い
 
 画像・動画・PDF などは、ホーム配下と一時ディレクトリにあればページの中に表示します。
