@@ -805,18 +805,18 @@ cp "$HDIR/history/$HN" "$STATE/history/$HNAME"
 python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); d["name"]=sys.argv[3]; json.dump(d,open(sys.argv[2],"w"),ensure_ascii=False)' "$HDIR/history/${HN%.md}.json" "$STATE/history/${HNAME%.md}.json" "$HNAME"
 rm -f "$TMP/calls" "$TMP/argv" "$TMP/hcalls"
 check "herdr send: herdr_pane 付き entry → 200" "$(post "$GOOD" "$(body "$HNAME" '赤ペン本文')")" 200
-check "herdr send: herdr に pane 宛てで 存在確認 → 本文 → Enter" "$(tr '\n' ',' < "$TMP/hcalls")" "get w3:p2 ,send-text w3:p2 赤ペン本文,send-keys w3:p2 enter,"
+check "herdr send: herdr に pane 宛てで 存在確認 → 本文 → 入力欄を読む → Enter" "$(tr '\n' ',' < "$TMP/hcalls")" "get w3:p2 ,send-text w3:p2 赤ペン本文,read w3:p2 --source visible --format ansi,send-keys w3:p2 enter,"
 check "herdr send: orca は本文を受け取らない (Orca のタブを前に出す switch だけ)" "$(calls)$([ -e "$TMP/argv" ] && echo sent)" "terminal switch term_hd,"
 rm -f "$TMP/calls" "$TMP/hcalls"
 check "herdr send: focus=false → switch も呼ばない" "$(post "$GOOD" "{\"name\":\"$HNAME\",\"text\":\"x\",\"focus\":false}")$(calls)" "200"
 rm -f "$TMP/hcalls"
 post "$GOOD" "{\"name\":\"$HNAME\",\"text\":\"1\",\"reset\":true,\"focus\":false}" > /dev/null
-check "herdr send: reset → ctrl+u backspace を先に送る" "$(grep -v '^get ' "$TMP/hcalls" | tr '\n' ',')" "send-keys w3:p2 ctrl+u backspace,send-text w3:p2 1,send-keys w3:p2 enter,"
+check "herdr send: reset → ctrl+u backspace を先に送る" "$(grep -v '^get ' "$TMP/hcalls" | tr '\n' ',')" "send-keys w3:p2 ctrl+u backspace,send-text w3:p2 1,read w3:p2 --source visible --format ansi,send-keys w3:p2 enter,"
 # 画像: ctrl+v で貼り、pane read の [Image #N] が増えるのを待つ
 mkdir -p "$STATE/paste"; printf '\x89PNG' > "$STATE/paste/1700000000000-deadbeef.png"
 rm -f "$TMP/hcalls" "$TMP/calls"
 check "herdr send: 画像 → 200" "$(post "$GOOD" "{\"name\":\"$HNAME\",\"images\":[\"$STATE/paste/1700000000000-deadbeef.png\"],\"text\":\"画像\",\"focus\":false}")" 200
-check "herdr send: 画像は ctrl+v で貼り pane read で数える (read は貼る前と貼った後の 2 回)" "$(grep -c '^send-keys .*ctrl+v' "$TMP/hcalls") $(grep -c '^read ' "$TMP/hcalls")" "1 2"
+check "herdr send: 画像は ctrl+v で貼り pane read で数える (read は貼る前と貼った後の 2 回、本文の後に入力欄を読む 1 回)" "$(grep -c '^send-keys .*ctrl+v' "$TMP/hcalls") $(grep -c '^read ' "$TMP/hcalls")" "1 3"
 check "herdr send(画像): orca は呼ばない" "$(calls)" ""
 touch "$TMP/hnoimg"; rm -f "$TMP/hcalls"
 check "herdr send: 画像が画面に出ない → 502 で本文は送らない" "$(post "$GOOD" "{\"name\":\"$HNAME\",\"images\":[\"$STATE/paste/1700000000000-deadbeef.png\"],\"text\":\"画像\",\"focus\":false}") $(grep -c 'send-text' "$TMP/hcalls")" "502 0"
@@ -830,7 +830,7 @@ check "herdr send: pane に Claude が居ない (素のシェル) → 409、何�
 HSID="$(field "$STATE/history/${HNAME%.md}.json" session_id)"
 python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); d.update(herdr_pane="w3:p7", ts="2999-01-02T00:00:00+09:00", name="x"); json.dump(d,open(sys.argv[2],"w"))' "$STATE/history/${HNAME%.md}.json" "$STATE/history/29990102T000000000-moved.json"
 echo w3:p2 > "$TMP/hshell"; rm -f "$TMP/hcalls"
-check "herdr send: 会話が別 pane に移った → 移った先へ送る" "$(post "$GOOD" "$(body "$HNAME" x)") $(tr '\n' ',' < "$TMP/hcalls")" "200 get w3:p2 ,get w3:p7 ,send-text w3:p7 x,send-keys w3:p7 enter,"
+check "herdr send: 会話が別 pane に移った → 移った先へ送る" "$(post "$GOOD" "$(body "$HNAME" x)") $(tr '\n' ',' < "$TMP/hcalls")" "200 get w3:p2 ,get w3:p7 ,send-text w3:p7 x,read w3:p7 --source visible --format ansi,send-keys w3:p7 enter,"
 # 移った先の pane で後から別の会話が開かれた (起動の記録が別 session_id) → 送らない
 mkdir -p "$STATE/prompt"
 printf '{"prompt":"","waiting":true,"ts":"2999-01-03T00:00:00+09:00","session_id":"other","cwd":"/x","terminal":"term_hd","herdr_pane":"w3:p7"}' > "$STATE/prompt/term_hd__w3-p7.json"
@@ -1223,7 +1223,7 @@ rm -f "$TMP/hagents"
 check "herdr だけ /history: herdr の list が取れない時は live (fail open)" "$(f3 "$HON" live)" "True"
 rm -f "$TMP/calls" "$TMP/hcalls"
 check "herdr だけ send: terminal が無くても herdr_pane があれば 200" "$(p3 send "$(body "$HON" '赤ペンH')")" 200
-check "herdr だけ send: herdr に pane 宛てで 存在確認 → 本文 → Enter、Orca の switch は呼ばない" "$(tr '\n' ',' < "$TMP/hcalls")[$(calls)]" "get w7:p1 ,send-text w7:p1 赤ペンH,send-keys w7:p1 enter,[]"
+check "herdr だけ send: herdr に pane 宛てで 存在確認 → 本文 → Enter、Orca の switch は呼ばない" "$(tr '\n' ',' < "$TMP/hcalls")[$(calls)]" "get w7:p1 ,send-text w7:p1 赤ペンH,read w7:p1 --source visible --format ansi,send-keys w7:p1 enter,[]"
 check "herdr だけ send: 返事ゼロの仮 entry にも届く" "$(p3 send "$(body "$AKQ" 初回H)")" 200
 HOPID="$(field "$HO/perm/herdr__w7-p1.json" id)"
 rm -f "$TMP/hcalls"
