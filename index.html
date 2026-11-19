@@ -2322,7 +2322,8 @@ async function poll() {
     list = next;
     if (keep) {
       const j = list.findIndex((e) => e.name === keep);
-      if (j >= 0) { await showIdx(j); return; }
+      // 追従のフラグは変えない: 読んでいる途中で新着を見送っただけなので、一番上に戻れば次の新着に追従する (showIdx(j) は j > 0 だと追従を切る)
+      if (j >= 0) { const f = following, shown = showIdx(j); following = f; await shown; return; }
     }
     await showIdx(0);
   } catch (e) { console.error(e); }
