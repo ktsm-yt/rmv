@@ -20,14 +20,20 @@ const PROJECTS = process.env.RMV_PROJECTS_DIR || `${process.env.HOME}/.claude/pr
 const MONO_FONT = process.env.RMV_MONO_FONT || `${process.env.HOME}/Library/Fonts/HackGenConsole-Regular.ttf`; // スマホに配る等幅フォント (罫線図用)。テストの差し替え口
 const CC_SETTINGS = process.env.RMV_CC_SETTINGS || `${process.env.HOME}/.claude/settings.json`; // 新しいセッションの既定 model ("model" キー)。テストの差し替え口
 const PERM = `${STATE}/perm`; // hooks/perm-state.py が許可待ちの間だけ <session>.json を置く
-const PERM_TTL = 30 * 60_000; // 強制終了した端末に取り残された perm を無視する
+const PERM_TTL = 30 * 60_000; // 強制終了した端末に取り残された perm を無視する (herdr 配下は blocked の間これを過ぎても出す。readPerm)
+const PERM_ORPHAN = `${STATE}/perm-orphan.jsonl`; // 許可待ちがあるのに画面に載せる行が無かった記録 (historyItems の末尾)
+const orphanLogged = new Set<string>(); // 記録済みの perm id (/history は数秒ごとに呼ばれるので 1 件 1 回)
 // Claude Code の許可ダイアログは 1 = Yes。Enter 無しの 1 打で通り、入力欄に 1 は残らない (2.1.285 の WebFetch ダイアログで実機確認、2026-09-30)
 const APPROVE_KEY = "1";
 type Perm = { id: string; tool: string; detail: string; ts: string; terminal?: string | null; herdr_pane?: string | null; herdr_socket?: string | null; session_id?: string | null };
-// 許可待ちの記録を返す。無い・壊れている・TTL 切れは null
+// 許可待ちの記録を返す。無い・壊れている・待ちが終わっている (下) は null。
+// 記録の時刻から PERM_TTL までは従来どおり有効。herdr 配下はそれを過ぎても、その pane の Claude が blocked の間は有効にする
+// (harness-26f: foyer の長い依頼で 30 分を超えた許可待ちが rmv から消え、82 分放置された)。herdr の list が取れない時と Orca だけの端末は PERM_TTL で切る
 async function readPerm(session: string): Promise<Perm | null> {
   const p = await Bun.file(`${PERM}/${session}.json`).json().catch(() => null);
-  return p && typeof p.id === "string" && Date.now() - Date.parse(p.ts) < PERM_TTL ? p : null;
+  if (!p || typeof p.id !== "string") return null;
+  if (Date.now() - Date.parse(p.ts) < PERM_TTL) return p;
+  return herdrPaneOf(p) && (await herdrAgents(herdrSockOf(p), LIVE_TTL))?.get(p.herdr_pane)?.status === "blocked" ? p : null;
 }
 const PROMPT = `${STATE}/prompt`; // hooks/prompt-state.py が送った依頼文を <session>.json に置く。返事の保存時に stop hook が消す
 // hooks/session-wait.py は起動直後の依頼なし session を同じ場所に {prompt: "", waiting: true} で置く (依頼で上書き・返事で消える)。ファイルの掃除も同じ長さ (片方だけ直さない)
@@ -171,7 +177,9 @@ async function historyItems() {
   for (const n of (await readdir(PROMPT).catch(() => [] as string[])).filter((n) => n.endsWith(".json"))) {
     const session = n.slice(0, -5);
     if (asking.has(session)) continue;
-    const a = await readAsking(session, 0);
+    // 依頼が期限 (PERM_TTL) を過ぎても、許可待ちが残っていれば行を作る。載せる行が無いと許可待ちが rmv に出ない
+    // (2026-10-25 harness-26f: 返事 0 件のまま依頼の 47 分後に出た foyer の w3:p1F の許可待ちが出なかった)
+    const a = (await readAsking(session, 0)) ?? (perms.has(session) ? await Bun.file(`${PROMPT}/${n}`).json().then((q) => typeof q?.prompt === "string" && typeof q?.ts === "string" ? { prompt: q.prompt, ts: q.ts } : null).catch(() => null) : null);
     const p = a && (await Bun.file(`${PROMPT}/${n}`).json().catch(() => null));
     const cwd = String(p?.cwd ?? "");
     if (!a || !cwd || !/^[\w-]+$/.test(session)) continue; // 古い hook が書いた cwd 無しの分は出せない (repo 列に置けない)
@@ -215,6 +223,14 @@ async function historyItems() {
     if (!to || to === e.session) continue;
     const perm = perms.get(to);
     Object.assign(e, { session: to, live: true, perm: perm ? { id: perm.id, tool: perm.tool, detail: perm.detail, ts: perm.ts } : null });
+  }
+  // 有効な許可待ちがあるのに載せる稼働中の行が無い (= 画面に出ない) 時は、許可待ち 1 件につき 1 回だけ state/perm-orphan.jsonl に残す。
+  // 次に出なかった時の原因を拾うため (harness-26f は原因の瞬間の記録が無く、合成の再現でしか確かめられなかった)
+  for (const [s, p] of perms) {
+    if (orphanLogged.has(p.id) || items.some((e) => e.session === s && e.live && e.perm)) continue;
+    orphanLogged.add(p.id);
+    const rows = items.filter((e) => e.session === s);
+    await appendFile(PERM_ORPHAN, JSON.stringify({ ts: new Date().toISOString(), session: s, perm_id: p.id, perm_ts: p.ts, tool: p.tool, herdr_pane: p.herdr_pane ?? null, rows: rows.length, live_rows: rows.filter((e) => e.live).length, prompt: existsSync(`${PROMPT}/${s}.json`) }) + "\n").catch(() => {});
   }
   return { items, curSid, replySid, asking, askSid, live: terms || agents || named ? "ok" : "unknown" };
 }
