@@ -6,7 +6,11 @@ export function draftOnScreen(lines: string[]): boolean | null {
   const rules = lines.flatMap((l, i) => (/^\s*─{3}/.test(l) ? [i] : []));
   if (rules.length < 2) return null;
   const box = lines.slice(rules[rules.length - 2] + 1, rules[rules.length - 1]);
-  if (!box.length || !/^\s*[❯>]/.test(box[0])) return null;
+  // 長い書きかけは上が切れて ❯ の行が見えず、上の罫線が `─── ↑ 1 more ───` になる。その時は ❯ が無くても入力欄として読む。
+  // `↑ 1 more` は薄字なので、herdr の色付きの画面を dropDim に通すと `───  ───` (罫線の途中に空白 2 つ) だけが残る
+  // ponytail: herdr の経路では上の罫線の薄字の見出しは何でも空白になり `↑ N more` と区別できない。別の薄字の見出しが出る画面が見つかったら、罫線の行だけ dropDim の前の文字で読む
+  const cut = /^\s*─{3} (?:↑ \d+ more)? ─/.test(lines[rules[rules.length - 2]]);
+  if (!box.length || (!cut && !/^\s*[❯>]/.test(box[0]))) return null;
   return box.join("").replace(/^\s*[❯>]/, "").replace(/[\s ]/g, "") !== "";
 }
 // 色付きの 1 行 (herdr pane read --format ansi) から薄字 (SGR 2) の文字と制御列を落とす。38;2;r;g;b などの色指定の中の 2 は薄字と数えない

@@ -22,6 +22,19 @@ test("draftOnScreen: 最後の 2 本の罫線の間だけを見る", () => {
   expect(draftOnScreen(["─────", "❯ 前の書きかけ", "─────", "out", ...box(["❯ "])])).toBe(false);
 });
 
+test("draftOnScreen: 長い書きかけで上が切れ、上の罫線に『↑ N more』が出た欄も入力欄として読む", () => {
+  // 2026-11-20 実機の 20 行・約 1100 字の本文: ❯ の行が上に流れて見えず、欄の先頭は 2 行目から始まる
+  const more = (inner: string[]) => ["out", "─── ↑ 1 more ─────", ...inner, "─────", "  status"];
+  expect(draftOnScreen(more(["  2行目: 試験 8 回目。返事は『了解』だけ。", "  20行目: 試験 8 回目。", "  "]))).toBe(true);
+  expect(draftOnScreen(more(["  ", "　"]))).toBe(false);
+  // herdr の色付きの画面: `↑ 1 more` は薄字で、dropDim を通すと罫線の途中の空白になる
+  const grey = (s: string) => `\x1b[38;2;136;136;136m${s}\x1b[0m`;
+  const herdr = ["out", `${grey("───")} \x1b[2m↑ 1 more\x1b[0m ${grey("─────")}`, "  2行目: 試験 8 回目。", "  ", grey("─────"), "  status"];
+  expect(draftOnScreen(herdr.map(dropDim))).toBe(true);
+  // ❯ の無い欄を読むのは `↑ N more` の罫線の時だけ。見出しの付いた罫線 (履歴の呼び出し) は今までどおり ❯ を要る
+  expect(draftOnScreen(["out", "─── History 3/9 ───", "  2 行目", "─────", "  status"])).toBeNull();
+});
+
 test("dropDim: 薄字 (SGR 2) と制御列を落とし、色指定の中の 2 は薄字と数えない", () => {
   expect(dropDim("❯ \x1b[2mTry \"fix\"\x1b[22m")).toBe("❯ ");
   expect(dropDim("\x1b[38;2;2;2;2m直して\x1b[0m")).toBe("直して");
