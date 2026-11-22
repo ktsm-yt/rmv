@@ -281,6 +281,9 @@
   .mmzoom { position: absolute; top: 4px; right: 4px; font: inherit; font-size: 14px; line-height: 1; padding: 4px 6px; color: var(--muted); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; cursor: zoom-in; opacity: .7; }
   .mmzoom:hover { opacity: 1; color: var(--fg); }
   .cp { position: relative; } .cp .cpbtn { cursor: pointer; top: 18px; }
+  .reply-session { margin-top: 20px; border-top: 1px dashed var(--line); }
+  .reply-session button { padding: 8px 0; border: 0; background: none; color: var(--muted); font: 12px monospace; cursor: pointer; }
+  .reply-session button:hover { color: var(--fg); }
   #mmzoom { position: fixed; inset: 0; z-index: 50; background: var(--bg); cursor: grab; touch-action: none; }
   #mmzoom[hidden] { display: none; }
   #mmzoom.drag { cursor: grabbing; }
@@ -856,11 +859,29 @@ function renderLowLoad(md) {
   return body + (foot.length ? `<div class="foot">${foot.join("")}</div>` : "");
 }
 
+const shellArg = (arg) => /^[\w./-]+$/.test(arg) ? arg : "'" + arg.replaceAll("'", "'\\''") + "'";
+
 async function show(md, entry) {
   const el = document.getElementById("reply");
   stopSpeak(); // 返事が替わったら読み上げは止める
   mediaV = Date.now();
   el.innerHTML = md ? renderLowLoad(md) : "";
+  if (entry?.sid && entry.cwd && !entry.codex) {
+    const { sid, cwd } = entry;
+    const footer = document.createElement("footer");
+    const button = document.createElement("button");
+    const label = "⧉ セッション " + sid.slice(0, 8);
+    footer.className = "reply-session";
+    button.type = "button";
+    button.title = "再開コマンドをコピー";
+    button.textContent = label;
+    button.onclick = (ev) => {
+      ev.stopPropagation();
+      copyWithFeedback(button, `cd ${shellArg(cwd)} && claude --resume ${shellArg(sid)}`, label, "✓ コピーしました", "× コピーできませんでした");
+    };
+    footer.append(button);
+    el.append(footer);
+  }
   const ask = document.getElementById("ask"), q = entry?.prompt ?? "";
   ask.hidden = !q; ask.open = false;
   ask.firstChild.textContent = "依頼: " + q.replace(/\s+/g, " ");
@@ -1558,11 +1579,38 @@ function message(d) {
   return [head, d.choices.size > 0 && `採用: ${pickText(d.choices, pickMulti())}`, ...pins, d.free.trim()].filter(Boolean).join("\n");
 }
 
+async function copyWithFeedback(button, text, label = "⧉", done = "✓", failed = "×") {
+  let feedback = done;
+  try {
+    if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text);
+    else {
+      // HTTP では Clipboard API が無いので、クリック中にブラウザのコピーを実行する。
+      const active = document.activeElement;
+      const field = document.createElement("textarea");
+      field.value = text;
+      field.readOnly = true;
+      field.style.cssText = "position:fixed;top:0;left:0;opacity:0";
+      document.body.append(field);
+      try {
+        field.select();
+        if (!document.execCommand("copy")) feedback = failed;
+      } finally {
+        field.remove();
+        active?.focus({ preventScroll: true });
+      }
+    }
+  } catch {
+    feedback = failed;
+  }
+  button.textContent = feedback;
+  setTimeout(() => (button.textContent = label), 1200);
+}
+
 document.getElementById("reply").addEventListener("click", (ev) => {
   const im = ev.target.closest(".media img");
   if (im) { zoomSet = [...document.querySelectorAll("#reply .media img")]; return zoomGallery(zoomSet.indexOf(im)); } // 画像は mermaid と同じ全画面 (ホイール拡大・ドラッグ・Esc・← →)
   const cb = ev.target.closest(".cpbtn");
-  if (cb) { navigator.clipboard.writeText(cb.previousElementSibling.textContent.replace(/\n$/, "")); cb.textContent = "✓"; setTimeout(() => (cb.textContent = "⧉"), 1200); return; }
+  if (cb) return copyWithFeedback(cb, cb.previousElementSibling.textContent.replace(/\n$/, ""));
   // パスのリンク: 普通のクリックで既定アプリ (open 型) / ⌥クリックで Finder に表示 (open 型も /file 型も)。⌥クリックの既定動作 (Chromium はリンク先をダウンロードする) は止める
   const pa = ev.target.closest("a");
   const pp = pa?.dataset.open ?? (ev.altKey && pa?.getAttribute("href")?.startsWith("/file?p=") ? new URL(pa.href).searchParams.get("p") : null);
