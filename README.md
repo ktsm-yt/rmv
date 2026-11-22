@@ -87,7 +87,7 @@ rmv は、同梱の出力スタイル [Low-Load](output-styles/low-load.md) の�
 | `検証:` `DECIDE:` の行 | 下端の小さな注記 |
 | 画像・動画の絶対パス | その場に表示 |
 
-![Low-Load の返事を描いたところ。段の丸番号と、案の表]](docs/reply.png)
+![Low-Load の返事を描いたところ。段の丸番号と、案の表](docs/reply.png)
 
 シーケンス図も、ターミナルでは出ない図としてそのまま描けます。
 
