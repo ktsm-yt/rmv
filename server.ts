@@ -1156,6 +1156,13 @@ async function send(req: Request, opt: { exact?: boolean; check?: (t: SendTarget
     opt.extendCodexTimeout?.();
     return codexQueue(name, sid, text, images, reset, backend);
   }
+  if (meta.orca_bot && !name.startsWith("asking-")) {
+    if (opt.exact || opt.check) return new Response("Bot の会話へは外部配送・モデル切り替えを使えません", { status: 409 });
+    if (!(await Bun.file(`${HIST}/${name}`).exists())) return new Response("not found", { status: 404 });
+    if (req.signal.aborted) return new Response("送信は中断されました", { status: 499 });
+    opt.extendCodexTimeout?.();
+    return botSend(name, meta.orca_bot, text, images);
+  }
   let pane = herdrPaneOf(meta);
   let sock = herdrSockOf(meta);
   if (!pane && (typeof meta.terminal !== "string" || !meta.terminal)) return new Response("entry has no terminal", { status: 409 });
@@ -1231,6 +1238,40 @@ async function codexQueue(name: string, sid: string, text: string, images: unkno
     } finally { clearTimeout(timer); }
   } catch (e) {
     return new Response(`codex spawn failed: ${e}`, { status: 502 });
+  }
+}
+
+function isBotUuid(value: unknown): value is string {
+  return typeof value === "string" && value.length === 36 && EXT_SID.test(value.toLowerCase());
+}
+
+async function botSend(name: string, target: { id?: unknown; chat?: unknown }, text: string, images: unknown[]): Promise<Response> {
+  const { id, chat } = target;
+  if (!isBotUuid(id) || !isBotUuid(chat)) return new Response("Bot の記録の宛先 ID が UUID ではありません", { status: 409 });
+  if (text.includes("\0")) return new Response("Bot へ送る文に NUL は使えません", { status: 400 });
+  const lines = text.split(/\r\n|\r|\n/);
+  const subject = Array.from(lines.find((line) => line.trim()) ?? "画像").slice(0, 80).join("");
+  const fullBody = images.length || lines.length > 1 || subject !== text;
+  const body = images.length ? [...(text.trim() ? [text] : []), ...images].join("\n") : text;
+  const args = [ORCA, "orchestration", "send", "--to", `bot:${id}`, "--chat", chat, "--type", "handoff", `--subject=${subject}`];
+  if (fullBody) args.push("--body-file", "-");
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const p = Bun.spawn(args, { stdin: fullBody ? Buffer.from(body) : "ignore", stdout: "pipe", stderr: "pipe" });
+    const log = appendFile(`${STATE}/send.jsonl`, JSON.stringify({ ts: new Date().toISOString(), name, bot: id, chat }) + "\n").catch(() => {});
+    const result = await Promise.race([
+      Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]),
+      new Promise<null>((resolve) => { timer = setTimeout(() => { p.kill(); resolve(null); }, CODEX_QUEUE_TIMEOUT); }),
+    ]);
+    await log;
+    if (!result || p.signalCode) return new Response("Bot に届いたか不明です。Orca のその Bot の会話を確認してから送り直してください", { status: 504 });
+    const [out, err, code] = result;
+    if (code !== 0) return new Response(`orca orchestration send exit ${code}: ${(err.trim() || out.trim()).slice(0, 500)}`, { status: 502 });
+    return Response.json({ ok: true, via: "orca-bot" }, { headers: { "cache-control": "no-store" } });
+  } catch (e) {
+    return new Response(`orca spawn failed: ${e}`, { status: 502 });
+  } finally {
+    clearTimeout(timer);
   }
 }
 
