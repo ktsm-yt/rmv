@@ -739,17 +739,21 @@ const IS_ROOT = /^\/(Users|private|tmp|var)\//;
 const MEDIA = [["img", /\.(png|jpe?g|gif|webp|svg)$/i], ["video", /\.(mp4|mov|webm)$/i], ["audio", /\.(m4a|mp3|wav)$/i]];
 // 生の絶対パス: 直前が語・"/"・`](`・< " ' = (markdown リンク/画像や HTML 属性の中) なら置換しない。末尾の "." は句点として外す
 const RAWPATH = new RegExp(`(?<![\\w/<"'=]|\\]\\()/(?:Users|private|tmp|var)/[^\\s)\\]"'<>]*\\.[A-Za-z0-9]{1,12}(?![\\w/-]|\\.\\w)`, "gi");
+const WHOLE_PATH = /^\/(?:Users|private|tmp|var)\/[^)\]"'<>`]*\.[A-Za-z0-9]{1,12}$/i;
 const fileURL = (p) => `/file?p=${encodeURIComponent(p)}`;
 // open 型 (/file 型以外) は navigable な URL にしない (renderer が <a href="#" data-open> にする)
 const pathHref = (p) => !FILE_RE.test(p) ? `#open:${encodeURIComponent(p)}` : fileURL(p);
 const mdText = (s) => s.replace(/[[\]\\*_]/g, "\\$&");
 // 1 行の生パスを [basename](/file?p=…) に置き換え、画像・動画・音声のパスを media に集める。code span の中は触らない
-function linkPaths(t) {
+function linkPaths(t, wholeLine = false) {
   const media = [];
-  const md = t.split(/(`[^`]*`)/).map((s, i) => i % 2 ? s : s.replace(RAWPATH, (p) => {
+  const link = (p) => {
     if (MEDIA.some(([, re]) => re.test(p))) media.push(p);
     return `[${mdText(p.split("/").pop())}](${pathHref(p)})`;
-  })).join("");
+  };
+  const md = t.split(/(`[^`]*`)/).map((s, i) => i % 2 ? s : s.replace(RAWPATH, link)).join("");
+  // 既存のリンクを優先し、相対ファイル名で終わる地の文を巻き込まない
+  if (wholeLine && md === t && WHOLE_PATH.test(t)) return { md: link(t), media };
   return { md, media };
 }
 let mediaV = 0;
@@ -821,7 +825,7 @@ function renderLowLoad(md) {
       push(`<div class="tbl">${marked.parse(chunk.join("\n")).replace(/[■□]{2,}/g, (b) => `<span class="bar5">${b}</span>`)}</div>`);
       continue;
     }
-    const { md: lt, media } = linkPaths(t);
+    const { md: lt, media } = linkPaths(t, true);
     if (/^(検証|DECIDE)\s*[:：]/.test(t)) { foot.push(`<div>${marked.parseInline(lt)}</div>`); continue; }
     if (!t) { if (cur && cur.html.length) cur.html.push('<div class="gap"></div>'); continue; }
     // 行頭 "A:" / "A：" (英大文字 1 字 + コロン) の段も番号段落と同じく独立したピン対象にする (表の下の 案 A〜D の理由段が直前の "3." に吸収されていた)
