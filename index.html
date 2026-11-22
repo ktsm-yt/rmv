@@ -312,9 +312,6 @@
   .para.pinned { box-shadow: inset 3px 0 var(--red); }
   tr.pinned > td:first-child { box-shadow: inset 3px 0 0 var(--red); }
   [data-badge]::before { content: attr(data-badge); display: inline-block; margin-right: .5em; padding: 0 .5em; border-radius: 999px; background: var(--red); color: #fff; font-size: 11px; font-weight: 700; line-height: 1.6; vertical-align: middle; }
-  tr.chosen { background: color-mix(in srgb, var(--red) 8%, transparent); }
-  .pick { margin-left: 8px; font: inherit; font-size: 11px; padding: 0 6px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--fg); cursor: pointer; }
-  .pick.on { background: var(--red); border-color: var(--red); color: #fff; }
   #tray { position: sticky; bottom: 0; max-width: var(--measure); margin-top: 16px; display: grid; gap: 8px; font-size: 13px; background: var(--panel); border: 1px solid var(--line); border-top: 3px solid var(--red); border-radius: 10px; padding: 10px 14px; box-shadow: 0 -6px 18px rgb(0 0 0 / .12); }
   #tray[hidden] { display: none; }
   .pin { display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(0, 1.2fr) auto; gap: 8px; align-items: center; }
@@ -409,12 +406,12 @@
   html.mob:not(.split) #cbar > .cpick[data-cmd=model] { order: -3; }
   html.mob:not(.split) #cbar > .cpick[data-cmd=effort] { order: -2; }
   html.mob:not(.split) :is(#cbar > #csend, #dock > #ptoggle) { flex: none; width: 56px; padding: 0; }
-  /* 案表 (『これにする』が付く表) は行ごとのカード。8 列の表は幅 659px で、推奨 (Tier) と理由が横スクロールの先にあった。
-     DOM は表のまま (ピン・採用の処理を変えない)。役割の class と data-th は decorate の cardify が付ける。他の表は横スクロールのまま */
+  /* 案表 (1 列目が A〜E の表) は行ごとのカード。8 列の表は幅 659px で、推奨 (Tier) と理由が横スクロールの先にあった。
+     DOM は表のまま (ピンの処理を変えない)。役割の class と data-th は decorate の cardify が付ける。他の表は横スクロールのまま */
   html.mob #reply table.cards, html.mob #reply table.cards tbody { display: block; }
   html.mob #reply table.cards thead { display: none; }
   html.mob #reply table.cards tr { display: flex; flex-wrap: wrap; align-items: center; gap: 3px 8px; margin: 8px 0; padding: 10px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
-  html.mob #reply table.cards tr::before, html.mob #reply table.cards tr::after { content: ""; flex-basis: 100%; } /* 行の切れ目: 1 行目 (記号・題・印) | 2 行目 (見出しつきの値) | 3 行目 (理由と『これにする』) */
+  html.mob #reply table.cards tr::before, html.mob #reply table.cards tr::after { content: ""; flex-basis: 100%; } /* 行の切れ目: 1 行目 (記号・題・印) | 2 行目 (見出しつきの値) | 3 行目 (理由) */
   html.mob #reply table.cards tr::before { order: 2; }
   html.mob #reply table.cards tr::after { order: 4; }
   html.mob #reply table.cards td { display: block; min-width: 0; border: 0; padding: 0; white-space: normal; box-shadow: none; }
@@ -425,10 +422,6 @@
   html.mob #reply table.cards td.cm { order: 3; font-size: 12px; color: var(--muted); white-space: nowrap; }
   html.mob #reply table.cards td.cm::before { content: attr(data-th) " "; }
   html.mob #reply table.cards td.cr { order: 5; flex: 1 1 100%; font-size: 13px; }
-  html.mob #reply table.cards td:has(> .pick) { display: flex; align-items: center; gap: 8px; }
-  html.mob #reply table.cards .pick { flex: none; margin-left: auto; padding: 0 16px; font-size: 14px; border-radius: 8px; background: var(--bg); }
-  html.mob #reply table.cards .pick.on { background: var(--red); }
-  html.mob #reply table.cards tr.chosen { background: color-mix(in srgb, var(--red) 8%, var(--panel)); }
   html.mob #reply table.cards tr.pinned { border-color: var(--red); box-shadow: inset 3px 0 0 var(--red); }
   html.mob #reply table.cards tr.pinned > td.ck { background: var(--red); color: #fff; }
   /* 罫線図・コード: 幅を超えたら fitPre が --pf で字を小さくする */
@@ -1350,17 +1343,11 @@ const canSendNotes = () => {
   if (cur.codexPane || cur.name !== shownName || cur.name !== list[idx]?.name || cur.livePane !== list[idx]?.livePane) return false;
   return !cur.livePane || all.some((e) => e.codexPane && e.name === cur.livePane && e.sid === cur.sid);
 };
-const draftOf = (n) => { if (!drafts.has(n)) drafts.set(n, { pins: new Map(), choices: new Map(), free: "", imgs: [] }); return drafts.get(n); };
-const hasDraft = (n) => { const d = drafts.get(n ?? ""); return !!d && (d.pins.size > 0 || d.choices.size > 0 || !!d.free.trim() || d.imgs.length > 0); };
-// 案表 (Low-Load、1 列目が A〜E) の採用は表ごとに 1 案。choices = 表の通し番号 → { label, letter }。
-// label = 表がある番号段落の番号 (3)、取れない表は出現順 (表2)。同じ label が重なったら後の方を出現順に。表が複数ある返事だけ `3-A` と書く (1 つなら従来どおり `A`)
-const tableLabels = (anchors) => anchors.map((a, i) => (a && anchors.indexOf(a) === i ? a : `表${i + 1}`));
-const pickText = (choices, multi) => [...choices].sort((x, y) => x[0] - y[0]).map(([, c]) => (multi ? `${c.label}-${c.letter}` : c.letter)).join("、");
-const pickMulti = () => document.querySelectorAll("#reply table[data-ptbl]").length > 1;
+const draftOf = (n) => { if (!drafts.has(n)) drafts.set(n, { pins: new Map(), free: "", imgs: [] }); return drafts.get(n); };
+const hasDraft = (n) => { const d = drafts.get(n ?? ""); return !!d && (d.pins.size > 0 || !!d.free.trim() || d.imgs.length > 0); };
 const cut = (s, n) => { const t = s.replace(/\s+/g, " ").trim(); return t.length > n ? t.slice(0, n) + "…" : t; };
 const textOf = (el) => {
   const c = el.cloneNode(true);
-  c.querySelectorAll(".pick").forEach((b) => b.remove());
   if (c.classList.contains("para")) return [...c.children].map((line) => line.textContent).join(" ");
   return el.tagName === "TR" ? [...c.cells].map((td) => td.textContent.trim()).join(" | ") : (c.querySelector(".body") ?? c).textContent;
 };
@@ -1377,8 +1364,6 @@ function cardify(t) {
   t.classList.add("cards");
   rows.forEach((r) => {
     [...r.cells].forEach((c, j) => { c.className = j === 0 ? "ck" : j === 1 ? "ct" : j === badge ? "cb" : j === reason ? "cr" : "cm"; c.dataset.th = heads[j] ?? ""; });
-    const pick = r.querySelector(".pick");
-    if (pick) r.cells[Math.max(reason, Math.min(1, r.cells.length - 1))].append(pick); // 『これにする』は理由の右 (理由の列が無ければ題の右)
   });
 }
 // スマホ: 幅を超える罫線図・コードは、収まるまで字を小さくする (下限 9px)。下限でも収まらない物は元の大きさで横スクロールのまま (長い 1 行のコードを 9px にしても読めない)
@@ -1431,12 +1416,10 @@ function decorate(el, paras) {
   });
   const isPickRow = (tr) => /^[A-E]$/.test(tr.cells[0]?.textContent.trim() ?? "");
   const pickTbls = [...el.querySelectorAll("table")].filter((t) => [...t.querySelectorAll("tbody tr")].some(isPickRow)); // Low-Load の案表
-  const labels = tableLabels(pickTbls.map((t) => t.closest(".blk")?.dataset.anchor));
-  pickTbls.forEach((t, i) => { t.dataset.ptbl = String(i); t.dataset.plabel = labels[i]; });
+  pickTbls.forEach((t, i) => { t.dataset.ptbl = String(i); });
   el.querySelectorAll("table tbody tr").forEach((tr) => {
     const first = tr.cells[0]?.textContent.trim() ?? "";
     tr.dataset.anchor = `表 ${cut(first, 12)}`;
-    if (isPickRow(tr)) tr.cells[0].insertAdjacentHTML("beforeend", `<button class="pick" data-pick="${first}">これにする</button>`);
   });
   if (isMobileUA) pickTbls.forEach(cardify);
   el.querySelectorAll("[data-anchor]").forEach((x, i) => { x.dataset.pin = String(i); x.classList.add("pinable"); });
@@ -1472,12 +1455,6 @@ function applyMarks() {
     const host = x.tagName === "TR" ? x.cells[0] : x.classList.contains("para") ? x.firstElementChild : x; // 段落の札は 1 行目の頭に (段落の上に札だけの行を足すと本文が下にずれる)
     if (on) host.dataset.badge = x.dataset.anchor; else delete host.dataset.badge;
   });
-  document.querySelectorAll("#reply .pick").forEach((b) => {
-    const on = d?.choices.get(+b.closest("table").dataset.ptbl)?.letter === b.dataset.pick;
-    b.classList.toggle("on", on);
-    b.textContent = on ? "採用" : "これにする";
-    b.closest("tr").classList.toggle("chosen", on);
-  });
 }
 
 function stackNotes(items, gap) {
@@ -1493,16 +1470,16 @@ const pinNodes = new WeakMap();
 let marginFrame = 0, composingPin = false;
 const margin = document.getElementById("margin"), pinsEl = document.getElementById("pins"), mainEl = document.querySelector("main");
 const marginResize = new ResizeObserver(() => scheduleMargin());
-const pinNode = (p, k, choice) => {
+const pinNode = (p, k) => {
   let node = pinNodes.get(p);
   if (node) return node;
   node = document.createElement("div"); node.className = "pin";
-  if (!choice) node.dataset.k = k;
-  const b = document.createElement("b"), q = document.createElement("span"), field = choice ? document.createElement("span") : document.createElement("textarea"), x = document.createElement("button");
-  b.textContent = choice ? "採用" : p.anchor; b.title = b.textContent;
-  q.className = "q"; q.textContent = choice ? pickText([[+k, p]], pickMulti()) : `「${p.quote}」`;
-  if (!choice) { field.rows = 1; field.placeholder = "ひとこと"; field.value = p.comment; }
-  x.dataset.x = choice ? `pick:${k}` : k; x.title = "外す"; x.textContent = "×";
+  node.dataset.k = k;
+  const b = document.createElement("b"), q = document.createElement("span"), field = document.createElement("textarea"), x = document.createElement("button");
+  b.textContent = p.anchor; b.title = b.textContent;
+  q.className = "q"; q.textContent = `「${p.quote}」`;
+  field.rows = 1; field.placeholder = "ひとこと"; field.value = p.comment;
+  x.dataset.x = k; x.title = "外す"; x.textContent = "×";
   node.append(b, q, field, x); pinNodes.set(p, node);
   return node;
 };
@@ -1513,9 +1490,7 @@ const movePin = (node, parent, before) => {
   parent.insertBefore(node, before ?? null);
   if (active) { active.focus({ preventScroll: true }); active.setSelectionRange(start, end, direction); }
 };
-const marginAnchor = (entry) => entry.choice
-  ? document.querySelector(`#reply table[data-ptbl="${entry.k}"] tr.chosen`)
-  : document.querySelector(`#reply [data-pin="${CSS.escape(entry.k)}"]`);
+const marginAnchor = (entry) => document.querySelector(`#reply [data-pin="${CSS.escape(entry.k)}"]`);
 const scheduleMargin = () => { if (!marginFrame) marginFrame = requestAnimationFrame(() => { marginFrame = 0; layoutMargin(); }); };
 function layoutMargin() {
   if (composingPin) return;
@@ -1524,10 +1499,10 @@ function layoutMargin() {
   // 測る値 (getBoundingClientRect) は html の zoom を掛けた見た目の px、書く style.top / height と scrollTop は掛ける前の px。z で割って揃える (2026-11-15 user「X軸がずれる」: zoom 0.9 でカードが行より上、1.2 で下に出ていた)
   const z = parseFloat(document.documentElement.style.zoom) || 1, h = (node) => node.getBoundingClientRect().height / z;
   const available = desktop && margin.getBoundingClientRect().width / z >= 160;
-  const entries = d ? [...d.choices].sort((a, b) => a[0] - b[0]).map(([k, p]) => ({ k: String(k), p, choice: true })).concat([...d.pins].map(([k, p]) => ({ k, p, choice: false }))) : [];
+  const entries = d ? [...d.pins].map(([k, p]) => ({ k, p })) : [];
   const mainRect = mainEl.getBoundingClientRect(), placed = [], fallback = [];
   entries.forEach((entry) => {
-    entry.node = pinNode(entry.p, entry.k, entry.choice);
+    entry.node = pinNode(entry.p, entry.k);
     const anchor = available && marginAnchor(entry);
     if (anchor && anchor.getBoundingClientRect().height > 0) {
       entry.anchor = anchor; entry.top = (anchor.getBoundingClientRect().top - mainRect.top) / z + mainEl.scrollTop;
@@ -1537,14 +1512,10 @@ function layoutMargin() {
   const live = new Set(entries.map((entry) => entry.node));
   [...margin.children, ...pinsEl.children].forEach((node) => { if (!live.has(node)) { marginResize.unobserve(node); node.remove(); } });
   document.body.classList.toggle("rp-margin", !!entries.length && !fallback.length);
-  // ponytail: 既存カードを並べ替えず、新規カードだけ文書順の位置へ差し込む。採用行は表番号順を保つ。
+  // ponytail: 既存カードを並べ替えず、新規カードだけ文書順の位置へ差し込む。
   placed.sort((a, b) => a.anchor === b.anchor ? 0 : (a.anchor.compareDocumentPosition(b.anchor) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1)).forEach((entry) => { movePin(entry.node, margin, [...margin.children].find((n) => (+n.style.top || 0) > entry.top)); marginResize.observe(entry.node); });
   fallback.forEach((entry) => {
-    const before = entry.choice ? [...pinsEl.children].find((node) => {
-      const x = node.querySelector("[data-x]")?.dataset.x;
-      return node.matches("[data-k]") || (x?.startsWith("pick:") && +x.slice(5) > +entry.k);
-    }) : null;
-    movePin(entry.node, pinsEl, before); marginResize.observe(entry.node);
+    movePin(entry.node, pinsEl); marginResize.observe(entry.node);
   });
   const tops = stackNotes(placed.map((entry) => ({ top: entry.top, h: h(entry.node) })), 4);
   tops.forEach((top, i) => { const v = `${top}px`; if (placed[i].node.style.top !== v) placed[i].node.style.top = v; });
@@ -1557,11 +1528,11 @@ let penFold = false; // スマホ: 赤ペン欄を畳んでいる
 function renderTray() {
   const d = drafts.get(curName());
   const tray = document.getElementById("tray");
-  tray.hidden = !d || (!d.pins.size && !d.choices.size);
+  tray.hidden = !d || !d.pins.size;
   if (isMobileUA) { // 畳んでいる間 (penFold) は帯に『赤ペン N』を出す。赤ペンが空になったら畳みも解く
     if (tray.hidden) penFold = false;
     document.body.classList.toggle("pen", !tray.hidden && !penFold);
-    const dpen = document.getElementById("dpen"); dpen.hidden = !penFold; dpen.querySelector("b").textContent = d ? d.pins.size + d.choices.size : "";
+    const dpen = document.getElementById("dpen"); dpen.hidden = !penFold; dpen.querySelector("b").textContent = d ? d.pins.size : "";
     placeNav();
   } // スマホ: 赤ペン中は下の欄を赤ペン欄に入れ替える (送信欄と 2 段に積まない)
   scheduleMargin();
@@ -1579,7 +1550,7 @@ const refresh = () => { applyMarks(); renderTray(); };
 function message(d) {
   const head = cur?.ts ? `【赤ペン】(${hhmm(new Date(cur.ts))} の返事へ)` : "【赤ペン】";
   const pins = [...d.pins.values()].map((p) => `${p.anchor}「${p.quote}」${p.comment.trim() ? `→ ${p.comment.trim()}` : ""}`);
-  return [head, d.choices.size > 0 && `採用: ${pickText(d.choices, pickMulti())}`, ...pins, d.free.trim()].filter(Boolean).join("\n");
+  return [head, ...pins, d.free.trim()].filter(Boolean).join("\n");
 }
 
 async function copyWithFeedback(button, text, label = "⧉", done = "✓", failed = "×") {
@@ -1625,13 +1596,6 @@ document.getElementById("reply").addEventListener("click", (ev) => {
   }
   if (ev.target.closest("a, input, textarea, iframe, .media")) return; // 画像・動画・音声の操作でピンを付けない
   const d = draftOf(curName());
-  const pick = ev.target.closest(".pick");
-  if (pick) {
-    const t = +pick.closest("table").dataset.ptbl;
-    if (d.choices.get(t)?.letter === pick.dataset.pick) d.choices.delete(t);
-    else { d.choices.set(t, { label: pick.closest("table").dataset.plabel, letter: pick.dataset.pick }); penFold = false; }
-    return refresh();
-  }
   const mm = ev.target.closest("pre.mermaid");
   if (mm?.querySelector("svg") && (ev.target.closest(".mmzoom") || !ev.target.closest("svg [data-pin]"))) return openZoom(mm.querySelector("svg")); // 図の空き地 / ⤢
   if (String(getSelection())) return; // 文字を選択している最中はピンにしない
@@ -1642,7 +1606,7 @@ document.getElementById("reply").addEventListener("click", (ev) => {
   else { d.pins.set(k, { anchor: t.dataset.anchor, quote: cut(textOf(t), 30), comment: "" }); penFold = false; } // 新しく付けたら畳んだ欄も開く
   refresh();
   const p = d.pins.get(k);
-  if (p) requestAnimationFrame(() => { if (drafts.get(curName())?.pins.get(k) === p) pinNode(p, k, false).querySelector("textarea")?.focus(); });
+  if (p) requestAnimationFrame(() => { if (drafts.get(curName())?.pins.get(k) === p) pinNode(p, k).querySelector("textarea")?.focus(); });
 });
 const pinInput = (ev) => {
   const k = ev.target.closest("[data-k]")?.dataset.k;
@@ -1662,7 +1626,7 @@ const pinClick = (ev) => {
   const x = ev.target.closest("[data-x]");
   if (!x) return;
   const d = draftOf(curName());
-  if (x.dataset.x.startsWith("pick:")) d.choices.delete(+x.dataset.x.slice(5)); else d.pins.delete(x.dataset.x);
+  d.pins.delete(x.dataset.x);
   refresh();
 };
 [pinsEl, margin].forEach((el) => {
@@ -1698,7 +1662,7 @@ document.getElementById("copy").onclick = async () => {
   try { await navigator.clipboard.writeText(message(draftOf(curName()))); say.textContent = "コピーしました"; }
   catch (e) { say.textContent = `コピーできませんでした: ${e.message ?? e}`; }
 };
-const noteDraftState = (d) => JSON.stringify([[...d.pins], [...d.choices], d.free, d.imgs]);
+const noteDraftState = (d) => JSON.stringify([[...d.pins], d.free, d.imgs]);
 document.getElementById("send").onclick = async () => {
   const say = document.getElementById("akmsg");
   const n = curName(), codex = cur?.codex, d = drafts.get(n);

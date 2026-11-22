@@ -185,7 +185,7 @@ with sync_playwright() as p:
         g = pg.evaluate("""() => { const t = document.querySelector('#reply table[data-ptbl]'), box = t.closest('.tbl'), rows = [...t.tBodies[0].rows];
           const tier = rows[0].cells[6].getBoundingClientRect(), bx = box.getBoundingClientRect();
           return { over: box.scrollWidth - box.clientWidth, right: Math.max(...rows.map((r) => r.getBoundingClientRect().right)) - bx.right, tier: tier.width > 0 && tier.left >= 0 && tier.right <= innerWidth && tier.top >= 0 && tier.bottom <= innerHeight, pick: [...t.querySelectorAll('.pick')].length }; }""")
-        check(f"{w}×{h}: 案表は横にはみ出さない", g["over"] <= 0 and g["right"] <= 0.5 and g["pick"] == 4, g)
+        check(f"{w}×{h}: 案表は横にはみ出さない", g["over"] <= 0 and g["right"] <= 0.5 and g["pick"] == 0, g)
         check(f"{w}×{h}: 案表の Tier が画面内に見える", g["tier"], g)
         if w == 360: shot(pg, "1c-cards")
         g = pg.evaluate("""() => { const ts = [...document.querySelectorAll('#reply table')], plain = ts.find((t) => !t.dataset.ptbl).closest('.tbl'), few = ts.filter((t) => t.dataset.ptbl)[1], fb = few.closest('.tbl');

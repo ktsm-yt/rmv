@@ -1126,26 +1126,16 @@ console.log(["dead", "alive", "gone", "codex"].map(pin).join(","));
 TS
 check "page: 終了した端末への送り先固定は外れ、稼働中と Codex の固定は残る" "$(bun run "$TMP/chatpin.ts" "$A/index.html" 2>&1)" ",alive,gone,codex"
 
-# 案表の採用は表ごと: 同じ文字 A が 2 つの表にあっても別々に選べ、送信文・tray の表記は表が複数の時だけ `<番号>-A`
+# 案表の『これにする』(採用) は廃止 (2026-11-22 user: 表の行をピン留めして赤ペンで選ぶ)。前の版の書きかけに choices が残っていても読み飛ばし、送る文に「採用:」を出さない
 cat > "$TMP/picks.ts" <<'TS'
 import { readFileSync } from "node:fs";
 const html = readFileSync(process.argv[2], "utf8");
-const line = (name: string) => html.match(new RegExp(`^const ${name} = .*$`, "m"))![0];
-const f = new Function(line("tableLabels") + "\n" + line("pickText") + "\nreturn { tableLabels, pickText };")();
-const ch = (...e: [number, string, string][]) => new Map(e.map(([t, label, letter]) => [t, { label, letter }]));
-const two = ch([1, "表2", "A"], [0, "3", "B"]); // 表 3 は B、表 2 番目は A (挿入順と逆でも表の順に並ぶ)
-const same = ch([0, "3", "A"]);
-console.log([
-  f.tableLabels(["3", "4"]).join("/"),
-  f.tableLabels(["3", undefined]).join("/"),
-  f.tableLabels(["3", "3"]).join("/"),
-  f.pickText(same, false),
-  f.pickText(same, true),
-  f.pickText(two, true),
-  f.pickText(ch([0, "3", "A"]), true) === f.pickText(ch([1, "4", "A"]), true) ? "same" : "diff",
-].join(" "));
+const src = html.match(/^function message\(d\) \{[\s\S]*?^\}$/m)![0];
+const message = new Function("let cur = null;\n" + src + "\nreturn message;")();
+const old = { pins: new Map([["3", { anchor: "表 B", quote: "B | 入れ方を書き直す", comment: "これで" }]]), choices: new Map([[0, { label: "1", letter: "A" }]]), free: "", imgs: [] };
+console.log(message(old).replace(/\n/g, " / "));
 TS
-check "page: 案表の採用ラベル (番号 / 取れない表は出現順 / 重複は出現順) と表記 (1 表なら A、複数なら 3-A、表の順)" "$(bun run "$TMP/picks.ts" "$A/index.html" 2>&1)" "3/4 3/表2 3/表2 A 3-A 3-B、表2-A diff"
+check "page: 案表の採用は送らず、古い書きかけの choices は読み飛ばす" "$(bun run "$TMP/picks.ts" "$A/index.html" 2>&1)" "【赤ペン】 / 表 B「B | 入れ方を書き直す」→ これで"
 
 # --- /new は herdr が動いていれば、選んだ cwd と同じフォルダの pane を下に分割 (near → focused → 先頭)。同じフォルダの pane が無ければ workspace を新設。止まっていれば理由付きの 500 (Orca には落ちない、2026-10-13) ---
 mkpanes() { printf '{"result":{"panes":[%s]}}' "$1" > "$TMP/hpanes"; }
