@@ -106,6 +106,8 @@
   #cchips .chip i.wait, #tstat i.wait { background: #e5a50a; box-shadow: 0 0 0 3px rgb(229 165 10 / .25); }
   #cchips .chip i.perm, #tstat i.perm { background: #e01b24; box-shadow: 0 0 0 3px rgb(224 27 36 / .25); }
   #tstat .trow.perm { color: inherit; font-weight: 700; }
+  #tstat .trow.bot-perm { cursor: default; }
+  #tstat .trow.bot-perm span { white-space: normal; overflow-wrap: anywhere; }
   #tstat button { flex: none; font-size: 11px; padding: 0 8px; line-height: 18px; }
   #cchips .chip i.idle, #tstat i.idle { border: 2px solid var(--line); }
   #cchips .chip i.ng, #tstat i.ng { background: #e5a50a; box-shadow: 0 0 0 3px rgb(229 165 10 / .25); } /* 返事が要る (終了: NG) = 入力待ちと同じ黄の点 */
@@ -903,6 +905,7 @@ async function show(md, entry) {
 // all = /history の全件 (プロジェクト列のため常に絞らずに取る)、list = そのうち選択中プロジェクト (?repo=) かつセッション (?s=) の分。
 // ← → と追従は list の中だけで動く。
 let all = [], list = [], idx = 0, following = true, shownName = null, showRequest = 0;
+let botPerms = [];
 const params = new URLSearchParams(location.search);
 let SESS = params.get("s") || ""; // "" = 最新 (最後に返事したセッションを追う)
 let REPO = params.get("repo") || ""; // "" = すべて
@@ -1849,10 +1852,11 @@ function renderChat() {
     : (isMobileUA ? mobRow : row)(e);
   // 許可待ちはプロジェクトの絞り込みと 5 件の枠に関係なく先頭に出す (別 repo の foyer の画面の許可待ちが見えなかった、2026-10-15)
   const perms = [...new Map(all.filter((e) => e.session && e.live && e.perm).map((e) => [e.session, e])).values()];
-  renderTstat(isMobileUA ? perms : [...perms, ...shown.filter((e) => e.live && !perms.some((p) => p.session === e.session))]);
+  const alerts = [...perms, ...botPerms];
+  renderTstat(isMobileUA ? alerts : [...alerts, ...shown.filter((e) => e.live && !perms.some((p) => p.session === e.session))]);
   if (isMobileUA) { // 下の帯: 送り先の名前と状態の点、返事を待っているセッションの数 (閉じていても分かるように)
     const sts = [...new Map([...perms, ...chipEntries.values()].filter((e) => e.live).map((e) => [e.session, stOf(e).st])).values()];
-    const wait = sts.filter((x) => x === "ng" || x === "wait" || x === "perm").length, run = sts.filter((x) => x === "busy" || x === "bg").length;
+    const wait = botPerms.length + sts.filter((x) => x === "ng" || x === "wait" || x === "perm").length, run = sts.filter((x) => x === "busy" || x === "bg").length;
     document.getElementById("dname").textContent = lbl ? (pin ? "📌 " : "") + lbl : "送り先なし"; // 幅が無いので矢印は付けない (点が送り先の印)
     document.getElementById("ddot").className = to?.live ? stOf(to).st : "";
     document.getElementById("dwait").innerHTML = (wait ? `<b>待ち </b>${wait}` : "") + (run ? `<span>${wait ? " / " : ""}動作中 ${run}</span>` : "");
@@ -1892,6 +1896,7 @@ const bgSum = (bg) => [...bg.reduce((m, t) => m.set(t.type, (m.get(t.type) ?? 0)
 function renderTstat(list) {
   tstatList = list;
   const html = list.map((e) => {
+    if (e.name.startsWith("botperm-") && e.perm) return `<div class="trow perm bot-perm" title="Orca の ${esc(e.bot)} の会話を開いて許可する"><i class="perm"></i><span>${esc(e.bot)} が許可待ち: ${esc(e.perm.tool)} ${esc(e.perm.detail)}</span></div>`;
     const { st, wait, perm, bg } = stOf(e);
     const stTitle = { perm: "許可待ち", wait: "入力待ち", busy: "作業中", idle: "静か", bg: "裏で待ち", ok: "閉じてよい", ng: "返事が要る" }[st];
     const bgText = bg ? " · 裏で待ち: " + bgSum(bg) : "";
@@ -2359,7 +2364,9 @@ async function poll() {
       pageVer = page;
     }
     liveState = hr.headers.get("x-rmv-live");
-    all = await hr.json();
+    const rows = await hr.json();
+    botPerms = rows.filter((e) => e.name.startsWith("botperm-"));
+    all = rows.filter((e) => !e.name.startsWith("botperm-"));
     // 選んでいた repo が履歴から消えたら (repo の決め方が変わった・古い URL 等) すべてに戻す。空の画面で止めない
     if (REPO && !codexPaneSession(SESS) && !codexPaneSession(chatPin()) && !all.some((e) => e.repo.toLowerCase() === REPO.toLowerCase())) { REPO = ""; SESS = ""; setParam("repo", ""); setParam("s", ""); renderFilter(); }
     renderChips();
