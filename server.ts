@@ -25,13 +25,19 @@ const PERM_ORPHAN = `${STATE}/perm-orphan.jsonl`; // 許可待ちがあるのに
 const orphanLogged = new Set<string>(); // 記録済みの perm id (/history は数秒ごとに呼ばれるので 1 件 1 回)
 // Claude Code の許可ダイアログは 1 = Yes。Enter 無しの 1 打で通り、入力欄に 1 は残らない (2.1.285 の WebFetch ダイアログで実機確認、2026-09-30)
 const APPROVE_KEY = "1";
-type Perm = { id: string; tool: string; detail: string; ts: string; terminal?: string | null; herdr_pane?: string | null; herdr_socket?: string | null; session_id?: string | null };
+type Perm = { id: string; tool: string; detail: string; ts: string; terminal?: string | null; herdr_pane?: string | null; herdr_socket?: string | null; session_id?: string | null; orca_bot?: { name: string; chat: string } };
+async function loadPerm(session: string): Promise<Perm | null> {
+  const p = await Bun.file(`${PERM}/${session}.json`).json().catch(() => null);
+  return p && typeof p.id === "string" ? p : null;
+}
 // 許可待ちの記録を返す。無い・壊れている・待ちが終わっている (下) は null。
 // 記録の時刻から PERM_TTL までは従来どおり有効。herdr 配下はそれを過ぎても、その pane の Claude が blocked の間は有効にする
 // (harness-26f: foyer の長い依頼で 30 分を超えた許可待ちが rmv から消え、82 分放置された)。herdr の list が取れない時と Orca だけの端末は PERM_TTL で切る
 async function readPerm(session: string): Promise<Perm | null> {
-  const p = await Bun.file(`${PERM}/${session}.json`).json().catch(() => null);
-  if (!p || typeof p.id !== "string") return null;
+  return activeTerminalPerm(await loadPerm(session));
+}
+async function activeTerminalPerm(p: Perm | null): Promise<Perm | null> {
+  if (!p || p.orca_bot) return null;
   if (Date.now() - Date.parse(p.ts) < PERM_TTL) return p;
   return herdrPaneOf(p) && (await herdrAgents(herdrSockOf(p), LIVE_TTL))?.get(p.herdr_pane)?.status === "blocked" ? p : null;
 }
@@ -125,9 +131,16 @@ async function historyItems() {
   const byHandle = new Map((terms ?? []).map((t) => [t.handle, t])); // 待ち状態表示用: title (◑ 作業中 / ✳ 入力待ち) と lastOutputAt
   const handles = new Set(terms?.map((t) => t.handle).filter((h) => !claude || claude.has(h ?? "")));
   const perms = new Map<string, Perm>(); // state/perm/*.json を 1 回だけ読む。key = item.session
+  const botPerms = new Map<string, Perm>();
   for (const n of (await readdir(PERM).catch(() => [] as string[])).filter((n) => n.endsWith(".json"))) {
-    const p = await readPerm(n.slice(0, -5));
-    if (p) perms.set(n.slice(0, -5), p);
+    const session = n.slice(0, -5);
+    const p = await loadPerm(session);
+    if (p?.orca_bot) {
+      if (typeof p.orca_bot.name === "string" && typeof p.orca_bot.chat === "string") botPerms.set(session, p);
+    } else {
+      const active = await activeTerminalPerm(p);
+      if (active) perms.set(session, active);
+    }
   }
   const names = (await readdir(HIST).catch(() => [] as string[])).filter((n) => n.endsWith(".md")).sort().reverse();
   const items = (await Promise.all(
@@ -232,14 +245,22 @@ async function historyItems() {
     const rows = items.filter((e) => e.session === s);
     await appendFile(PERM_ORPHAN, JSON.stringify({ ts: new Date().toISOString(), session: s, perm_id: p.id, perm_ts: p.ts, tool: p.tool, herdr_pane: p.herdr_pane ?? null, rows: rows.length, live_rows: rows.filter((e) => e.live).length, prompt: existsSync(`${PROMPT}/${s}.json`) }) + "\n").catch(() => {});
   }
-  return { items, curSid, replySid, asking, askSid, live: terms || agents || named ? "ok" : "unknown" };
+  return { items, curSid, replySid, asking, askSid, botPerms, live: terms || agents || named ? "ok" : "unknown" };
 }
 // herdr の pane 名 (hook が記録した herdr_label)。無い・空は null。/history には出さず /sessions だけが使う
 function labelOf(meta: { herdr_label?: unknown } | null | undefined): string | null {
   return typeof meta?.herdr_label === "string" && meta.herdr_label ? meta.herdr_label : null;
 }
 async function history(repo: string | null): Promise<Response> {
-  const [{ items, curSid, replySid, asking, live }, panes] = await Promise.all([historyItems(), liveCodexPanes()]);
+  const [{ items, curSid, replySid, asking, botPerms, live }, panes] = await Promise.all([historyItems(), liveCodexPanes()]);
+  const blocked = botPerms.size ? await blockedBotChats() : null;
+  const botAlerts = [];
+  for (const [session, p] of botPerms) {
+    if (!p.orca_bot || !blocked?.has(p.orca_bot.chat)) continue;
+    const bot = p.orca_bot.name;
+    botAlerts.push({ name: `botperm-${session}.md`, session, bot, repo: bot, head: "", ts: p.ts, live: false, terminal: false,
+      perm: { id: p.id, tool: p.tool, detail: p.detail, ts: p.ts } });
+  }
   // sub は出口でだけ agent にする (上の集計は sub を本体の返事として数える: 端末ごとの最新の返事・今のセッションの判定が pane ごとに要る)
   const replies = items.map(({ root, sub, label, ...e }) => ({ ...e, agent: sub ? { type: sub, id: e.session } : e.agent, asking: (e.name.startsWith("asking-") || curSid.get(e.session) === replySid.get(e.session) ? asking.get(e.session) : null) ?? null })); // 次のセッションの依頼は前のセッションの返事に付けない
   // 本文のある履歴や /sessions・/ext/deliver には混ぜず、viewer の一覧だけに出す。
@@ -252,7 +273,7 @@ async function history(repo: string | null): Promise<Response> {
     return { name, session, codex: true, codexPane: true, replyTurn: reply?.identity ?? null, sid, repo: p.repo, head: p.label, label: p.label,
       title: p.pane, status: p.status, live: true, terminal: false, ts: null, agent: null, perm: null, asking: null };
   }));
-  const out = [...replies, ...livePanes];
+  const out = [...replies, ...livePanes, ...botAlerts];
   const want = repo?.toLowerCase();
   return Response.json(want ? out.filter((e) => e.repo.toLowerCase() === want) : out, { headers: { "cache-control": "no-store", "x-rmv-live": live } });
 }
@@ -525,6 +546,34 @@ async function focusTerminal(handle: string): Promise<void> {
 // maxAge ms 以内に取った結果があれば使い回す: /history は 2 秒ごとに叩かれるので毎回 spawn しない。送信側は 0 (常に取り直す)
 type Term = { handle?: string; worktreePath?: string; connected?: boolean; writable?: boolean; lastOutputAt?: number; title?: string };
 const LIVE_TTL = Number(process.env.RMV_LIVE_TTL_MS ?? 5000); // env はテストでキャッシュを切る用
+let blockedBotCache: { at: number; chats: Promise<Set<string> | null> } | undefined;
+function blockedBotChats(): Promise<Set<string> | null> {
+  if (blockedBotCache && Date.now() - blockedBotCache.at < LIVE_TTL) return blockedBotCache.chats;
+  const chats = (async () => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const p = Bun.spawn([ORCA, "agent", "list", "--state", "blocked", "--json"], { stdout: "pipe", stderr: "pipe" });
+      const result = await Promise.race([
+        Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]),
+        new Promise<null>((resolve) => { timer = setTimeout(() => { p.kill(); resolve(null); }, 5000); }),
+      ]);
+      if (!result) throw new Error("timeout");
+      const [out, err, code] = result;
+      if (code !== 0) throw new Error(`exit ${code}: ${(err.trim() || out.trim()).slice(0, 500)}`);
+      const data = JSON.parse(out);
+      if (data?.ok !== true || !Array.isArray(data.result?.agents)) throw new Error("invalid response");
+      return new Set<string>(data.result.agents.filter((a) => a?.kind === "chat" && a.state === "blocked" && typeof a.orcaSessionId === "string").map((a) => a.orcaSessionId));
+    } catch (e) {
+      console.error("orca agent list --state blocked:", String(e).replace(/\s+/g, " "));
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
+  })();
+  const entry = { at: Infinity, chats };
+  blockedBotCache = entry;
+  return chats.finally(() => { entry.at = Date.now(); });
+}
 let termCache: { at: number; terms: Term[] | null } | null = null;
 async function liveTerminals(maxAge: number): Promise<Term[] | null> {
   if (termCache && Date.now() - termCache.at < maxAge) return termCache.terms;

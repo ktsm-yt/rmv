@@ -75,6 +75,10 @@ def main():
            "ts": datetime.now().astimezone().isoformat(timespec="seconds"),
            "session_id": data.get("session_id"), "cwd": data.get("cwd"), "terminal": handle or None,
            "herdr_pane": herdr_pane, "herdr_socket": herdr_socket, "agent_id": data.get("agent_id")}
+    if not handle and not herdr_pane:
+        bot = frag.orca_bot(data.get("transcript_path"))
+        if bot:
+            rec["orca_bot"] = bot
     os.makedirs(PERM, exist_ok=True)
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:

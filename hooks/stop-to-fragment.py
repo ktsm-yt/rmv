@@ -26,6 +26,7 @@ from datetime import datetime
 STATE = os.environ.get("RMV_STATE_DIR") or os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "state")
 HIST = os.path.join(STATE, "history")
 KEEP = 200  # 静かなプロジェクトも左のプロジェクト列から落ちないだけ残す
+UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE | re.ASCII)
 AGENT_MAX = 4000  # subagent の報告は長いので切る
 
 
@@ -68,6 +69,33 @@ def prune():
                 os.remove(os.path.join(HIST, p))
             except FileNotFoundError:
                 pass
+
+
+def orca_bot(transcript_path):
+    chat = os.environ.get("ORCA_AGENT_SESSION_ID", "")
+    if os.environ.get("ORCA_STRUCTURED_SESSION") != "1" or not UUID.fullmatch(chat):
+        return None
+    if not isinstance(transcript_path, str) or not os.path.isabs(transcript_path):
+        return None
+    project = os.path.basename(os.path.dirname(transcript_path))
+    bots_dir = os.path.abspath(os.environ.get("RMV_ORCA_BOTS_DIR") or os.path.expanduser("~/.orca/bots"))
+    try:
+        with os.scandir(bots_dir) as entries:
+            matches = [entry.path for entry in entries if entry.is_dir()
+                       and re.sub(r"[^A-Za-z0-9]", "-", entry.path) == project]
+        if len(matches) != 1:
+            return None
+        home = matches[0]
+        with open(os.path.join(home, "bot.json"), encoding="utf-8") as f:
+            bot = json.load(f)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(bot, dict):
+        return None
+    bot_id, name = bot.get("id"), bot.get("name")
+    if not isinstance(bot_id, str) or not UUID.fullmatch(bot_id) or not isinstance(name, str) or not name.strip():
+        return None
+    return {"id": bot_id, "name": name, "chat": chat, "home": home}
 
 
 def parent_claude_args():
