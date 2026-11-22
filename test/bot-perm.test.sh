@@ -14,7 +14,8 @@ import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from urllib.request import urlopen
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 
 root = Path(sys.argv[1])
 server = os.environ.get("RMV_SERVER", root / "server.ts")
@@ -99,6 +100,10 @@ else:
     print('{"ok":true,"result":{}}')
 ''', encoding="utf-8")
     stub.chmod(0o700)
+    open_stub = tmp / "open"
+    open_calls = tmp / "open-calls"
+    open_stub.write_text('#!/bin/sh\nprintf "%s\\n" "$@" >> "$(dirname "$0")/open-calls"\n', encoding="utf-8")
+    open_stub.chmod(0o700)
 
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
@@ -112,9 +117,21 @@ else:
     def alerts():
         return [row for row in get("/history") if row["name"].startswith("botperm-")]
 
+    def post_open(target, perm_id, headers):
+        req = Request(url + "/orca-open", method="POST",
+                      data=json.dumps({"session": target, "id": perm_id}).encode(),
+                      headers={"Content-Type": "application/json", **headers})
+        try:
+            res = urlopen(req, timeout=9)
+        except HTTPError as err:
+            res = err
+        with res:
+            return res.status, res.read().decode()
+
     with (tmp / "server.log").open("w+") as log, subprocess.Popen(
         ["bun", "run", server], stdout=log, stderr=log,
-        env={**env, "RMV_ORCA_BIN": str(stub), "RMV_PORT": str(port), "RMV_LIVE_TTL_MS": "0"},
+        env={**env, "RMV_ORCA_BIN": str(stub), "RMV_OPEN_BIN": str(open_stub),
+             "RMV_PORT": str(port), "RMV_LIVE_TTL_MS": "0"},
     ) as proc:
         try:
             for _ in range(100):
@@ -163,6 +180,67 @@ else:
             reply.with_suffix(".json").unlink()
             terminal_file.unlink()
             mode.write_text("blocked")
+
+            origin = {"Origin": url}
+            perm_id = bot_record["id"]
+            failures = []
+            cases = [
+                ("local", session, perm_id, origin, 200, ""),
+                ("no origin", session, perm_id, {}, 403, "forbidden origin"),
+                ("forwarded-for", session, perm_id, {**origin, "X-Forwarded-For": "192.0.2.1"},
+                 403, "Mac の画面からだけ開ける"),
+                ("forwarded-host", session, perm_id, {**origin, "X-Forwarded-Host": "rmv.example"},
+                 403, "Mac の画面からだけ開ける"),
+                ("bad session", "bad/session", perm_id, origin, 400, "bad session"),
+                ("missing session", "missing", perm_id, origin, 409, "許可待ちはもう無い"),
+                ("stale id", session, "wrong", origin, 409, "許可待ちはもう無い"),
+                ("invalid Bot UUID", "invalid-bot", perm_id, origin, 409, "許可待ちはもう無い"),
+            ]
+            invalid_file = perm_dir / "invalid-bot.json"
+            write_json(invalid_file, {**bot_record, "orca_bot": {**bot_record["orca_bot"], "id": "not-a-uuid"}})
+            args = [f"orca://bot/{bot_id}"]
+            for name, target, token, headers, status, body in cases:
+                before = open_calls.read_text().splitlines() if open_calls.exists() else []
+                actual = post_open(target, token, headers)
+                recorded = open_calls.read_text().splitlines() if open_calls.exists() else []
+                expected_args = args if status == 200 else before
+                if actual != (status, body) or recorded != expected_args:
+                    failures.append(name)
+                    print(f"FAIL /orca-open {name}: expected {status} {body!r}, got {actual!r}, open args={recorded!r}",
+                          flush=True)
+                else:
+                    print(f"ok   /orca-open {name}: {actual[0]} {actual[1]!r}, open args={recorded!r}", flush=True)
+            invalid_file.unlink()
+
+            desktop = subprocess.run(["uv", "run", "--with", "playwright", "python", "-", url,
+                                      str(open_calls), args[0]], text=True, input='''
+from pathlib import Path
+from playwright.sync_api import sync_playwright, expect
+import sys
+
+with sync_playwright() as p:
+    browser = p.chromium.launch()
+    page = browser.new_page(viewport={"width": 1440, "height": 900})
+    page.goto(sys.argv[1], wait_until="domcontentloaded")
+    button = page.locator("#tstat .bot-perm [data-orca]")
+    expect(button).to_have_count(1, timeout=5000)
+    expect(button).to_contain_text("Orca で開く")
+    calls = Path(sys.argv[2])
+    initial = calls.read_text().splitlines() if calls.exists() else []
+    with page.expect_response(lambda r: r.url.endswith("/orca-open")) as response:
+        button.click()
+    assert response.value.ok
+    expect(button).to_be_enabled()
+    assert calls.read_text().splitlines() == initial + [sys.argv[3]]
+    with page.expect_response(lambda r: r.url.endswith("/orca-open")) as response:
+        page.keyboard.press("y")
+    assert response.value.ok
+    assert calls.read_text().splitlines() == initial + [sys.argv[3]] * 2
+    browser.close()
+''')
+            assert not failures and desktop.returncode == 0, (failures, desktop.returncode)
+            print("ok   PC 画面: ボタンと y がそれぞれ同じ Orca URL を 1 回開く", flush=True)
+
             subprocess.run(["uv", "run", "--with", "playwright", "python", "-", url], check=True, text=True, input='''
 from playwright.sync_api import sync_playwright, expect
 import sys

@@ -1317,6 +1317,10 @@ document.addEventListener("keydown", (ev) => {
     const bs = [...tstat.querySelectorAll("[data-approve]:not(:disabled)")];
     const b = bs.find((x) => x.dataset.approve === chatTo()?.session) ?? (bs.length === 1 ? bs[0] : null);
     if (b) { ev.preventDefault(); b.click(); }
+    else if (!tstat.querySelector("[data-approve]")) {
+      const orcaButtons = tstat.querySelectorAll("[data-orca]:not(:disabled)");
+      if (orcaButtons.length === 1) { ev.preventDefault(); orcaButtons[0].click(); }
+    }
     return;
   }
   if (ev.key === "r" && !speakBtn.hidden) return toggleSpeak(); // r = 読み上げ (他のキーと重ならない)
@@ -1864,7 +1868,10 @@ const bgSum = (bg) => [...bg.reduce((m, t) => m.set(t.type, (m.get(t.type) ?? 0)
 function renderTstat(list) {
   tstatList = list;
   const html = list.map((e) => {
-    if (e.name.startsWith("botperm-") && e.perm) return `<div class="trow perm bot-perm" title="Orca の ${esc(e.bot)} の会話を開いて許可する"><i class="perm"></i><span>${esc(e.bot)} が許可待ち: ${esc(e.perm.tool)} ${esc(e.perm.detail)}</span></div>`;
+    if (e.name.startsWith("botperm-") && e.perm) {
+      const button = isMobileUA ? "" : `<button data-orca="${esc(e.session)}" data-id="${esc(e.perm.id)}" title="Orca で ${esc(e.bot)} を開く (y)">Orca で開く<sup>y</sup></button>`;
+      return `<div class="trow perm bot-perm" title="Orca の ${esc(e.bot)} の会話を開いて許可する"><i class="perm"></i><span>${esc(e.bot)} が許可待ち: ${esc(e.perm.tool)} ${esc(e.perm.detail)}</span>${button}</div>`;
+    }
     const { st, wait, perm, bg } = stOf(e);
     const stTitle = { perm: "許可待ち", wait: "入力待ち", busy: "作業中", idle: "静か", bg: "裏で待ち", ok: "閉じてよい", ng: "返事が要る" }[st];
     const bgText = bg ? " · 裏で待ち: " + bgSum(bg) : "";
@@ -1878,6 +1885,21 @@ function renderTstat(list) {
   syncSpin(tstat);
 }
 tstat.addEventListener("click", async (ev) => {
+  const orca = ev.target.closest("[data-orca]");
+  if (orca) {
+    orca.disabled = true;
+    const say = document.getElementById("cmsg");
+    try {
+      const r = await fetch("/orca-open", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ session: orca.dataset.orca, id: orca.dataset.id }) });
+      if (!r.ok) throw new Error((await r.text()) || String(r.status));
+      say.textContent = "";
+    } catch (e) {
+      say.textContent = e.message ?? String(e);
+    } finally {
+      orca.disabled = false;
+    }
+    return;
+  }
   const b = ev.target.closest("[data-approve]");
   if (!b) {
     const r = ev.target.closest("[data-s]");

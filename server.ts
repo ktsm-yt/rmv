@@ -26,7 +26,7 @@ const PERM_ORPHAN = `${STATE}/perm-orphan.jsonl`; // 許可待ちがあるのに
 const orphanLogged = new Set<string>(); // 記録済みの perm id (/history は数秒ごとに呼ばれるので 1 件 1 回)
 // Claude Code の許可ダイアログは 1 = Yes。Enter 無しの 1 打で通り、入力欄に 1 は残らない (2.1.285 の WebFetch ダイアログで実機確認、2026-09-30)
 const APPROVE_KEY = "1";
-type Perm = { id: string; tool: string; detail: string; ts: string; terminal?: string | null; herdr_pane?: string | null; herdr_socket?: string | null; session_id?: string | null; orca_bot?: { name: string; chat: string } };
+type Perm = { id: string; tool: string; detail: string; ts: string; terminal?: string | null; herdr_pane?: string | null; herdr_socket?: string | null; session_id?: string | null; orca_bot?: { id?: string; name: string; chat: string } };
 async function loadPerm(session: string): Promise<Perm | null> {
   const p = await Bun.file(`${PERM}/${session}.json`).json().catch(() => null);
   return p && typeof p.id === "string" ? p : null;
@@ -1429,6 +1429,25 @@ async function approve(req: Request): Promise<Response> {
   }
 }
 
+async function orcaOpen(req: Request): Promise<Response> {
+  if (!ORIGINS.has(req.headers.get("origin") ?? "")) return new Response("forbidden origin", { status: 403 });
+  if (!isLocalRequest(req)) return new Response("Mac の画面からだけ開ける", { status: 403 });
+  const body = await req.json().catch(() => null);
+  const session = typeof body?.session === "string" ? body.session : "";
+  if (!/^[\w-]+$/.test(session)) return new Response("bad session", { status: 400 });
+  const perm = await loadPerm(session);
+  const botId = perm?.orca_bot?.id;
+  if (perm?.id !== body?.id || typeof botId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(botId))
+    return new Response("許可待ちはもう無い", { status: 409 });
+  try {
+    const p = Bun.spawn([OPEN, `orca://bot/${botId}`], { stdout: "ignore", stderr: "pipe" });
+    const [err, code] = await Promise.all([new Response(p.stderr).text(), p.exited]);
+    return code === 0 ? new Response() : new Response(`open exit ${code}: ${err.trim()}`, { status: 502 });
+  } catch (e) {
+    return new Response(`open spawn failed: ${e}`, { status: 502 });
+  }
+}
+
 // POST /speak {text}: 読み上げの声を Gemini またはローカル VOICEVOX で作り、WAV で返す (3.8 は WAV、3.1 / 2.5 は生の PCM が返るので WAV に包む)。
 // キーは env GEMINI_API_KEY → 無ければ macOS キーチェーンを毎回引く。キーはログにもレスポンスにも出さない。
 // Origin 必須は /send と同じ理由 (他サイトから有料 API を叩かせない)。
@@ -1599,6 +1618,7 @@ Bun.serve({
     if (pathname === "/dbg" && req.method === "POST") return dbg(req);
     if (pathname === "/switch" && req.method === "POST") return switchTo(req);
     if (pathname === "/approve" && req.method === "POST") return approve(req);
+    if (pathname === "/orca-open" && req.method === "POST") return orcaOpen(req);
     if (pathname === "/paste" && req.method === "POST") return paste(req);
     if (pathname === "/open" && req.method === "POST") return open(req);
     if (pathname === "/new" && req.method === "POST") return newSession(req);
