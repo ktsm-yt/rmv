@@ -21,6 +21,7 @@ root = Path(sys.argv[1])
 server = os.environ.get("RMV_SERVER", root / "server.ts")
 bot_id = "91b04db0-ae7a-4044-bdc5-7114e811d511"
 chat = "8f119f89-f8ae-4a2c-9846-1edba42b49db"
+other_chat = "223d9f0f-b147-4bb8-a727-8de49080958f"
 session = "bdf3bc74-3a0c-4006-83ba-55f9fcfa5a3c"
 
 
@@ -77,7 +78,7 @@ with tempfile.TemporaryDirectory(prefix="rmv-bot-perm-") as tmp:
     mode = tmp / "mode"
     calls = tmp / "calls"
     mode.write_text("blocked")
-    stub.write_text(f"#!{sys.executable}\n" + f"chat = {chat!r}\n" + '''
+    stub.write_text(f"#!{sys.executable}\n" + f"chats = {[chat, other_chat]!r}\n" + '''
 import json, sys, time
 from pathlib import Path
 directory = Path(__file__).parent
@@ -94,7 +95,7 @@ elif argv == ["agent", "list", "--state", "blocked", "--json"]:
         time.sleep(10)
     if status == "delayed":
         time.sleep(0.3)
-    rows = [] if status == "working" else [{"orcaSessionId": chat, "kind": "chat", "state": "blocked"}]
+    rows = [] if status == "working" else [{"orcaSessionId": chat, "kind": "chat", "state": "blocked"} for chat in chats]
     print(json.dumps({"ok": True, "result": {"agents": rows}}))
 else:
     print('{"ok":true,"result":{}}')
@@ -176,9 +177,6 @@ else:
             assert 4.8 <= elapsed < 8, elapsed
             print(f"ok   /history: 31 分を超えた真の待ちは表示。非 blocked・exit 1・時間切れ ({elapsed:.2f} 秒) は非表示", flush=True)
 
-            reply.unlink()
-            reply.with_suffix(".json").unlink()
-            terminal_file.unlink()
             mode.write_text("blocked")
 
             origin = {"Origin": url}
@@ -213,7 +211,9 @@ else:
             invalid_file.unlink()
 
             desktop = subprocess.run(["uv", "run", "--with", "playwright", "python", "-", url,
-                                      str(open_calls), args[0]], text=True, input='''
+                                      str(open_calls), args[0], str(reply), str(terminal_file),
+                                      str(bot_file), other_chat], text=True, input='''
+import json
 from pathlib import Path
 from playwright.sync_api import sync_playwright, expect
 import sys
@@ -221,8 +221,48 @@ import sys
 with sync_playwright() as p:
     browser = p.chromium.launch()
     page = browser.new_page(viewport={"width": 1440, "height": 900})
+    page.add_init_script("""
+        window.permissionPosts = [];
+        const fetchOriginal = window.fetch;
+        window.fetch = (input, options) => {
+            if (input === "/approve" || input === "/orca-open") window.permissionPosts.push(input);
+            return fetchOriginal(input, options);
+        };
+    """)
     page.goto(sys.argv[1], wait_until="domcontentloaded")
     button = page.locator("#tstat .bot-perm [data-orca]")
+    other_bot = Path(sys.argv[6]).with_name("other-bot.json")
+    failures = []
+
+    def check_y(label, bot_count, posts):
+        try:
+            expect(page.locator("#tstat .bot-perm")).to_have_count(bot_count)
+            expect(button).to_have_count(bot_count, timeout=3000)
+            page.keyboard.press("y")
+            actual = page.evaluate("window.permissionPosts")
+            assert actual == posts, f"expected {posts}, got {actual}"
+            print(f"ok   {label}: {actual}", flush=True)
+        except AssertionError as error:
+            failures.append(label)
+            print(f"FAIL {label}: {error}", flush=True)
+
+    expect(page.locator("#tstat [data-approve=term_test]")).to_be_enabled()
+    check_y("PC y: 端末の許可待ちを優先", 1, ["/approve"])
+    reply = Path(sys.argv[4])
+    reply.unlink()
+    reply.with_suffix(".json").unlink()
+    Path(sys.argv[5]).unlink()
+
+    record = json.loads(Path(sys.argv[6]).read_text())
+    record["orca_bot"].update(name="別の試験 Bot", chat=sys.argv[7])
+    other_bot.write_text(json.dumps(record))
+    page.reload(wait_until="domcontentloaded")
+    expect(page.locator("#tstat [data-approve]")).to_have_count(0)
+    check_y("PC y: Bot の許可待ちが 2 件なら何もしない", 2, [])
+    other_bot.unlink()
+    assert not failures, failures
+
+    page.reload(wait_until="domcontentloaded")
     expect(button).to_have_count(1, timeout=5000)
     expect(button).to_contain_text("Orca で開く")
     calls = Path(sys.argv[2])

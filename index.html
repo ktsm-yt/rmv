@@ -1311,6 +1311,7 @@ document.addEventListener("keydown", (ev) => {
   }
   if (ev.target.closest?.("input, textarea, [contenteditable]")) return;
   // y = 状態行の「許可」を押す。送り先の端末の分を優先し、無ければ許可待ちが 1 つだけの時に限る (どの端末か決まらない時は押さない)。
+  // 端末の許可待ちが無く、有効な「Orca で開く」が 1 つだけなら、そのボタンを押す。
   // ev.code で見る: 日本語入力が on だと ev.key が "Process" になる
   if (ev.code === "KeyY") {
     if (chatTo()?.codexPane || codexPaneSession(SESS)) return;
