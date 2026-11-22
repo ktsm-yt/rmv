@@ -54,7 +54,7 @@ A: 案の理由の段です。
 **決めること**
 ⅰ d61 を閉じるか
 MD
-printf '{"cwd":"/Users/i/Dev/rmv","session_id":"test-a","ts":"2026-11-19T12:00:00+09:00","name":"%s.md","terminal":"term_a"}\n' "$stem" > "$STATE/history/$stem.json"
+printf '{"cwd":"%s","session_id":"test-a","ts":"2026-11-19T12:00:00+09:00","name":"%s.md","terminal":"term_a"}\n' "/tmp/rmv O'Brien" "$stem" > "$STATE/history/$stem.json"
 cp "$STATE/history/$stem.md" "$STATE/latest.html"; cp "$STATE/history/$stem.json" "$STATE/latest.json"
 
 RMV_STATE_DIR="$STATE" RMV_PORT="$PORT" RMV_ORCA_BIN=/usr/bin/true bun "$RMV_DIR/server.ts" >"$TMP/server.log" 2>&1 &
@@ -74,7 +74,7 @@ def check(label, cond, got=""):
 WANT = ["段落 1", "1", "2", "表 d61", "表 8c3", "2-d61", "2-8c3", "2-duj", "2-xyr", "2-ⅰ", "2-ⅱ", "2-段落6", "A", "決めること", "決めること-ⅰ"]
 with sync_playwright() as p:
     b = p.chromium.launch()
-    pg = b.new_page(viewport={"width": 1400, "height": 1500}, color_scheme="dark")
+    pg = b.new_page(viewport={"width": 1400, "height": 1500}, color_scheme="dark", permissions=["clipboard-read", "clipboard-write"])
     pg.goto(base)
     pg.wait_for_function("document.querySelector('#reply')?.innerText.includes('決めること')", timeout=10000)
     got = pg.evaluate("[...document.querySelectorAll('#reply [data-anchor]')].map(x => x.dataset.anchor)")
@@ -82,6 +82,14 @@ with sync_playwright() as p:
     check("番号段落の続きの行 (空行なし) は段落の印にならない", pg.evaluate("!document.querySelector('[data-anchor=\"1\"] .para')"))
     check("コードブロックは段落の印に入らない", pg.evaluate("!document.querySelector('.para pre, .para .cp')"))
     if shots: pg.screenshot(path=f"{shots}/before-click.png", full_page=True)
+    session = pg.locator("#reply > footer.reply-session:last-child button")
+    check("返事の末尾にセッション ID が出る", session.count() == 1)
+    if session.count() == 1:
+        session.click()
+        pg.wait_for_function("document.querySelector('.reply-session button').textContent === '✓ コピーしました'")
+        copied = pg.evaluate("navigator.clipboard.readText()")
+        check("空白・引用符付き cwd と完全な ID がコピーされる", copied == "cd '/tmp/rmv O'\\''Brien' && claude --resume test-a", copied)
+        check("セッション ID を押しても赤ペンの印が付かない", pg.locator("#reply .pinned").count() == 0)
     BOX = "[...document.querySelectorAll('#reply .para')].map(x => { const r = x.getBoundingClientRect(); return [Math.round(r.top), Math.round(r.height)] })"
     before = pg.evaluate(BOX)
     for k in ["2-d61", "2-8c3", "2-duj", "2-xyr"]:
