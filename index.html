@@ -1313,7 +1313,7 @@ document.addEventListener("keydown", (ev) => {
   // y = 状態行の「許可」を押す。送り先の端末の分を優先し、無ければ許可待ちが 1 つだけの時に限る (どの端末か決まらない時は押さない)。
   // ev.code で見る: 日本語入力が on だと ev.key が "Process" になる
   if (ev.code === "KeyY") {
-    if (chatTo()?.bot || chatTo()?.codexPane || codexPaneSession(SESS)) return;
+    if (chatTo()?.codexPane || codexPaneSession(SESS)) return;
     const bs = [...tstat.querySelectorAll("[data-approve]:not(:disabled)")];
     const b = bs.find((x) => x.dataset.approve === chatTo()?.session) ?? (bs.length === 1 ? bs[0] : null);
     if (b) { ev.preventDefault(); b.click(); }
@@ -1811,7 +1811,10 @@ function renderChat() {
     return `<i class="${st}"></i><b>${esc(chipLabels.get(e.session) ?? (e.repo || "?"))}</b><time class="${st}">${esc(hhmm(new Date(e.ts)))}</time><span>${esc(sub)}</span>${ask ? `<span class="task">${esc(ask)}</span>` : ""}`;
   };
   const entries = [...chipEntries.values()].filter((e) => e.live || e.codex || e.bot || showDead || e.session === pin);
-  const shown = [...entries.filter((e) => !e.codexPane).slice(0, isMobileUA ? 12 : 5), ...entries.filter((e) => e.codexPane)];
+  // Bot の行は終了扱いにならないので、枠は端末の行が先に取り、Bot は余った分だけ (窓口役の Bot の会話が増えても稼働中の端末の chip を押し出さない)
+  const cap = isMobileUA ? 12 : 5, plain = entries.filter((e) => !e.codexPane && !e.bot).slice(0, cap);
+  const keep = new Set([...plain, ...entries.filter((e) => !e.codexPane && e.bot).slice(0, cap - plain.length)]);
+  const shown = [...entries.filter((e) => keep.has(e)), ...entries.filter((e) => e.codexPane)];
   const chipContent = (e) => e.codexPane
     ? `<i class="${stOf(e).st}"></i><span class="live-codex-label">${esc(`Codex · ${e.label} · ${e.repo} · ${codexPaneStatus.get(e.status) ?? "状態不明"}`)}</span>`
     : (isMobileUA ? mobRow : row)(e);
