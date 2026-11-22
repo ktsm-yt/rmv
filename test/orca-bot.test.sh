@@ -104,7 +104,7 @@ if argv[:2] == ["terminal", "list"]:
     print('{"ok":true,"result":{"terminals":[]}}')
     sys.exit(0)
 with (directory / "calls.jsonl").open("a") as f:
-    f.write(json.dumps({"argv": argv, "stdin": sys.stdin.read() if argv[-2:] == ["--body-file", "-"] else ""}) + "\n")
+    f.write(json.dumps({"argv": argv, "stdin": sys.stdin.read() if argv[-2:] == ["--body-file", "-"] else "", "orca_env": sorted(k for k in __import__("os").environ if k.startswith("ORCA_"))}) + "\n")
 mode = directory / "mode"
 if mode.exists():
     if mode.read_text() == "exit":
@@ -151,7 +151,7 @@ Bun.serve = (options) => realServe({ ...options, fetch(req, server) {
 
     with (tmp / "server.log").open("w+") as log, subprocess.Popen(
         ["bun", "run", "--preload", str(preload), server], stdout=log, stderr=log,
-        env={**env, "RMV_ORCA_BIN": str(stub), "RMV_PORT": str(port), "RMV_EXT_ORIGINS": ext_origin},
+        env={**env, "RMV_ORCA_BIN": str(stub), "RMV_PORT": str(port), "RMV_EXT_ORIGINS": ext_origin, "RMV_MAIN_BOTS": " mAnAgEr ", "ORCA_AGENT_SESSION_ID": chat, "ORCA_TERMINAL_HANDLE": "term_x"},
     ) as proc:
         try:
             for _ in range(100):
@@ -166,27 +166,62 @@ Bun.serve = (options) => realServe({ ...options, fetch(req, server) {
                 raise AssertionError("server 起動待ちが時間切れ")
             assert proc.poll() is None, "server が起動しなかった"
 
-            args = ["orchestration", "send", "--to", f"bot:{bot_id}", "--chat", chat, "--type", "handoff"]
+            args = ["orchestration", "send", "--to", f"bot:{bot_id}", "--chat", chat, "--type", "handoff", "--from", "rmv"]
+            S = "\n(rmv から送っています。返事は手紙 (orchestration reply) でなく、この会話の最後の発話に書いてください。rmv はそれを読みます)"
+            B = ["--body-file", "-"]
             response = send("A", reset=True, bot="ignored", chat="ignored")
             assert response[0] == 200, response
-            assert records() == [{"argv": [*args, "--subject=A"], "stdin": ""}], records()
-            print("ok   /send: 数字キーは履歴の宛先へ題名だけを送る", flush=True)
+            assert records() == [{"argv": [*args, "--subject=A", *B], "stdin": S[1:], "orca_env": []}], records()
+            print("ok   /send: 数字キーは題名 + 結びの 1 行。--from rmv、ORCA_* は渡さない", flush=True)
+
+            worker = hist / "20261122T000000000-reviewer-bot.md"
+            worker_meta = worker.with_suffix(".json")
+            worker.write_text("隠した Bot の返事", encoding="utf-8")
+            write_json(worker_meta, {**meta, "session_id": "44444444-4444-4444-8444-444444444444", "name": worker.name,
+                                     "orca_bot": {**meta["orca_bot"], "name": "Reviewer", "id": "66383e77-ea45-4f17-9bd6-5b6698528645"}})
+            write_json(state / "keys.json", {"9": "/help"})
+            entries = {row["name"]: row for row in json.loads(http("/history")[1])}
+            assert entries[entry.name]["bot"] == entries[entry.name]["repo"] == "Manager"
+            assert entries[entry.name]["terminal"] and not entries[entry.name]["live"] and entries[entry.name]["agent"] is None
+            assert entries[worker.name]["agent"]["type"] == "Reviewer"
+            assert all(row.get("name") not in (entry.name, worker.name) for row in json.loads(http("/sessions")[1]))
+            subprocess.run(["uv", "run", "--with", "playwright", "python", "-", url], check=True, text=True, input='''
+from playwright.sync_api import sync_playwright, expect
+import sys
+with sync_playwright() as p:
+    browser = p.chromium.launch()
+    page = browser.new_page()
+    page.goto(sys.argv[1], wait_until="domcontentloaded")
+    expect(page.locator("#stamp")).to_contain_text("Manager:")
+    expect(page.locator('#plist [data-r="Reviewer"]')).to_have_count(0)
+    expect(page.locator("#ctext")).to_have_attribute("placeholder", "Bot へ送る (⌘+Enter)")
+    expect(page.locator("#cact > .q:enabled")).to_have_count(5)
+    expect(page.locator('#copt [data-k="9"]')).to_be_disabled()
+    expect(page.locator("#cact .cpick:disabled")).to_have_count(2)
+    page.goto(sys.argv[1] + "/?mode=agents", wait_until="domcontentloaded")
+    expect(page.locator("#stamp")).to_contain_text("🤖 Reviewer:")
+    expect(page.locator('#plist [data-r="Manager"]')).to_have_count(0)
+    browser.close()
+''')
+            worker.unlink()
+            worker_meta.unlink()
+            print("ok   画面: メインは窓口役、他はワーカー。Bot では 1〜5 だけ有効", flush=True)
 
             annotation = "-先頭の指摘\n\n2 行目の指摘"
             response = send(annotation)
             assert response[0] == 200, response
-            assert records()[-1] == {"argv": [*args, "--subject=-先頭の指摘", "--body-file", "-"], "stdin": annotation}
+            assert records()[-1] == {"argv": [*args, "--subject=-先頭の指摘", *B], "stdin": annotation + S, "orca_env": []}
             attachment = paste / "123-abcdef12.png"
             attachment.touch()
             response = send(annotation, images=[str(attachment)])
             assert response[0] == 200, response
-            assert records()[-1]["stdin"] == f"{annotation}\n{attachment}"
+            assert records()[-1]["stdin"] == f"{annotation}\n{attachment}{S}"
             response = send("", images=[str(attachment)])
             assert response[0] == 200, response
-            assert records()[-1] == {"argv": [*args, "--subject=画像", "--body-file", "-"], "stdin": str(attachment)}
+            assert records()[-1] == {"argv": [*args, "--subject=画像", *B], "stdin": str(attachment) + S, "orca_env": []}
             response = send("😀" * 81)
             assert response[0] == 200, response
-            assert records()[-1] == {"argv": [*args, "--subject=" + "😀" * 80, "--body-file", "-"], "stdin": "😀" * 81}
+            assert records()[-1] == {"argv": [*args, "--subject=" + "😀" * 80, *B], "stdin": "😀" * 81 + S, "orca_env": []}
             audit = [json.loads(line) for line in (state / "send.jsonl").read_text().splitlines()]
             assert len(audit) == len(records()) and all(row["bot"] == bot_id and row["chat"] == chat and row["name"] == entry.name for row in audit)
             print("ok   /send: 赤ペンの全文・添付パスを stdin に渡し、送信先を記録する", flush=True)
