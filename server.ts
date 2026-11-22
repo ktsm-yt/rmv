@@ -13,6 +13,7 @@ const DIR = import.meta.dir;
 const STATE = process.env.RMV_STATE_DIR || `${DIR}/state`; // RMV_STATE_DIR はテスト用の上書き口
 const FRAGMENT = `${STATE}/latest.html`;
 const HIST = `${STATE}/history`;
+const MAIN_BOTS = new Set((process.env.RMV_MAIN_BOTS ?? "Usher").split(",").map((name) => name.trim().toLowerCase()).filter(Boolean));
 const CODEX = process.env.RMV_CODEX_BIN || "codex"; // 同上。Codex の会話への赤ペンを `codex queue` で積む (launchd の PATH では /opt/homebrew/bin/codex)
 const CODEX_QUEUE_TIMEOUT = 30_000;
 const SIPS = "/usr/bin/sips"; // 貼った画像の縮小 (macOS 標準)
@@ -159,7 +160,10 @@ async function historyItems() {
       const gone = Boolean(sock && herdrSessionName(sock) && !existsSync(sock));
       const shown = paneView(pane, await agentsOf(sock), byHandle.get(meta.terminal));
       const codex = meta.agent_kind === "codex"; // hooks/codex-stop.py の記録。端末を持たないので live にしない (稼働中・/sessions・/ext/deliver に出さない)
-      return { name, codex, prompt: typeof meta.prompt === "string" ? meta.prompt : null, ts: meta.ts ?? null, cwd, root, label: labelOf(meta), repo: root.split("/").filter(Boolean).pop() ?? "", head: body.replace(/\s+/g, " ").trim().slice(0, 40), end: endOf(body), sid: typeof meta.session_id === "string" && meta.session_id ? meta.session_id : null, terminal: Boolean(meta.terminal) || pane !== null, live: codex || gone ? false : shown.herdr ? shown.alive : (pane !== null && !meta.terminal ? true : terms ? Boolean(meta.terminal) && handles.has(meta.terminal) : claude ? Boolean(meta.terminal) && claude.has(meta.terminal) : true) && shown.alive, session, perm: perm ? { id: perm.id, tool: perm.tool, detail: perm.detail, ts: perm.ts } : null, agent: meta.agent ?? null, sub: subType(meta, shown.tab, await firstTabsOf(herdrSockOf(meta))), title: shown.title, status: shown.status, lastOutputAt: shown.lastOutputAt, bg: await readBg(session, typeof meta.session_id === "string" ? meta.session_id : null) };
+      const bot = typeof meta.orca_bot?.name === "string" ? meta.orca_bot.name : null;
+      const mainBot = bot && (MAIN_BOTS.has(bot.toLowerCase()) || MAIN_BOTS.has(String(meta.orca_bot.id).toLowerCase()));
+      const sub = bot ? (mainBot ? null : bot) : subType(meta, shown.tab, await firstTabsOf(herdrSockOf(meta)));
+      return { name, codex, bot, prompt: typeof meta.prompt === "string" ? meta.prompt : null, ts: meta.ts ?? null, cwd, root, label: labelOf(meta), repo: bot ?? (root.split("/").filter(Boolean).pop() ?? ""), head: body.replace(/\s+/g, " ").trim().slice(0, 40), end: endOf(body), sid: typeof meta.session_id === "string" && meta.session_id ? meta.session_id : null, terminal: !!bot || Boolean(meta.terminal) || pane !== null, live: bot || codex || gone ? false : shown.herdr ? shown.alive : (pane !== null && !meta.terminal ? true : terms ? Boolean(meta.terminal) && handles.has(meta.terminal) : claude ? Boolean(meta.terminal) && claude.has(meta.terminal) : true) && shown.alive, session, perm: perm ? { id: perm.id, tool: perm.tool, detail: perm.detail, ts: perm.ts } : null, agent: meta.agent ?? null, sub, title: shown.title, status: shown.status, lastOutputAt: shown.lastOutputAt, bg: await readBg(session, typeof meta.session_id === "string" ? meta.session_id : null) };
     }),
   )).filter((e): e is NonNullable<typeof e> => e !== null);
   // 1 つの端末で順に別の repo を開くと、端末が生きている限り昔の repo まで live になる (2026-09-29 実機: 1 端末で 4 repo)。
@@ -213,7 +217,7 @@ async function historyItems() {
     if (typeof p?.session_id === "string" && p.session_id) askSid.set(session, p.session_id); // /sessions 用。仮 entry には sid が無く、返事ゼロの session は curSid にも居ない
     // 最初の返事より前の許可待ち (foyer の依頼はほぼこれ) もこの行に載せる。null 固定だと rmv に出なかった (2026-10-15)
     const perm = perms.get(session);
-    items.push({ name: `asking-${session}.md`, prompt: null, ts: a.ts, cwd, root, label: labelOf(p), repo: root.split("/").filter(Boolean).pop() ?? "", head: "", terminal: isTerm || pane !== null, live, session, perm: perm ? { id: perm.id, tool: perm.tool, detail: perm.detail, ts: perm.ts } : null, agent: null, sub: subType(p, shown.tab, await firstTabsOf(herdrSockOf(p))), title: shown.title, status: shown.status, lastOutputAt: shown.lastOutputAt, bg: await readBg(session, typeof p?.session_id === "string" ? p.session_id : null) });
+    items.push({ name: `asking-${session}.md`, bot: null, prompt: null, ts: a.ts, cwd, root, label: labelOf(p), repo: root.split("/").filter(Boolean).pop() ?? "", head: "", terminal: isTerm || pane !== null, live, session, perm: perm ? { id: perm.id, tool: perm.tool, detail: perm.detail, ts: perm.ts } : null, agent: null, sub: subType(p, shown.tab, await firstTabsOf(herdrSockOf(p))), title: shown.title, status: shown.status, lastOutputAt: shown.lastOutputAt, bg: await readBg(session, typeof p?.session_id === "string" ? p.session_id : null) });
   }
   items.sort((x, y) => (Date.parse(y.ts ?? "") || 0) - (Date.parse(x.ts ?? "") || 0)); // 仮の entry も時刻順。先頭固定だと端末が閉じた後も残る state/prompt の待機中が「最新」に居座り、追従が止まる (2026-10-13 実害: 19:57 の Crewforce が 2 時間先頭に残った)
   // 同じ herdr pane が別の Orca 端末 handle で記録されていると (herdr を別の端末から起こし直した)、pane だけで生死を見るので古い handle の分まで live になる
@@ -1156,6 +1160,13 @@ async function send(req: Request, opt: { exact?: boolean; check?: (t: SendTarget
     opt.extendCodexTimeout?.();
     return codexQueue(name, sid, text, images, reset, backend);
   }
+  if (meta.orca_bot && !name.startsWith("asking-")) {
+    if (opt.exact || opt.check) return new Response("Bot の会話へは外部配送・モデル切り替えを使えません", { status: 409 });
+    if (!(await Bun.file(`${HIST}/${name}`).exists())) return new Response("not found", { status: 404 });
+    if (req.signal.aborted) return new Response("送信は中断されました", { status: 499 });
+    opt.extendCodexTimeout?.();
+    return botSend(name, meta.orca_bot, text, images);
+  }
   let pane = herdrPaneOf(meta);
   let sock = herdrSockOf(meta);
   if (!pane && (typeof meta.terminal !== "string" || !meta.terminal)) return new Response("entry has no terminal", { status: 409 });
@@ -1231,6 +1242,44 @@ async function codexQueue(name: string, sid: string, text: string, images: unkno
     } finally { clearTimeout(timer); }
   } catch (e) {
     return new Response(`codex spawn failed: ${e}`, { status: 502 });
+  }
+}
+
+function isBotUuid(value: unknown): value is string {
+  return typeof value === "string" && value.length === 36 && EXT_SID.test(value.toLowerCase());
+}
+
+const BOT_SIGNOFF = "(rmv から送っています。返事は手紙 (orchestration reply) でなく、この会話の最後の発話に書いてください。rmv はそれを読みます)";
+async function botSend(name: string, target: { id?: unknown; chat?: unknown }, text: string, images: unknown[]): Promise<Response> {
+  const { id, chat } = target;
+  if (!isBotUuid(id) || !isBotUuid(chat)) return new Response("Bot の記録の宛先 ID が UUID ではありません", { status: 409 });
+  if (text.includes("\0")) return new Response("Bot へ送る文に NUL は使えません", { status: 400 });
+  const lines = text.split(/\r\n|\r|\n/);
+  const subject = Array.from(lines.find((line) => line.trim()) ?? "画像").slice(0, 80).join("");
+  const fullBody = images.length || lines.length > 1 || subject !== text;
+  // 本文が題名に収まる短い文 (数字キーの A など) は stdin に結びの 1 行だけ。それ以外は全文 + 画像のパス + 結びの 1 行
+  const body = [...(fullBody && text.trim() ? [text] : []), ...images, BOT_SIGNOFF].join("\n");
+  // --from rmv: launchd の rmv には送り主の端末が無く、無いと no_active_sender_terminal で断られる (Orca 1.4.269 実測)
+  const args = [ORCA, "orchestration", "send", "--to", `bot:${id}`, "--chat", chat, "--type", "handoff", "--from", "rmv", `--subject=${subject}`, "--body-file", "-"];
+  // ORCA_* があると Orca は --from を捨て、その会話を送り主にする (答えの手紙がそこへ行く)。試験で Bot の会話から起こした rmv でも同じ送り方にする
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("ORCA_")));
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const p = Bun.spawn(args, { env, stdin: Buffer.from(body), stdout: "pipe", stderr: "pipe" });
+    const log = appendFile(`${STATE}/send.jsonl`, JSON.stringify({ ts: new Date().toISOString(), name, bot: id, chat }) + "\n").catch(() => {});
+    const result = await Promise.race([
+      Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]),
+      new Promise<null>((resolve) => { timer = setTimeout(() => { p.kill(); resolve(null); }, CODEX_QUEUE_TIMEOUT); }),
+    ]);
+    await log;
+    if (!result || p.signalCode) return new Response("Bot に届いたか不明です。Orca のその Bot の会話を確認してから送り直してください", { status: 504 });
+    const [out, err, code] = result;
+    if (code !== 0) return new Response(`orca orchestration send exit ${code}: ${(err.trim() || out.trim()).slice(0, 500)}`, { status: 502 });
+    return Response.json({ ok: true, via: "orca-bot" }, { headers: { "cache-control": "no-store" } });
+  } catch (e) {
+    return new Response(`orca spawn failed: ${e}`, { status: 502 });
+  } finally {
+    clearTimeout(timer);
   }
 }
 

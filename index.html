@@ -906,7 +906,7 @@ let REPO = params.get("repo") || ""; // "" = すべて
 // inRepo で落とす = 一覧・← →・追従・chip・送り先リスト・プロジェクト列がモードの entry だけを見る。?mode=agents に残す (localStorage には持たない = 開けば main)
 let AGENTS = params.get("mode") === "agents";
 const inMode = (e) => !!e.agent === AGENTS;
-const agentTag = (e) => (e?.agent ? `🤖 ${String(e.agent.type ?? "").split(":").pop() || "agent"}: ` : e?.codex ? "Codex: " : ""); // "claude-code-harness:worker" → "🤖 worker: "
+const agentTag = (e) => (e?.bot ? `${e.agent ? "🤖 " : ""}${e.bot}: ` : e?.agent ? `🤖 ${String(e.agent.type ?? "").split(":").pop() || "agent"}: ` : e?.codex ? "Codex: " : ""); // "claude-code-harness:worker" → "🤖 worker: "
 // ponytail: repo の照合は cwd basename の完全一致 (大文字小文字は無視) だけ。上限 = 1 repo ずつ切り替えて見る用途。
 const inRepo = (es) => es.filter((e) => inMode(e) && (!REPO || e.repo.toLowerCase() === REPO.toLowerCase()));
 // repo 名 → 決定的な色 (文字列 hash → hue)。照合と同じく大文字小文字は無視
@@ -1543,7 +1543,7 @@ function renderTray() {
   fimgs.innerHTML = d?.imgs.map((p, i) => `<span class="cimg">${thumb(p)}<button data-i="${i}" title="外す">×</button></span>`).join("") ?? "";
   const send = document.getElementById("send");
   send.disabled = sendingNotes.has(curName()) || !canSendNotes();
-  send.title = cur?.codex ? "Codex の会話のキューに積む (文字だけ)" : cur?.terminal ? "返事を出した端末へ打ち込む" : "この返事は Orca / herdr の外で出たので送れません。コピーして貼ってください";
+  send.title = cur?.bot ? "Bot の会話へ手紙で送る" : cur?.codex ? "Codex の会話のキューに積む (文字だけ)" : cur?.terminal ? "返事を出した端末へ打ち込む" : "この返事は Orca / herdr の外で出たので送れません。コピーして貼ってください";
 }
 const refresh = () => { applyMarks(); renderTray(); };
 
@@ -1715,7 +1715,7 @@ try { chatPins = JSON.parse(localStorage.getItem("rmx.chat.pin")) || {}; } catch
 // 固定を残すと /clear や端末の開き直しの後も昨日の端末を指したまま送信が失敗する (2026-10-06 実機: Crewforce が前日 18:39 の端末に固定)
 const chatPin = () => {
   const p = chatPins[REPO.toLowerCase()] ?? "";
-  return p && all.some((e) => e.session === p) && !all.some((e) => e.session === p && (e.live || e.codex)) ? "" : p;
+  return p && all.some((e) => e.session === p) && !all.some((e) => e.session === p && (e.live || e.codex || (e.bot && inMode(e)))) ? "" : p;
 };
 // 右下: 送り先セッションで使った mermaid 図 + 画像・PDF (server の /media)。返事が変わった時だけ取り直す。押すと図・画像は全画面、PDF は別タブ
 const cmedia = document.getElementById("cmedia");
@@ -1791,12 +1791,13 @@ function renderChat() {
     : !to ? (codexPaneSession(pin || SESS) ? "選んだ端末が見つかりません" : pin ? "固定先のセッションの返事が一覧に無い (送れない)" : "表示中の返事が無い (送れない)")
     : !to.terminal && !to.codex ? (pin ? "固定先は Orca / herdr 外の端末 (送れない)" : "この返事は Orca / herdr 外の端末 (送れない)") : "";
   document.getElementById("cwhy").textContent = why;
-  ctext.placeholder = (pane && !pane.sid ? "Codexへ1行送る" : to?.codex ? "Codexへ文字を送る" : "端末へ送る") + (isMobileUA ? "" : " (⌘+Enter)");
+  ctext.placeholder = (to?.bot ? "Bot へ送る" : pane && !pane.sid ? "Codexへ1行送る" : to?.codex ? "Codexへ文字を送る" : "端末へ送る") + (isMobileUA ? "" : " (⌘+Enter)");
   ctext.disabled = pane ? chatBusy : !!why || chatBusy;
   csend.disabled = !!why || chatBusy;
   const terminalControlsDisabled = csend.disabled || !!to?.codex;
   document.getElementById("cattach").disabled = terminalControlsDisabled;
   document.querySelectorAll("#cact .q, #cact .cpick").forEach((b) => { b.disabled = terminalControlsDisabled; });
+  if (to?.bot) document.querySelectorAll("#copt .q, #cact .cpick").forEach((b) => { b.disabled = true; });
   cimgs.hidden = !to || to.codex || !pending.length;
   csend.textContent = chatBusy ? "送信中…" : "送信";
   // 各行 = 時刻 + 最新返事の冒頭。同じ repo の chip は時刻だけでは見分けられない (2026-09-29 user)
@@ -1809,8 +1810,11 @@ function renderChat() {
     const ask = openAsk.has(e.session) && (e.asking?.prompt ?? e.prompt);
     return `<i class="${st}"></i><b>${esc(chipLabels.get(e.session) ?? (e.repo || "?"))}</b><time class="${st}">${esc(hhmm(new Date(e.ts)))}</time><span>${esc(sub)}</span>${ask ? `<span class="task">${esc(ask)}</span>` : ""}`;
   };
-  const entries = [...chipEntries.values()].filter((e) => e.live || e.codex || showDead || e.session === pin);
-  const shown = [...entries.filter((e) => !e.codexPane).slice(0, isMobileUA ? 12 : 5), ...entries.filter((e) => e.codexPane)];
+  const entries = [...chipEntries.values()].filter((e) => e.live || e.codex || e.bot || showDead || e.session === pin);
+  // Bot の行は終了扱いにならないので、枠は端末の行が先に取り、Bot は余った分だけ (窓口役の Bot の会話が増えても稼働中の端末の chip を押し出さない)
+  const cap = isMobileUA ? 12 : 5, plain = entries.filter((e) => !e.codexPane && !e.bot).slice(0, cap);
+  const keep = new Set([...plain, ...entries.filter((e) => !e.codexPane && e.bot).slice(0, cap - plain.length)]);
+  const shown = [...entries.filter((e) => keep.has(e)), ...entries.filter((e) => e.codexPane)];
   const chipContent = (e) => e.codexPane
     ? `<i class="${stOf(e).st}"></i><span class="live-codex-label">${esc(`Codex · ${e.label} · ${e.repo} · ${codexPaneStatus.get(e.status) ?? "状態不明"}`)}</span>`
     : (isMobileUA ? mobRow : row)(e);
@@ -2037,7 +2041,7 @@ function fillPick(sel) {
 async function switchTo(sel) {
   const to = chatTo(), say = document.getElementById("cmsg"), c = sel.dataset.cmd, v = sel.value;
   sel.blur(); // 選んだ後もフォーカスが残ると ↑↓ が送り先の切り替えと取り合う
-  if (!v || !to?.terminal || to.codex || chatBusy) return fillPick(sel);
+  if (!v || !to?.terminal || to.codex || to.bot || chatBusy) return fillPick(sel);
   chatBusy = true;
   say.textContent = "";
   renderChat();
@@ -2066,7 +2070,7 @@ async function loadNow(to) {
   if (name === nowFor) return;
   nowFor = name;
   let r = {};
-  try { if (name && !to.codex) r = await (await fetch("/now?name=" + encodeURIComponent(name))).json(); } catch {}
+  try { if (name && !to.codex && !to.bot) r = await (await fetch("/now?name=" + encodeURIComponent(name))).json(); } catch {}
   if (nowFor !== name) return; // 取っている間に送り先が変わった
   nowVal.model = r.model || null; nowVal.effort = r.effort || null;
   showCtx(r.ctx);
@@ -2080,7 +2084,8 @@ function renderKeys(m) {
   const all = { ...KEYS_DEFAULT, ...m }, ok = (k) => typeof all[k] === "string" && all[k];
   const label = (b, k) => { b.dataset.k = k; b.dataset.t = all[k]; b.title = `${all[k]} を送る (${k})`; b.replaceChildren(all[k], Object.assign(document.createElement("sup"), { textContent: k })); };
   document.querySelectorAll("#cact > .q").forEach((b) => ok(b.dataset.k) && label(b, b.dataset.k));
-  document.getElementById("copt").replaceChildren(...["6", "7", "8", "9", "0"].filter(ok).map((k) => { const b = Object.assign(document.createElement("button"), { className: "q", disabled: csend.disabled || !!chatTo()?.codex }); label(b, k); return b; }));
+  const to = chatTo();
+  document.getElementById("copt").replaceChildren(...["6", "7", "8", "9", "0"].filter(ok).map((k) => { const b = Object.assign(document.createElement("button"), { className: "q", disabled: csend.disabled || !!(to?.codex || to?.bot) }); label(b, k); return b; }));
 }
 renderKeys({});
 fetch("/keys").then((r) => r.json()).then(renderKeys).catch(() => {});
@@ -2089,7 +2094,7 @@ const sug = document.getElementById("sug");
 let skillList = [], skillCwd = null, skillAt = 0, sugItems = [], sugI = 0;
 async function loadSkills() {
   const to = chatTo();
-  if (!to?.terminal || to.codex) return;
+  if (!to?.terminal || to.codex || to.bot) return;
   const cwd = to.cwd ?? "";
   if (skillCwd === cwd && Date.now() - skillAt < 60000) return;
   skillCwd = cwd; skillAt = Date.now();
@@ -2099,7 +2104,7 @@ async function loadSkills() {
 function renderSug() {
   const m = ctext.value.match(/^\/(\S*)$/);
   const to = chatTo();
-  if (!m || !to?.terminal || to.codex) { sugItems = []; sug.hidden = true; return; }
+  if (!m || !to?.terminal || to.codex || to.bot) { sugItems = []; sug.hidden = true; return; }
   const q = m[1].toLowerCase();
   let hit = skillList.filter((s) => s.name.toLowerCase().startsWith(q));
   if (!hit.length) hit = skillList.filter((s) => s.name.toLowerCase().includes(q));
@@ -2150,7 +2155,7 @@ function renderChips() {
   chipEntries = seen;
   renderChat();
   // 既定は live なセッションだけ (終了したものは #pdead で出す)。選択中は live でなくても出す (消えると迷子)
-  const shown = ss.filter((e) => e.live || e.codex || showDead || e.session === SESS); // Codex の返事は live にならないが終了扱いで隠さない
+  const shown = ss.filter((e) => e.live || e.codex || e.bot || showDead || e.session === SESS); // Codex と Bot の返事は live にならないが終了扱いで隠さない
   let html = ss.length || SESS ? chip("", "最新", "最後に返事したセッションを追う") + shown.map((e) => chipBtn(e.session, e.session === SESS, rcDot + esc(label(e)), `${e.repo} / ${e.session}`, true, e.repo)).join("") : "";
   if (SESS && !seen.has(SESS)) html += chip(SESS, "選択中 (返事なし)", SESS); // 履歴から消えたセッションを URL で指している
   if (html === chipsHtml) return; // 毎 poll 描き直すと横スクロール位置が飛ぶ
@@ -2196,7 +2201,7 @@ function renderProjects() {
     if (!e.agent && !mainLatest.has(k)) mainLatest.set(k, e);
     if (!inMode(e)) continue;
     if (!latest.has(k)) latest.set(k, e);
-    if (e.live || e.codex) alive.add(k);
+    if (e.live || e.codex || e.bot) alive.add(k);
   }
   if (!lastSeen) { lastSeen = Object.fromEntries([...mainLatest].map(([k, e]) => [k, tsOf(e)])); saveSeen(); } // 初回は全部既読から始める
   const sel = REPO.toLowerCase();
@@ -2212,9 +2217,9 @@ function renderProjects() {
     return `<button class="prow${k === sel ? " on" : ""}${dead ? " dead" : ""}" data-r="${esc(e.repo)}" title="${esc(e.repo)}"><span class="pn" style="--rc:${repoColor(e.repo)}">${dot ? '<i class="dot" title="未読"></i>' : ""}<b>${rcDot}${esc(e.repo || "?")}</b><time>${e.ts ? hhmm(new Date(e.ts)) : ""}</time></span><span class="ph">${esc(cut(agentTag(e) + (e.head ?? ""), 30))}</span></button>`;
   });
   if (sel && !latest.has(sel)) rows.push(`<button class="prow on" data-r="${esc(REPO)}"><span class="pn"><b>${esc(REPO)}</b></span><span class="ph">返事なし</span></button>`); // URL が履歴に無い repo を指している
-  const deadSess = judged && inRepo(all).some((e) => !e.live && !e.codex); // repo は活きていても、その中の終了したセッション (chip・送り先) を出すためのトグル
+  const deadSess = judged && inRepo(all).some((e) => !e.live && !e.codex && !e.bot); // repo は活きていても、その中の終了したセッション (chip・送り先) を出すためのトグル
   const deadBtn = !hidden && !deadSess ? "" : showDead ? "終了したものを隠す" : `終了したものも表示${hidden ? ` (${hidden}${hiddenUnread ? "・未読あり" : ""})` : ""}`;
-  const tabs = `<div class="ptabs"><button class="prow${sel || AGENTS ? "" : " on"}" data-r="" data-m=""><span class="pn"><b>メイン</b></span></button><button class="prow${AGENTS ? " on" : ""}" data-r="" data-m="agents" title="subagent の返事だけを見る"><span class="pn"><b>🤖 ワーカー</b></span></button></div>`;
+  const tabs = `<div class="ptabs"><button class="prow${sel || AGENTS ? "" : " on"}" data-r="" data-m=""><span class="pn"><b>メイン</b></span></button><button class="prow${AGENTS ? " on" : ""}" data-r="" data-m="agents" title="ワーカーと窓口役以外の Bot の返事を見る"><span class="pn"><b>🤖 ワーカー</b></span></button></div>`;
   const html = tabs + rows.join("") + (deadBtn ? `<button id="pdead" title="Claude が走っている端末が無い repo / セッション">${deadBtn}</button>` : "");
   document.getElementById("plist").title = judged ? "" : "端末の生死を判定できないので全部表示中";
   document.getElementById("ptoggle").classList.toggle("unread", unread); // 畳んでいても未読が分かるように

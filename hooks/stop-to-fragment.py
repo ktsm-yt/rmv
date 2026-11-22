@@ -26,6 +26,8 @@ from datetime import datetime
 STATE = os.environ.get("RMV_STATE_DIR") or os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "state")
 HIST = os.path.join(STATE, "history")
 KEEP = 200  # 静かなプロジェクトも左のプロジェクト列から落ちないだけ残す
+KEEP_BOTS = 100
+BOT_SUFFIX = "-bot.md"
 UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE | re.ASCII)
 AGENT_MAX = 4000  # subagent の報告は長いので切る
 
@@ -63,7 +65,9 @@ def write(path, s):
 
 def prune():
     names = sorted(n for n in os.listdir(HIST) if n.endswith(".md"))  # 先頭の ts が固定幅なので辞書順 = 時刻順
-    for n in names[:-KEEP]:
+    bots = [n for n in names if n.endswith(BOT_SUFFIX)]
+    others = [n for n in names if not n.endswith(BOT_SUFFIX)]
+    for n in others[:-KEEP] + bots[:-KEEP_BOTS]:
         for p in (n, n[:-3] + ".json"):
             try:
                 os.remove(os.path.join(HIST, p))
@@ -278,8 +282,13 @@ def main():
         if sub:  # worker は一時 worktree (<repo>/.harness-worktrees/<id>) で動く。返事は親の repo に寄せる (別 project として並ばないように)
             cwd = re.sub(r"/\.(harness-)?worktrees/.*$", "", cwd)
         terminal, herdr_pane, herdr_socket = terminal_ids(sid)
+        bot = None
         if terminal is None and not herdr_pane:
-            return  # Orca 外かつ herdr 外 (返信先の端末が無い) セッションは記録しない
+            bot = orca_bot(data.get("transcript_path"))
+            if not bot or sub:
+                return
+            cwd = bot["home"]
+            name = name[:-3] + BOT_SUFFIX
         pane = pane_info(herdr_pane, herdr_socket)
         meta = {"cwd": cwd, "session_id": sid, "ts": now.isoformat(timespec="seconds"), "name": name,
                 "terminal": terminal, "herdr_pane": herdr_pane, "herdr_socket": herdr_socket, "herdr_label": pane["label"], "herdr_tab": pane["tab"]}
@@ -287,16 +296,30 @@ def main():
             meta["agent"] = {"type": data.get("agent_type"), "id": data.get("agent_id")}
         else:  # 本体の返事には prompt-state.py が置いた依頼文を載せて、ファイルは消す
             pf = os.path.join(STATE, "prompt", session_key(terminal, herdr_pane, sid, herdr_socket) + ".json")
+            if bot and text.rstrip().splitlines()[-1].strip() == "NO_REPLY":
+                os.unlink(pf)
+                return
             try:
                 with open(pf, encoding="utf-8") as f:
                     rec = json.load(f)
                 if not rec.get("waiting"):  # session-wait.py の待機中 (依頼なし) は prompt に載せず、ファイルだけ消す
                     meta["prompt"] = rec.get("prompt")
-                os.remove(pf)
+                if not bot:
+                    os.remove(pf)
             except (OSError, ValueError, AttributeError):
                 pass  # 依頼文が無い返事 (自動通知が起こした turn 等) は prompt を載せない
-        meta = json.dumps(meta, ensure_ascii=False)
         os.makedirs(HIST, exist_ok=True)
+        if bot:
+            meta["orca_bot"] = bot
+            write(os.path.join(HIST, name[:-3] + ".json"), json.dumps(meta, ensure_ascii=False))
+            write(os.path.join(HIST, name), text)
+            try:
+                os.unlink(pf)
+            except FileNotFoundError:
+                pass
+            prune()
+            return
+        meta = json.dumps(meta, ensure_ascii=False)
         write(os.path.join(HIST, name), text)
         write(os.path.join(HIST, name[:-3] + ".json"), meta)
         if not sub:
