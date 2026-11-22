@@ -41,6 +41,7 @@ for _ in $(seq 1 50); do curl -sf "$BASE/history" >/dev/null 2>&1 && break; slee
 
 uv run --with playwright python - "$BASE" "$TMP" <<'PY'
 import json, sys, time
+from datetime import datetime
 from pathlib import Path
 from playwright.sync_api import expect, sync_playwright
 base, tmp = sys.argv[1], Path(sys.argv[2])
@@ -51,9 +52,16 @@ with sync_playwright() as p:
     expect(page.locator("#cto")).to_contain_text("Manager")
     expect(page.locator('#cchips [data-s="term_a"]')).to_have_count(1)
     print("ok   窓口役の Bot の会話 6 つでも、稼働中の端末の chip が残る", flush=True)
-    (tmp / "state" / "perm" / "term_a.json").write_text(json.dumps({"id": "p1", "tool": "Bash", "detail": "ls", "ts": time.strftime("%Y-%m-%dT%H:%M:%S+09:00"),
+    (tmp / "state" / "perm" / "term_a.json").write_text(json.dumps({"id": "p1", "tool": "Bash", "detail": "ls", "ts": datetime.now().astimezone().isoformat(timespec="seconds"),  # 時差は決め打ちしない (CI は UTC。+09:00 だと 9 時間前になり PERM_TTL で捨てられる)
         "session_id": "aaaaaaaa-0000-4000-8000-000000000000", "cwd": "/x/demo", "terminal": "term_a", "herdr_pane": None, "herdr_socket": None}))
-    expect(page.locator("#tstat [data-approve]:enabled")).to_have_count(1, timeout=10000)
+    try:
+        expect(page.locator("#tstat [data-approve]:enabled")).to_have_count(1, timeout=10000)
+    except AssertionError:
+        import urllib.request
+        rows = json.load(urllib.request.urlopen(base + "/history"))
+        print("DEBUG perm:", [(r.get("session"), r.get("live"), r.get("perm")) for r in rows if not r.get("bot")], file=sys.stderr)
+        print("DEBUG tstat:", page.locator("#tstat").inner_html()[:500], file=sys.stderr)
+        raise
     expect(page.locator("#cto")).to_contain_text("Manager")
     page.locator("body").click(position={"x": 5, "y": 5})
     page.keyboard.press("y")
