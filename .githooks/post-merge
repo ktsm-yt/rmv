@@ -1,0 +1,10 @@
+#!/bin/sh
+# --squash では HEAD が動かず、Git は引数に 1 を渡す。
+[ "${1:-}" = 0 ] || exit 0
+[ "$(git symbolic-ref --quiet HEAD)" = refs/heads/main ] || exit 0
+
+service="gui/$(id -u)/com.ktsm.harness-rmv"
+if ! launchctl kickstart -k "$service" >/dev/null 2>&1; then
+  printf 'post-merge: rmv restart failed (launchctl kickstart -k %s)\n' "$service" >&2
+fi
+exit 0
