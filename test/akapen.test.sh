@@ -223,6 +223,7 @@ cat > "$STUB" <<EOF
 if [ "\$1" = worktree ]; then cat "$TMP/wt.json" 2>/dev/null || exit 1; exit 0; fi
 if [ "\$1 \$2" = "terminal split" ]; then printf '%s\n' "\$@" > "$TMP/newargv"; echo '{"ok":true,"result":{"terminal":{"handle":"term_split"}}}'; exit 0; fi
 if [ "\$1 \$2" = "terminal create" ]; then printf '%s\n' "\$@" > "$TMP/newargv"; echo '{"ok":true,"result":{"terminal":{"handle":"term_new"}}}'; exit 0; fi
+if [ "\$1 \$2" = "orchestration worker-list" ]; then echo '{"ok":true,"result":{"workers":[]}}'; exit 0; fi
 if [ "\$2" = list ]; then echo list >> "$TMP/lists"; cat "$TMP/list.json" 2>/dev/null || exit 1; exit 0; fi
 # read: 下書き欄の [Image #N] = これまでに届いた Ctrl+V の数 ($TMP/noimg があれば増やさない = 貼れなかった)
 if [ "\$2" = read ]; then n=\$(cat "$TMP/ctrlv" 2>/dev/null | wc -l | tr -d ' '); d=""; for ((i = 1; i <= n; i++)); do d="\$d[Image #\$i] "; done; printf '{"ok":true,"result":{"terminal":{"draft":"%s"}}}' "\$d"; exit 0; fi

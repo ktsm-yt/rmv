@@ -87,6 +87,7 @@ const TEXT = { "content-type": "text/plain; charset=utf-8", "cache-control": "no
 // sub = herdr の pane 名が "foyer" (foyer runner が立てた) か、その workspace の最初の tab 以外に居る (2026-10-17 user「tab 1 のメイン会話以外はワーカー tab に」。
 // 10-15 は user の画面が w1:t2 / w5:t2 にもあったので tab では落とさなかったが、今は最初の tab = メインで統一。Crewforce は tab 1 を閉じて t2 だけなので「t1」でなく「最初の tab」)。
 // tab は hook が記録した herdr_tab、無い古い記録は今の herdr agent list の tab。どちらも無ければ pane 名だけで決める。最初の tab は herdr tab list (取れない時は ":t1")。
+// Orca の作業役 (worker-start が作った端末) は herdr の tab を持たないので、ここでなく historyItems の最後で Orca の起動記録 (loadWorkers) を見て "worker" にする。
 // 記録自体は残す (foyer runner が history を読んで返事にする)。許可待ちの状態行は従来どおりメインにも出る (index.html の perms は全モードから拾う)。
 function subType(meta: { herdr_label?: unknown; herdr_tab?: unknown } | null | undefined, liveTab: string | null, firstTabs: Map<string, string> | null): string | null {
   const label = typeof meta?.herdr_label === "string" && meta.herdr_label ? meta.herdr_label : null;
@@ -249,6 +250,15 @@ async function historyItems() {
     const rows = items.filter((e) => e.session === s);
     await appendFile(PERM_ORPHAN, JSON.stringify({ ts: new Date().toISOString(), session: s, perm_id: p.id, perm_ts: p.ts, tool: p.tool, herdr_pane: p.herdr_pane ?? null, rows: rows.length, live_rows: rows.filter((e) => e.live).length, prompt: existsSync(`${PROMPT}/${s}.json`) }) + "\n").catch(() => {});
   }
+  // Orca の作業役 (worker-start が作った端末) は返事の行も仮の行もワーカー側へ。herdr の pane・Bot・subagent の判定は上のまま。
+  // 初めて見る端末がある時だけ Orca の答えを待ち (待たないと一瞬メインに出る)、以後は裏で取り直す
+  const own = items.filter((e) => e.sub === null && !e.bot && !e.agent && /^(term|structworker)_/.test(e.session) && !e.session.includes("__"));
+  const unseen = own.some((e) => !workers.has(e.session) && !workerAsked.has(e.session));
+  if (own.length) {
+    const p = loadWorkers(unseen ? 0 : LIVE_TTL);
+    if (unseen) { await p; for (const e of own) workerAsked.add(e.session); } // 答えが返ってから印を付ける (並行する /history も待つ)
+  }
+  for (const e of own) if (workers.has(e.session)) e.sub = "worker";
   return { items, curSid, replySid, asking, askSid, botPerms, live: terms || agents || named ? "ok" : "unknown" };
 }
 // herdr の pane 名 (hook が記録した herdr_label)。無い・空は null。/history には出さず /sessions だけが使う
@@ -577,6 +587,43 @@ function blockedBotChats(): Promise<Set<string> | null> {
   const entry = { at: Infinity, chats };
   blockedBotCache = entry;
   return chats.finally(() => { entry.at = Date.now(); });
+}
+// Orca の `orchestration worker-start` が新しく作った端末の handle (作業役)。この端末の会話はワーカー側に出す。
+// resource.ownershipState: owned / released = worker-start が作った端末 (開いている / 閉じた後)。external (人が開いた端末に仕事を渡した)・user_owned (人が引き取った)・resource 無し (dispatch だけ) はメインに残す。
+// state/orca-workers.json に貯める: Orca が落ちている間・rmv の起動し直し・100 行を超えた分・`orchestration reset` の後も、過去の返事がメインに戻らない
+// ponytail: 貯めた handle は消さない (1 件約 50 字、1 日 10 件で年 180KB)。重くなったら state/history と state/prompt に無い handle を落とす
+const WORKERS = `${STATE}/orca-workers.json`;
+const WORKERS_WAIT = 2000; // 初めて見る端末の時だけ /history が待つ上限
+const savedWorkers = await Bun.file(WORKERS).json().catch(() => null);
+const workers = new Set<string>(Array.isArray(savedWorkers) ? savedWorkers.filter((h) => typeof h === "string") : []);
+let workersSaved = JSON.stringify([...workers]); // ファイルに書けた中身。書けなかった時は次の取り直しでもう一度書く
+const workerAsked = new Set<string>(); // 一度 Orca に聞いた端末
+let workersCall: { at: number; busy: boolean; done: Promise<void> } | null = null;
+function loadWorkers(maxAge: number): Promise<void> {
+  if (workersCall && (workersCall.busy || Date.now() - workersCall.at < maxAge)) return workersCall.done;
+  const call = { at: Date.now(), busy: true, done: Promise.resolve() };
+  call.done = (async () => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      // ORCA_* があると一覧がその端末の Run に絞られる (botSend と同じく外す)。cwd からも端末が推定されるので、どの workspace でもない / で呼ぶ
+      const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("ORCA_")));
+      const p = Bun.spawn([ORCA, "orchestration", "worker-list", "--limit", "100", "--full", "--json"], { cwd: "/", env, stdout: "pipe", stderr: "ignore" });
+      const result = await Promise.race([
+        Promise.all([new Response(p.stdout).text(), p.exited]),
+        new Promise<null>((resolve) => { timer = setTimeout(() => { p.kill(); resolve(null); }, WORKERS_WAIT); }),
+      ]);
+      const rows = result?.[1] === 0 ? JSON.parse(result[0])?.result?.workers : null;
+      if (!Array.isArray(rows)) return;
+      for (const r of rows.map((w) => w?.resource).reverse()) { // 新しい順に返るので古い順に当て、同じ端末は新しい行を正にする
+        if (typeof r?.terminalHandle !== "string") continue;
+        if (r.ownershipState === "owned" || r.ownershipState === "released") workers.add(r.terminalHandle);
+        else workers.delete(r.terminalHandle);
+      }
+      const now = JSON.stringify([...workers]);
+      if (now !== workersSaved) { await Bun.write(WORKERS, now); workersSaved = now; }
+    } catch {} finally { clearTimeout(timer); call.busy = false; }
+  })();
+  return (workersCall = call).done;
 }
 let termCache: { at: number; terms: Term[] | null } | null = null;
 async function liveTerminals(maxAge: number): Promise<Term[] | null> {
