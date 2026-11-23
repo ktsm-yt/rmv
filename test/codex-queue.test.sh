@@ -94,6 +94,7 @@ echo "Queued message q1 for thread \$3."
 STUB
 cat > "$TMP/orca" <<STUB
 #!/usr/bin/env bash
+if [ "\$1 \$2" = "orchestration worker-list" ]; then echo '{"ok":true,"result":{"workers":[]}}'; exit 0; fi
 if [ "\$1 \$2" = "terminal list" ]; then echo '{"ok":true,"result":{"terminals":[{"handle":"term_a","worktreePath":"/x/a","connected":true,"writable":true,"lastOutputAt":1}]}}'; exit 0; fi
 if [ "\$1 \$2" = "terminal read" ]; then echo '{"ok":true,"result":{"terminal":{"draft":""}}}'; exit 0; fi
 printf '%s|' "\$@" >> "$TMP/calls"; echo >> "$TMP/calls"; echo '{"ok":true}'

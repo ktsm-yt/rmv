@@ -23,6 +23,7 @@ cat > "$TMP/orca" <<STUB
 #!/usr/bin/env bash
 # $TMP/once がある時は次の 1 回だけその端末も一覧に足して消す (取り直しと送信の間に閉じる、の再現用)
 if [ "\$1 \$2" = "terminal read" ]; then cat "$TMP/oscreen"; exit 0; fi
+if [ "\$1 \$2" = "orchestration worker-list" ]; then echo '{"ok":true,"result":{"workers":[]}}'; exit 0; fi
 if [ "\$1 \$2" = "terminal list" ]; then x=""; if [ -f "$TMP/once" ]; then x=",\$(cat "$TMP/once")"; rm -f "$TMP/once"; fi; echo "{\"ok\":true,\"result\":{\"terminals\":[\$(cat "$TMP/terms")\$x]}}"; exit 0; fi
 printf '%s|' "\$@" >> "$TMP/calls"; echo >> "$TMP/calls"
 echo '{"ok":true}'
