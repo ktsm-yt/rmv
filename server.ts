@@ -1604,10 +1604,20 @@ async function skills(cwd: string | null): Promise<Response> {
   return Response.json(v, { headers: { "cache-control": "no-store" } });
 }
 
+// 起動し直す前に送信を切らないための数え: 処理中の POST の本数と、終了を決めたか (決めた後は新しい POST を受けない)
+let posts = 0, leaving = false;
+type Handler = (req: Request, server: Bun.Server<undefined>) => Promise<Response>;
+const countPosts = (handle: Handler): Handler => async (req, server) => {
+  if (req.method !== "POST") return handle(req, server);
+  if (leaving) return new Response("restarting", { status: 503 });
+  posts++;
+  try { return await handle(req, server); } finally { posts--; }
+};
+
 Bun.serve({
   hostname: "127.0.0.1",
   port: PORT,
-  async fetch(req, server) {
+  fetch: countPosts(async (req, server) => {
     const { pathname, searchParams } = new URL(req.url);
     // DNS rebinding 対策: 他サイトが自分のドメインを 127.0.0.1 に向けても Host が違うので読ませない
     if (!HOSTS.has(req.headers.get("host") ?? "")) return new Response("forbidden host", { status: 403 });
@@ -1669,7 +1679,7 @@ Bun.serve({
       return (await f.exists()) ? new Response(await f.text(), { headers: TEXT }) : new Response("not found", { status: 404 });
     }
     return new Response("not found", { status: 404 });
-  },
+  }),
 });
 console.log(`rmx-a: http://127.0.0.1:${PORT}`);
 
@@ -1685,3 +1695,54 @@ if (MAX_FOOTPRINT > 0) setInterval(async () => {
     process.exit(0);
   }
 }, 10 * 60_000);
+
+// RMV_RESTART_ON_CHANGE=1 なら、読み込んだコードが手元の main で新しくなった時に自分で終了し、launchd (KeepAlive) に起動し直させる。env が無い時 (手で起動した時) は何もしない。
+// git の hook では足りない: Orca はワークスペースを作る時に hook を切って main を早送りする (2026-11-22、merge した機能が起動したままの server に出なかった)。なので作業フォルダの中身を見る
+// ponytail: POST を待つのは 60 秒まで。それを超える送信は切れて、画面に「送れませんでした」と出ることがある
+if (process.env.RMV_RESTART_ON_CHANGE === "1") {
+  // 見るファイルの中身の控え。1 本でも読めなければ null
+  const readSources = async () => {
+    try {
+      const names = [...new Bun.Glob("*.ts").scanSync(DIR), "launchd/harness-rmv"].sort();
+      return new Map(await Promise.all(names.map(async (f) => [f, String(Bun.hash(await Bun.file(`${DIR}/${f}`).bytes()))] as const)));
+    } catch { return null; }
+  };
+  const git = async (...args: string[]) => { // 失敗したら null。optional-locks: 見張りが index.lock を取って user の git とぶつからないように (git diff は付けても取るので status を使う)
+    const p = Bun.spawn(["git", "--no-optional-locks", "-C", DIR, ...args], { stdout: "pipe", stderr: "ignore", timeout: 5000 });
+    const [out, code] = await Promise.all([new Response(p.stdout).text(), p.exited]);
+    return code === 0 ? out.trim() : null;
+  };
+  const locked = () => existsSync(`${DIR}/.git/index.lock`);
+  const base = (await readSources()) ?? new Map<string, string>();
+  // 起動より後に書かれたファイルは、読み込んだ中身か新しい中身か分からない。控えずに『変わった』として扱う。未来の時刻は数えない (起動のたびに『変わった』になり、起動し直しが止まらない)
+  for (const f of [...base.keys()]) {
+    const mtime = (await stat(`${DIR}/${f}`).catch(() => null))?.mtimeMs ?? 0;
+    if (mtime > performance.timeOrigin && mtime < Date.now() + 1) base.delete(f); // + 1: Date.now() はミリ秒未満を切り捨てる
+  }
+  // 起動した時と違う中身が、手元の main に commit 済みで入っている時だけ返す (別の枝・commit 前の書きかけ・checkout の途中は null)
+  const committedChange = async () => {
+    if (locked()) return null;
+    const now = await readSources();
+    if (!now) return null;
+    const files = [...new Set([...base.keys(), ...now.keys()])];
+    const changed = files.filter((f) => base.get(f) !== now.get(f));
+    if (!changed.length) return null;
+    const [head, dirty] = await Promise.all([git("symbolic-ref", "-q", "HEAD"), git("status", "--porcelain", "--untracked-files=no", "--", ...files)]);
+    return head === "refs/heads/main" && dirty === "" && !locked() ? { changed, key: JSON.stringify([...now]) } : null;
+  };
+  const watch = async () => {
+    for (let prev = ""; ; ) {
+      await Bun.sleep(5000);
+      const found = await committedChange().catch(() => null);
+      if (found && found.key === prev) return found.changed; // 2 回続けて同じ中身
+      prev = found?.key ?? "";
+    }
+  };
+  watch().then(async (changed) => {
+    leaving = true;
+    console.log(`${new Date().toISOString()} source changed (${changed.join(", ")}): 終了して launchd に起動し直させる (処理中の POST ${posts} 本)`);
+    for (const until = Date.now() + 60_000; posts && Date.now() < until; ) await Bun.sleep(100);
+    await Bun.sleep(200); // 最後の応答を送り切る
+    process.exit(0);
+  });
+}
