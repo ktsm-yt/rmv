@@ -8,5 +8,7 @@ RMV_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 for _k in $(env | sed -n "s/^RMX_\([A-Z0-9_]*\)=.*/\1/p"); do eval "[ -n \"\${RMV_$_k+x}\" ] || export RMV_$_k=\"\$RMX_$_k\""; done
 # メモリがこれを超えたら server が自分で終了し、KeepAlive で起動し直す (state/env で上書きできる)
 export RMV_MAX_FOOTPRINT_MB="${RMV_MAX_FOOTPRINT_MB:-1024}"
+# server のコードが手元の main で新しくなったら、server が自分で終了し、KeepAlive で起動し直す
+export RMV_RESTART_ON_CHANGE="${RMV_RESTART_ON_CHANGE:-1}"
 BUN="${BUN:-$(command -v bun || echo "$HOME/.bun/bin/bun")}"
 exec "$BUN" run "$RMV_DIR/server.ts" "$@"

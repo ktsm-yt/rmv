@@ -155,6 +155,8 @@ AI には HTML を書かせません。
 3. Orca のフローティングブラウザで `http://127.0.0.1:4310` を開きます。
 
 常駐させたい時は `bash launchd/install.sh` を実行してください (launchd に登録し、ログイン時に自動で起動します。ログは `~/Library/Logs/harness-rmv.log`)。
+常駐中に rmv の `.ts` か `launchd/harness-rmv` が手元の main で新しくなると、処理中の送信を待ってから (最長 60 秒) 自分で起動し直します。
+commit していない新しい `.ts` を直下に置いた時も、置く・書き換える・消すたびに 1 回起動し直します。
 
 許可ボタン、依頼文の表示、スマホから開く、読み上げの声などの任意の機能は、[docs/config.md](docs/config.md) に入れ方があります。
 
