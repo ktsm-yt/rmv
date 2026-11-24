@@ -100,6 +100,9 @@ import json, sys, time
 from pathlib import Path
 directory = Path(__file__).parent
 argv = sys.argv[1:]
+if argv[:2] == ["bot", "item"]:
+    print(json.dumps({"ok": True, "result": {"items": [], "events": []}}))
+    sys.exit(0)
 if argv[:2] == ["orchestration", "worker-list"]:
     print('{"ok":true,"result":{"workers":[]}}')
     sys.exit(0)

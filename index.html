@@ -108,6 +108,13 @@
   #tstat .trow.perm { color: inherit; font-weight: 700; }
   #tstat .trow.bot-perm { cursor: default; }
   #tstat .trow.bot-perm span { white-space: normal; overflow-wrap: anywhere; }
+  /* Bot の完了・判断待ちの知らせ (未読 = 太字)。同じ文の見えない太字を重ねて場所を取っておき、開いて太字が外れても折り返しと行の高さを変えない */
+  #tstat .note { --rc: #e5a50a; } #tstat .note:has(i.ok) { --rc: #2ec27e; } #tstat .note:is(:has(i.idle), .more) { --rc: var(--line); }
+  #tstat .note.new { color: var(--fg); font-weight: 700; } #tstat .note.on { background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); }
+  #tstat .note :is(span, time) { display: grid; } #tstat .note :is(span, time)::after { content: attr(data-t); visibility: hidden; font-weight: 700; }
+  #tstat .note b, #tstat .note :is(span, time)::after { grid-area: 1 / 1; min-width: 0; } #tstat .note b { font-weight: inherit; }
+  #tstat .note span > b, #tstat .note span::after { white-space: normal; overflow: hidden; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+  html:not(.mob) body.chat-closed #ctoggle.unread { box-shadow: 0 0 0 2px #e5a50a; }
   #tstat button { flex: none; font-size: 11px; padding: 0 8px; line-height: 18px; }
   #cchips .chip i.idle, #tstat i.idle { border: 2px solid var(--line); }
   #cchips .chip i.ng, #tstat i.ng { background: #e5a50a; box-shadow: 0 0 0 3px rgb(229 165 10 / .25); } /* 返事が要る (終了: NG) = 入力待ちと同じ黄の点 */
@@ -190,7 +197,7 @@
     /* 狭い幅の進行状況: 送信の下に、作業中と許可待ちの端末だけ出す (全端末の一覧は高さを食う。2026-10-03 user: ぐるぐるが消えていた / 欄の上だと送り先の行と見分けにくい)。依頼文は既定で畳み、行を押すと開く */
     #cform, #cmsg { order: 1; }
     #tstat { order: 2; }
-    #tstat .trow:not(.perm):not(:has(i.busy, i.bg, i.ng)), #tstat .trow:not(.perm):not(:has(i.busy, i.bg, i.ng)) + .task { display: none; } /* 裏で待ちも出す (2026-10-15 user: monitor / shell で待っている画面が見えなかった)。返事が要る (終了: NG) も出す (2026-10-23) */
+    #tstat .trow:not(.perm, .note):not(:has(i.busy, i.bg, i.ng)), #tstat .trow:not(.perm, .note):not(:has(i.busy, i.bg, i.ng)) + .task { display: none; } /* 裏で待ちも出す (2026-10-15 user: monitor / shell で待っている画面が見えなかった)。返事が要る (終了: NG) も出す (2026-10-23) */
     #chat { grid-column: 1; grid-row: 1; gap: 4px; padding: 6px 12px; border-left: 0; border-bottom: 1px solid var(--line); }
     body.chat-closed #chat { padding: 4px 12px; }
     /* 返事の上の帯では、同じ行の真ん中に ▲ (上へ畳む) / ▼ (開く) を置く */
@@ -502,6 +509,10 @@
   /* 許可待ちの行 */
   html.mob #tstat { gap: 6px; font-size: 13px; color: var(--fg); }
   html.mob #tstat .trow { align-items: center; padding: 3px 4px 3px 10px; border: 1px solid #e01b24; border-radius: 10px; }
+  html.mob #tstat .trow.note { border-color: var(--rc); min-height: 44px; }
+  html.mob #tstat .trow.note.more { border: 0; }
+  html.mob:not(.split) #tstat .more { position: sticky; bottom: 0; background: var(--bg); }
+  html.mob #tstat:has(.more) { grid-auto-rows: max-content; max-height: calc(var(--vvh, 100dvh) * .45); overflow-y: auto; } /* 『ほか』を開いて長くなっても、返事と下の帯を残す */
   html.mob #tstat i { margin: 0; }
   html.mob #tstat button { padding: 0 12px; font: inherit; font-size: 14px; color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
   /* 入力中 (キーボードが出ている間) は定型キーと送り先の一覧を隠し、入力欄を高くする。返事を画面の上半分に残す */
@@ -888,16 +899,16 @@ async function show(md, entry) {
   ask.firstChild.textContent = "依頼: " + q.replace(/\s+/g, " ");
   ask.lastChild.textContent = q;
   const time = entry?.ts ? new Date(entry.ts).toLocaleTimeString("ja-JP", { hour12: false }) : "";
-  document.getElementById("stamp").textContent = entry ? agentTag(entry) + (entry.codexPane ? [entry.label, entry.repo, entry.title] : [entry.repo || "?", time]).filter(Boolean).join(" · ") : "";
+  document.getElementById("stamp").textContent = entry ? agentTag(entry) + (entry.codexPane ? [entry.label, entry.repo, entry.title] : [entry.notice ? `item ${entry.notice.number}` : entry.repo || "?", time]).filter(Boolean).join(" · ") : "";
   cur = entry;
   renderChat();
   document.getElementById("sent").textContent = "";
   document.getElementById("akmsg").textContent = sendingNotes.has(curName()) ? "送信中…" : "";
-  decorate(el, !entry?.codexPane); // Codex の状態表示 (待機中・作業中) は返事でないので段落の印を付けない
+  if (!entry?.notice) decorate(el, !entry?.codexPane); // Codex の状態表示 (待機中・作業中) は返事でないので段落の印を付けない
   fitPre();
   refresh();
   try { await mermaid.run({ nodes: el.querySelectorAll("pre.mermaid") }); }
-  finally { decorateDiagrams(el); refresh(); scheduleMargin(); } // 図のノードは描画後にしか無い。同じ返事の描き直しでもピンの赤枠を戻す
+  finally { if (!entry?.notice) decorateDiagrams(el); refresh(); scheduleMargin(); } // 図のノードは描画後にしか無い。同じ返事の描き直しでもピンの赤枠を戻す
 }
 
 // 履歴: list[0] が最新。following = 最新を見ている間は新着で自動的に差し替える。
@@ -905,6 +916,9 @@ async function show(md, entry) {
 // ← → と追従は list の中だけで動く。
 let all = [], list = [], idx = 0, following = true, shownName = null, showRequest = 0;
 let botPerms = [];
+// Bot の完了・判断待ちの知らせ (name が botitem-)。all に混ぜず、行を押した時だけ本文に出す。開いている分は一覧から消えても持っておく (読んでいる途中で本文が消えない)
+let botNotes = [], noteMore = false, noteBack = { sess: "", name: null, follow: true, why: "" }; // noteBack = もう一度押した時に戻る表示 (name は前の返事を見ていた時と、書きかけの赤ペンがある時だけ)
+const noteSession = (s) => s.startsWith("botitem-");
 const params = new URLSearchParams(location.search);
 let SESS = params.get("s") || ""; // "" = 最新 (最後に返事したセッションを追う)
 let REPO = params.get("repo") || ""; // "" = すべて
@@ -921,6 +935,7 @@ const rcDot = '<i class="rc">●</i>';
 const inSess = (es) => (SESS ? es.filter((e) => e.session === SESS) : es);
 const codexPaneSession = (s) => s.startsWith("codex-pane-");
 const scope = () => {
+  if (noteSession(SESS)) return botNotes.filter((e) => e.session === SESS);
   const entries = inRepo(all);
   const pane = entries.find((e) => e.codexPane && e.session === SESS);
   if (pane?.sid) {
@@ -1319,7 +1334,7 @@ document.addEventListener("keydown", (ev) => {
   // y = 状態行の「許可」を押す。送り先の端末の分を優先し、無ければ許可待ちが 1 つだけの時に限る (どの端末か決まらない時は押さない)。
   // ev.code で見る: 日本語入力が on だと ev.key が "Process" になる
   if (ev.code === "KeyY") {
-    if (chatTo()?.codexPane || codexPaneSession(SESS)) return;
+    if (chatTo()?.codexPane || codexPaneSession(SESS) || noteSession(SESS)) return; // 知らせへの答えのつもりの y で、別の会話を許可しない
     const bs = [...tstat.querySelectorAll("[data-approve]:not(:disabled)")];
     const b = bs.find((x) => x.dataset.approve === chatTo()?.session) ?? (bs.length === 1 ? bs[0] : null);
     if (b) { ev.preventDefault(); b.click(); }
@@ -1787,6 +1802,7 @@ cmedia.addEventListener("click", (ev) => {
   zoomGallery(zoomSet.indexOf(t));
 });
 const chatTo = () => {
+  if (noteSession(SESS)) return botNotes.find((e) => e.session === SESS) ?? null; // 知らせを開いている間は、固定した送り先にも送らない (問いへの答えのつもりの『A』が別の会話へ届くのを防ぐ)
   const p = chatPin();
   if (p) return all.find((e) => e.session === p) ?? null;
   if (codexPaneSession(SESS)) return all.find((e) => e.session === SESS) ?? null;
@@ -1809,9 +1825,8 @@ function renderChat() {
     document.getElementById("cmsg").textContent = "";
     renderSug();
   }
-  loadMedia(pane ? null : to);
-  loadNow(pane ? null : to);
-  const lbl = pane ? `Codex · ${pane.label}` : to ? (to.codex ? "Codex · " : "") + (chipLabels.get(to.session) ?? `${to.repo || "?"} · ${to.session}`) : pin;
+  if (!to?.notice) { loadMedia(pane ? null : to); loadNow(pane ? null : to); } // 知らせを開いている間は元の会話の画像・モデルを置いたまま (消すと周りが動く)
+  const lbl = to?.notice ? `${to.bot} item ${to.notice.number}` : pane ? `Codex · ${pane.label}` : to ? (to.codex ? "Codex · " : "") + (chipLabels.get(to.session) ?? `${to.repo || "?"} · ${to.session}`) : pin;
   document.getElementById("cto").textContent = (isMobileUA ? "" : "→ ") + (lbl ? `${pin ? "📌 " : ""}${lbl}` : "(送り先なし)"); // スマホは名前に幅を回す (左の ▲▼ と点が送り先の印)
   const why = pane ? (codexPaneReady(pane) ? "" : "Codexが入力できる状態になるまで待ってください")
     : !to ? (codexPaneSession(pin || SESS) ? "選んだ端末が見つかりません" : pin ? "固定先のセッションの返事が一覧に無い (送れない)" : "表示中の返事が無い (送れない)")
@@ -1820,6 +1835,7 @@ function renderChat() {
   ctext.placeholder = (to?.bot ? "Bot へ送る" : pane && !pane.sid ? "Codexへ1行送る" : to?.codex ? "Codexへ文字を送る" : "端末へ送る") + (isMobileUA ? "" : " (⌘+Enter)");
   ctext.disabled = pane ? chatBusy : !!why || chatBusy;
   csend.disabled = !!why || chatBusy;
+  if (to?.notice) { document.getElementById("cwhy").textContent = noteBack.why; ctext.placeholder = "知らせを表示中 (ここからは返せません)"; } // 案内の行を足しも消しもしない (下の知らせの行が動くため)
   const terminalControlsDisabled = csend.disabled || !!to?.codex;
   document.getElementById("cattach").disabled = terminalControlsDisabled;
   document.querySelectorAll("#cact .q, #cact .cpick").forEach((b) => { b.disabled = terminalControlsDisabled; });
@@ -1846,11 +1862,14 @@ function renderChat() {
     : (isMobileUA ? mobRow : row)(e);
   // 許可待ちはプロジェクトの絞り込みと 5 件の枠に関係なく先頭に出す (別 repo の foyer の画面の許可待ちが見えなかった、2026-10-15)
   const perms = [...new Map(all.filter((e) => e.session && e.live && e.perm).map((e) => [e.session, e])).values()];
-  const alerts = [...perms, ...botPerms];
+  // 知らせの順: 判断待ち → 閉じた物、それぞれ新しい順。開いても並べ替えない (押した行を動かさない)。3 件を超えた分は『ほか』を押すと出す (スマホの返事を隠さない)
+  const notes = [...botNotes].sort((x, y) => (x.notice.kind !== "ask") - (y.notice.kind !== "ask") || tsOf(y) - tsOf(x));
+  document.getElementById("ctoggle").classList.toggle("unread", notes.some((e) => !e.notice.seen)); // 右の列を畳んでいても気づけるように
+  const alerts = [...perms, ...botPerms, ...noteRows(notes)];
   renderTstat(isMobileUA ? alerts : [...alerts, ...shown.filter((e) => e.live && !perms.some((p) => p.session === e.session))]);
   if (isMobileUA) { // 下の帯: 送り先の名前と状態の点、返事を待っているセッションの数 (閉じていても分かるように)
     const sts = [...new Map([...perms, ...chipEntries.values()].filter((e) => e.live).map((e) => [e.session, stOf(e).st])).values()];
-    const wait = botPerms.length + sts.filter((x) => x === "ng" || x === "wait" || x === "perm").length, run = sts.filter((x) => x === "busy" || x === "bg").length;
+    const wait = botPerms.length + botNotes.filter((e) => !e.notice.seen).length + sts.filter((x) => x === "ng" || x === "wait" || x === "perm").length, run = sts.filter((x) => x === "busy" || x === "bg").length;
     document.getElementById("dname").textContent = lbl ? (pin ? "📌 " : "") + lbl : "送り先なし"; // 幅が無いので矢印は付けない (点が送り先の印)
     document.getElementById("ddot").className = to?.live ? stOf(to).st : "";
     document.getElementById("dwait").innerHTML = (wait ? `<b>待ち </b>${wait}` : "") + (run ? `<span>${wait ? " / " : ""}動作中 ${run}</span>` : "");
@@ -1887,9 +1906,49 @@ document.addEventListener("visibilitychange", onVis); onVis(); // 裏のタブ�
 const ago = (t) => { const m = Math.max(0, Math.floor((Date.now() - t) / 60000)); return m > 60 ? `${Math.floor(m / 60)} 時間` : `${m} 分`; }; // 最後の出力からの経過
 const askText = (e) => e.asking.waiting ? "待機中" : "依頼: " + e.asking.prompt.replace(/\s+/g, " ").slice(0, 60); // 返事待ちの依頼の 1 行 (起動直後で依頼が無ければ『待機中』)
 const bgSum = (bg) => [...bg.reduce((m, t) => m.set(t.type, (m.get(t.type) ?? 0) + 1), new Map()).entries()].map(([k, n]) => `${k} ${n}`).join(" "); // 裏で走っている物を種類ごとに数える ("shell 1 subagent 1")
+// 知らせの行。3 件を超えた分は『ほか』に畳む。『ほか』は押しても動かない所に置く: 列 (PC と開いた Fold) は上から並ぶので 4 行目、スマホの 1 列は下の帯に付くので最後
+const NOTE_MAX = 3;
+const noteRows = (notes) => {
+  if (notes.length <= NOTE_MAX) return notes;
+  const rest = noteMore ? notes.slice(NOTE_MAX) : [], more = { name: "botitem-more", rest: notes.length - NOTE_MAX };
+  return [...notes.slice(0, NOTE_MAX), ...(isMobileUA && !document.documentElement.classList.contains("split") ? [...rest, more] : [more, ...rest])];
+};
+const NOTE = { ask: ["ng", "判断待ち"], done: ["ok", "完了"], canceled: ["idle", "取り下げ"] };
+const noteRow = (e) => {
+  if (e.name === "botitem-more") return `<div class="trow note more" data-more="1"><span>${noteMore ? "▲ 減らす" : `▼ ほか ${e.rest} 件`}</span></div>`;
+  const [dot, word] = NOTE[e.notice.kind], on = e.session === SESS;
+  const bold = (tag, t) => `<${tag} data-t="${esc(t)}"><b>${esc(t)}</b></${tag}>`;
+  return `<div class="trow note${e.notice.seen ? "" : " new"}${on ? " on" : ""}" data-note="${esc(e.session)}" title="${esc(e.bot)} の返事を開く${on ? " / もう一度押すと戻る" : ""}"><i class="${dot}"></i>${bold("span", `${e.bot} ${word}: ${e.head}`)}${bold("time", ago(tsOf(e)))}</div>`;
+};
+async function openNote(session) {
+  const e = session === SESS ? null : botNotes.find((n) => n.session === session); // null = もう一度押した
+  if (e === undefined) return;
+  if (e && !noteSession(SESS)) noteBack = { sess: SESS, name: idx > 0 || hasDraft(shownName) ? shownName : null, follow: following, why: document.getElementById("cwhy").textContent };
+  SESS = e ? session : noteBack.sess;
+  setParam("s", SESS);
+  const seen = !e || e.notice.seen;
+  if (e) e.notice.seen = true;
+  try {
+    await reselect(e ? null : noteBack.name);
+    if (!e && hasDraft(noteBack.name)) following = noteBack.follow; // 書きかけを送り終えたら、前と同じく新着を追う
+  } finally {
+    // 本文が出てから開いた印を送る (本文を読み込めなかった完了が、読まれずに消えない)
+    if (!seen) {
+      const r = cur?.name === e.name && await fetch("/notice/seen", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: e.name }) }).catch(() => null);
+      if (!r?.ok) { e.notice.seen = false; renderChat(); }
+    }
+  }
+}
+function onNote(ev) {
+  if (ev.target.closest("[data-more]")) { noteMore = !noteMore; renderChat(); return true; }
+  const n = ev.target.closest("[data-note]");
+  if (n) openNote(n.dataset.note);
+  return !!n;
+}
 function renderTstat(list) {
   tstatList = list;
   const html = list.map((e) => {
+    if (e.name.startsWith("botitem-")) return noteRow(e);
     if (e.name.startsWith("botperm-") && e.perm) return `<div class="trow perm bot-perm" title="Orca の ${esc(e.bot)} の会話を開いて許可する"><i class="perm"></i><span>${esc(e.bot)} が許可待ち: ${esc(e.perm.tool)} ${esc(e.perm.detail)}</span></div>`;
     const { st, wait, perm, bg } = stOf(e);
     const stTitle = { perm: "許可待ち", wait: "入力待ち", busy: "作業中", idle: "静か", bg: "裏で待ち", ok: "閉じてよい", ng: "返事が要る" }[st];
@@ -1904,6 +1963,7 @@ function renderTstat(list) {
   syncSpin(tstat);
 }
 tstat.addEventListener("click", async (ev) => {
+  if (onNote(ev)) return;
   const b = ev.target.closest("[data-approve]");
   if (!b) {
     const r = ev.target.closest("[data-s]");
@@ -2196,8 +2256,9 @@ function renderChips() {
   renderChat();
   // 既定は live なセッションだけ (終了したものは #pdead で出す)。選択中は live でなくても出す (消えると迷子)
   const shown = ss.filter((e) => e.live || e.codex || e.bot || showDead || e.session === SESS); // Codex と Bot の返事は live にならないが終了扱いで隠さない
+  const note = noteSession(SESS) && botNotes.find((e) => e.session === SESS);
   let html = ss.length || SESS ? chip("", "最新", "最後に返事したセッションを追う") + shown.map((e) => chipBtn(e.session, e.session === SESS, rcDot + esc(label(e)), `${e.repo} / ${e.session}`, true, e.repo)).join("") : "";
-  if (SESS && !seen.has(SESS)) html += chip(SESS, "選択中 (返事なし)", SESS); // 履歴から消えたセッションを URL で指している
+  if (SESS && !seen.has(SESS)) html += chip(SESS, note ? `${note.bot} item ${note.notice.number}` : "選択中 (返事なし)", SESS); // 履歴から消えたセッションを URL で指している
   if (html === chipsHtml) return; // 毎 poll 描き直すと横スクロール位置が飛ぶ
   chipsHtml = html;
   const box = document.getElementById("chips");
@@ -2213,13 +2274,13 @@ document.getElementById("chips").addEventListener("click", async (ev) => {
   setParam("s", SESS);
   await reselect();
 });
-// chip / プロジェクトを選び直した後: 選択範囲の最新へ。以後その範囲の新着だけ追う
-async function reselect() {
+// chip / プロジェクトを選び直した後: 選択範囲の最新へ (name があればその返事へ)。以後その範囲の新着だけ追う
+async function reselect(name) {
   renderChips();
   renderProjects();
   list = scope();
   if (!list.length) { idx = 0; shownName = null; renderBar(); await show("", null); return; }
-  await showIdx(0);
+  await showIdx(Math.max(0, name ? list.findIndex((e) => e.name === name) : 0));
 }
 
 // プロジェクト列: all を repo ごとにまとめ、最後に返事した順に 1 行ずつ。先頭の「メイン」= 本体の返事を repo で絞らない。
@@ -2364,7 +2425,7 @@ const typing = () => { const a = document.activeElement; return !!ctext.value.tr
 const busy = () => typing() || mainEl.scrollTop > 0;
 async function poll() {
   try {
-    const hr = await fetch("/history", { cache: "no-store" });
+    const hr = await fetch("/history", { cache: "no-store", headers: { "x-rmv-notices": "1" } });
     // index.html が更新されたら読み直す (サーバー再起動では開いたままの画面は変わらない、2026-09-29 実害)。赤ペンの下書き中は消さない
     const page = hr.headers.get("x-rmv-page");
     if (page) {
@@ -2375,7 +2436,9 @@ async function poll() {
     liveState = hr.headers.get("x-rmv-live");
     const rows = await hr.json();
     botPerms = rows.filter((e) => e.name.startsWith("botperm-"));
-    all = rows.filter((e) => !e.name.startsWith("botperm-"));
+    const notes = rows.filter((e) => e.name.startsWith("botitem-"));
+    botNotes = [...notes, ...botNotes.filter((e) => e.session === SESS && !notes.some((n) => n.session === SESS))];
+    all = rows.filter((e) => !e.name.startsWith("botperm-") && !e.name.startsWith("botitem-"));
     // 選んでいた repo が履歴から消えたら (repo の決め方が変わった・古い URL 等) すべてに戻す。空の画面で止めない
     if (REPO && !codexPaneSession(SESS) && !codexPaneSession(chatPin()) && !all.some((e) => e.repo.toLowerCase() === REPO.toLowerCase())) { REPO = ""; SESS = ""; setParam("repo", ""); setParam("s", ""); renderFilter(); }
     renderChips();
