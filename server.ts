@@ -69,6 +69,25 @@ function endOf(body: string): "ok" | "ng" | null {
   const m = [...body.slice(-300).matchAll(/終了[:：]\s*(OK|NG)/g)].pop();
   return m ? (m[1] === "OK" ? "ok" : "ng") : null;
 }
+// 返事の末尾の「話題: …」(Low-Load 出力スタイル) を本文から分ける。保存した返事は生のまま。
+// 見るのはコードブロックの外の、空行を除いた末尾 TOPIC_TAIL 行。当たりが 2 つあれば後ろの 1 行だけ分ける (前の行は例文かもしれない)
+const TOPIC = /^ {0,3}話題\s*[:：](.*)$/;
+const TOPIC_TAIL = 6; // 話題の後ろに来る 終了: / 検証: / DECIDE: 等の行の分
+function splitTopic(md: string): { topic: string; body: string } {
+  const lines = md.split("\n"), plain: number[] = [];
+  let fence = "";
+  lines.forEach((line, i) => {
+    const t = line.trim();
+    if (fence) { if (t.startsWith(fence)) fence = ""; }
+    else if (/^(```|~~~)/.test(t)) fence = t.slice(0, 3);
+    else if (t) plain.push(i);
+  });
+  const at = plain.slice(-TOPIC_TAIL).findLast((i) => TOPIC.test(lines[i].trimEnd()));
+  if (at === undefined) return { topic: "", body: md };
+  const topic = lines[at].trimEnd().match(TOPIC)![1].trim();
+  lines.splice(at, !lines[at - 1]?.trim() && !lines[at + 1]?.trim() ? 2 : 1); // 前後とも空行なら 1 つにまとめる (段の間が広がらない)
+  return { topic, body: lines.join("\n") };
+}
 // 名前付き herdr session (`herdr --session <name>`) は pane id が既定 session と重なる (どちらも w1:p1 から)。socket が <config>/sessions/<name>/herdr.sock なら末尾に `__<name>` を足す。既定 session の key は変えない
 function sessionKey(meta: { terminal?: unknown; session_id?: unknown; herdr_pane?: unknown; herdr_socket?: unknown }): string {
   const pane = typeof meta.herdr_pane === "string" && meta.herdr_pane ? paneKey(meta.herdr_pane) : "";
@@ -166,7 +185,7 @@ async function historyItems() {
       const botChat = bot && typeof meta.orca_bot.chat === "string" ? meta.orca_bot.chat : null; // 知らせ (noticeRows) がどの会話の返事かを見る。/history には出さない
       const mainBot = bot && (MAIN_BOTS.has(bot.toLowerCase()) || MAIN_BOTS.has(String(meta.orca_bot.id).toLowerCase()));
       const sub = bot ? (mainBot ? null : bot) : subType(meta, shown.tab, await firstTabsOf(herdrSockOf(meta)));
-      return { name, codex, bot, botChat, prompt: typeof meta.prompt === "string" ? meta.prompt : null, ts: meta.ts ?? null, cwd, root, label: labelOf(meta), repo: bot ?? (root.split("/").filter(Boolean).pop() ?? ""), head: body.replace(/\s+/g, " ").trim().slice(0, 40), end: endOf(body), sid: typeof meta.session_id === "string" && meta.session_id ? meta.session_id : null, terminal: !!bot || Boolean(meta.terminal) || pane !== null, live: bot || codex || gone ? false : shown.herdr ? shown.alive : (pane !== null && !meta.terminal ? true : terms ? Boolean(meta.terminal) && handles.has(meta.terminal) : claude ? Boolean(meta.terminal) && claude.has(meta.terminal) : true) && shown.alive, session, perm: perm ? { id: perm.id, tool: perm.tool, detail: perm.detail, ts: perm.ts } : null, agent: meta.agent ?? null, sub, title: shown.title, status: shown.status, lastOutputAt: shown.lastOutputAt, bg: await readBg(session, typeof meta.session_id === "string" ? meta.session_id : null) };
+      return { name, codex, bot, botChat, prompt: typeof meta.prompt === "string" ? meta.prompt : null, ts: meta.ts ?? null, cwd, root, label: labelOf(meta), repo: bot ?? (root.split("/").filter(Boolean).pop() ?? ""), head: splitTopic(body).body.replace(/\s+/g, " ").trim().slice(0, 40), end: endOf(body), sid: typeof meta.session_id === "string" && meta.session_id ? meta.session_id : null, terminal: !!bot || Boolean(meta.terminal) || pane !== null, live: bot || codex || gone ? false : shown.herdr ? shown.alive : (pane !== null && !meta.terminal ? true : terms ? Boolean(meta.terminal) && handles.has(meta.terminal) : claude ? Boolean(meta.terminal) && claude.has(meta.terminal) : true) && shown.alive, session, perm: perm ? { id: perm.id, tool: perm.tool, detail: perm.detail, ts: perm.ts } : null, agent: meta.agent ?? null, sub, title: shown.title, status: shown.status, lastOutputAt: shown.lastOutputAt, bg: await readBg(session, typeof meta.session_id === "string" ? meta.session_id : null) };
     }),
   )).filter((e): e is NonNullable<typeof e> => e !== null);
   // 1 つの端末で順に別の repo を開くと、端末が生きている限り昔の repo まで live になる (2026-09-29 実機: 1 端末で 4 repo)。
@@ -398,7 +417,7 @@ const noticeName = (n: Notice) => `botitem-${n.uid}.${n.key}.md`;
 // GET /history/botitem-<uid>.<鍵>.md: 知らせの本文 = 判断待ちは問いの全文、閉じた物は closeNote と閉じた時の一言 (返事にある文は重ねない)。その下に Bot の返事。返事が残っていなければ上の文だけ
 async function noticeBody(n: Notice): Promise<string> {
   const reply = noticeReply(n, noticeItems);
-  const said = reply ? await Bun.file(`${HIST}/${reply.name}`).text().catch(() => "") : "";
+  const said = reply ? splitTopic(await Bun.file(`${HIST}/${reply.name}`).text().catch(() => "")).body : "";
   const word = { ask: "🟡 判断待ち", done: "🟢 完了", canceled: "⚪ 取り下げ" }[n.kind];
   const parts = [`**${word}** item ${n.number}: ${n.title}`];
   const dup = (t: string) => n.kind !== "ask" && `\n${said.trim()}\n`.includes(`\n${t.trim()}\n`);
@@ -1760,7 +1779,7 @@ Bun.serve({
     if (pathname === "/fragment") {
       const f = Bun.file(FRAGMENT);
       if (!(await f.exists())) return new Response("", { headers: TEXT });
-      return new Response(await f.text(), { headers: { ...TEXT, "last-modified": new Date(f.lastModified).toUTCString() } });
+      return new Response(splitTopic(await f.text()).body, { headers: { ...TEXT, "last-modified": new Date(f.lastModified).toUTCString() } });
     }
     if (pathname === "/history") {
       const r = await history(searchParams.get("repo"), req.headers.has("x-rmv-notices")); // 知らせの行を分けて扱える viewer だけが付ける (古い画面や他の道具の一覧に混ぜない)
@@ -1809,7 +1828,7 @@ Bun.serve({
         return typeof p?.prompt === "string" ? new Response(p.waiting === true ? "(待機中: 最初の依頼を待っています)" : `(返事待ち)\n\n${p.prompt}`, { headers: TEXT }) : new Response("not found", { status: 404 });
       }
       const f = Bun.file(`${HIST}/${m[1]}`);
-      return (await f.exists()) ? new Response(await f.text(), { headers: TEXT }) : new Response("not found", { status: 404 });
+      return (await f.exists()) ? new Response(splitTopic(await f.text()).body, { headers: TEXT }) : new Response("not found", { status: 404 });
     }
     return new Response("not found", { status: 404 });
   }),
