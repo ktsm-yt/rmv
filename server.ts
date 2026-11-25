@@ -169,6 +169,7 @@ async function historyItems() {
     names.map(async (name) => {
       const meta = await Bun.file(`${HIST}/${name.slice(0, -3)}.json`).json().catch(() => ({}));
       const body = await Bun.file(`${HIST}/${name}`).text().catch(() => "");
+      const said = splitTopic(body);
       const cwd = String(meta.cwd ?? "");
       // repo (プロジェクト列・?repo= 絞り込み・live のグループ鍵) の基準: 端末が生きていれば Orca の worktreePath (セッション内で cd しても動かない)、無ければ cwd。cwd 自体は送信先解決と /skills 用に残す
       const wt = byHandle.get(meta.terminal)?.worktreePath;
@@ -185,7 +186,7 @@ async function historyItems() {
       const botChat = bot && typeof meta.orca_bot.chat === "string" ? meta.orca_bot.chat : null; // 知らせ (noticeRows) がどの会話の返事かを見る。/history には出さない
       const mainBot = bot && (MAIN_BOTS.has(bot.toLowerCase()) || MAIN_BOTS.has(String(meta.orca_bot.id).toLowerCase()));
       const sub = bot ? (mainBot ? null : bot) : subType(meta, shown.tab, await firstTabsOf(herdrSockOf(meta)));
-      return { name, codex, bot, botChat, prompt: typeof meta.prompt === "string" ? meta.prompt : null, ts: meta.ts ?? null, cwd, root, label: labelOf(meta), repo: bot ?? (root.split("/").filter(Boolean).pop() ?? ""), head: splitTopic(body).body.replace(/\s+/g, " ").trim().slice(0, 40), end: endOf(body), sid: typeof meta.session_id === "string" && meta.session_id ? meta.session_id : null, terminal: !!bot || Boolean(meta.terminal) || pane !== null, live: bot || codex || gone ? false : shown.herdr ? shown.alive : (pane !== null && !meta.terminal ? true : terms ? Boolean(meta.terminal) && handles.has(meta.terminal) : claude ? Boolean(meta.terminal) && claude.has(meta.terminal) : true) && shown.alive, session, perm: perm ? { id: perm.id, tool: perm.tool, detail: perm.detail, ts: perm.ts } : null, agent: meta.agent ?? null, sub, title: shown.title, status: shown.status, lastOutputAt: shown.lastOutputAt, bg: await readBg(session, typeof meta.session_id === "string" ? meta.session_id : null) };
+      return { name, codex, bot, botChat, prompt: typeof meta.prompt === "string" ? meta.prompt : null, ts: meta.ts ?? null, cwd, root, label: labelOf(meta), repo: bot ?? (root.split("/").filter(Boolean).pop() ?? ""), head: said.body.replace(/\s+/g, " ").trim().slice(0, 40), end: endOf(body), topic: said.topic.slice(0, 200) || (typeof meta.session_title === "string" ? meta.session_title : ""), askFrom: null as string | null, next: null as string | null, sid: typeof meta.session_id === "string" && meta.session_id ? meta.session_id : null, terminal: !!bot || Boolean(meta.terminal) || pane !== null, live: bot || codex || gone ? false : shown.herdr ? shown.alive : (pane !== null && !meta.terminal ? true : terms ? Boolean(meta.terminal) && handles.has(meta.terminal) : claude ? Boolean(meta.terminal) && claude.has(meta.terminal) : true) && shown.alive, session, perm: perm ? { id: perm.id, tool: perm.tool, detail: perm.detail, ts: perm.ts } : null, agent: meta.agent ?? null, sub, title: shown.title, status: shown.status, lastOutputAt: shown.lastOutputAt, bg: await readBg(session, typeof meta.session_id === "string" ? meta.session_id : null) };
     }),
   )).filter((e): e is NonNullable<typeof e> => e !== null);
   // 1 つの端末で順に別の repo を開くと、端末が生きている限り昔の repo まで live になる (2026-09-29 実機: 1 端末で 4 repo)。
@@ -204,6 +205,8 @@ async function historyItems() {
     const fresh = typeof p?.session_id === "string" && p.session_id && (Date.parse(p.ts ?? "") || 0) > (lastReply.get(s) ?? 0);
     const sid = fresh ? p.session_id : replySid.get(s);
     if (sid) curSid.set(s, sid);
+    // 最新の返事の後に打たれた依頼 (返事待ち)。依頼の行の持ち越しをここで終える (asking は 30 分で消えるので使わない)
+    if (fresh && p.waiting !== true && typeof p.prompt === "string" && sid === replySid.get(s)) items.find((e) => e.session === s && !e.agent)!.next = p.prompt;
   }
   for (const e of items) if (e.live && e.sid && curSid.has(e.session) && curSid.get(e.session) !== e.sid) e.live = false;
   // 状態行用: 端末ごとの最新の本体の返事より後に送られた依頼 (返事待ち) を、その端末の entry 全部に付ける (perm と同じ)。
@@ -242,6 +245,14 @@ async function historyItems() {
     items.push({ name: `asking-${session}.md`, bot: null, botChat: null, prompt: null, ts: a.ts, cwd, root, label: labelOf(p), repo: root.split("/").filter(Boolean).pop() ?? "", head: "", terminal: isTerm || pane !== null, live, session, perm: perm ? { id: perm.id, tool: perm.tool, detail: perm.detail, ts: perm.ts } : null, agent: null, sub: subType(p, shown.tab, await firstTabsOf(herdrSockOf(p))), title: shown.title, status: shown.status, lastOutputAt: shown.lastOutputAt, bg: await readBg(session, typeof p?.session_id === "string" ? p.session_id : null) });
   }
   items.sort((x, y) => (Date.parse(y.ts ?? "") || 0) - (Date.parse(x.ts ?? "") || 0)); // 仮の entry も時刻順。先頭固定だと端末が閉じた後も残る state/prompt の待機中が「最新」に居座り、追従が止まる (2026-10-13 実害: 19:57 の Crewforce が 2 時間先頭に残った)
+  // 依頼文の無い返事 (自動の通知で始まった返事) に、同じ会話の 1 つ前の依頼がある返事の name を付ける。鍵は session (端末・pane) でなく session_id:
+  // 同じ pane で /exit や /clear の後に始めた会話へ持ち越さない。依頼文は長いので写さない。meta.prompt にも書かない (foyer runner が prompt の一致で返事を探す)
+  const askedIn = new Map<string, string>();
+  for (const e of items.toReversed()) {
+    if (!e.sid || e.agent) continue;
+    if (e.prompt) askedIn.set(e.sid, e.name);
+    else e.askFrom = askedIn.get(e.sid) ?? null;
+  }
   // 同じ herdr pane が別の Orca 端末 handle で記録されていると (herdr を別の端末から起こし直した)、pane だけで生死を見るので古い handle の分まで live になる
   // (2026-10-20 実害: term_5ad77d1c と term_b9164a9a の wF:pC / wF:pE / wT:p1 で 3 pane が 6 セッションに見えた)。pane ごとに最新の記録の session だけ live に残す。
   // pane 付きの session は `<handle>__<pane>[__<named>]`、pane 無しは "__" を含まない (sessionKey)

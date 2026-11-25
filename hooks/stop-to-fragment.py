@@ -30,6 +30,7 @@ KEEP_BOTS = 100
 BOT_SUFFIX = "-bot.md"
 UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE | re.ASCII)
 AGENT_MAX = 4000  # subagent の報告は長いので切る
+TITLE_TAIL = 256 * 1024  # 会話記録の末尾だけ読む (題名の行は末尾の近くに繰り返し書かれる。全部読むと 95MB で 0.2 秒)
 
 
 def last_assistant_text(path):
@@ -54,6 +55,27 @@ def last_assistant_text(path):
             if text.strip():
                 last = text
     return last
+
+
+def session_title(path):
+    """会話記録の題名。手で付けた題名 (custom-title) → Claude Code が付けた題名 (ai-title) の順。公開された形式ではないので、読めない・形が違う・無い時は ""。"""
+    title = {}
+    try:
+        with open(path, "rb") as f:
+            f.seek(max(0, os.fstat(f.fileno()).st_size - TITLE_TAIL))
+            for line in f.read(TITLE_TAIL).split(b"\n"):
+                if b'-title"' not in line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    continue  # 途中で切れた先頭の行
+                for kind, key in (("custom-title", "customTitle"), ("ai-title", "aiTitle")):
+                    if isinstance(rec, dict) and rec.get("type") == kind and isinstance(rec.get(key), str):
+                        title[key] = " ".join(rec[key].encode("utf-8", "ignore").decode().split())[:200]  # 片割れのサロゲートは落とす (残すと返事の記録が書けない)
+    except Exception:
+        pass  # 題名が取れなくても返事は保存する
+    return title.get("customTitle") or title.get("aiTitle") or ""
 
 
 def write(path, s):
@@ -295,6 +317,9 @@ def main():
         if sub:
             meta["agent"] = {"type": data.get("agent_type"), "id": data.get("agent_id")}
         else:  # 本体の返事には prompt-state.py が置いた依頼文を載せて、ファイルは消す
+            title = session_title(data.get("transcript_path"))
+            if title:
+                meta["session_title"] = title
             pf = os.path.join(STATE, "prompt", session_key(terminal, herdr_pane, sid, herdr_socket) + ".json")
             if bot and text.rstrip().splitlines()[-1].strip() == "NO_REPLY":
                 os.unlink(pf)
