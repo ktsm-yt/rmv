@@ -5,6 +5,7 @@ struct SettingsDraft {
     let alwaysOnTop: Bool
     let opacity: CGFloat
     let shortcuts: [ShortcutAction: AppShortcut]
+    let globalShortcut: GlobalShortcut?
 }
 
 final class SettingsWindowController: NSWindowController, NSWindowDelegate {
@@ -14,12 +15,23 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let opacityValueLabel = NSTextField(labelWithString: "100%")
     private let errorLabel = NSTextField(labelWithString: "")
     private var shortcutButtons: [ShortcutAction: ShortcutRecorderButton] = [:]
+    private let globalRecorder = ShortcutRecorderButton(shortcut: nil)
     private var shortcuts: [ShortcutAction: AppShortcut]
-    private let onSave: (SettingsDraft) -> Void
+    private var globalShortcut: GlobalShortcut?
+    private let onSave: (SettingsDraft) -> String?
     var onClose: (() -> Void)?
 
-    init(homepage: URL, alwaysOnTop: Bool, opacity: CGFloat, shortcuts: [ShortcutAction: AppShortcut], onSave: @escaping (SettingsDraft) -> Void) {
+    init(
+        homepage: URL,
+        alwaysOnTop: Bool,
+        opacity: CGFloat,
+        shortcuts: [ShortcutAction: AppShortcut],
+        globalShortcut: GlobalShortcut?,
+        notice: String?,
+        onSave: @escaping (SettingsDraft) -> String?
+    ) {
         self.shortcuts = shortcuts
+        self.globalShortcut = globalShortcut
         self.onSave = onSave
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 500, height: 520),
@@ -32,6 +44,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         super.init(window: window)
         window.delegate = self
         buildContent(homepage: homepage, alwaysOnTop: alwaysOnTop, opacity: opacity)
+        errorLabel.stringValue = notice ?? ""
     }
 
     required init?(coder: NSCoder) { nil }
@@ -80,6 +93,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             controls.spacing = 6
             root.addArrangedSubview(row(label: action.title, view: controls))
         }
+        root.addArrangedSubview(globalShortcutRow())
 
         errorLabel.textColor = .systemRed
         errorLabel.lineBreakMode = .byWordWrapping
@@ -110,6 +124,24 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         window.contentView = content
     }
 
+    private func globalShortcutRow() -> NSStackView {
+        globalRecorder.shortcut = globalShortcut?.appShortcut
+        globalRecorder.setAccessibilityLabel("Show / Hide shortcut")
+        globalRecorder.onGlobalShortcut = { [weak self] global in
+            self?.globalShortcut = global
+            self?.refreshShortcutButtons()
+        }
+        globalRecorder.widthAnchor.constraint(equalToConstant: 130).isActive = true
+        let clear = NSButton(title: "Clear", target: self, action: #selector(clearGlobalShortcut(_:)))
+        clear.setAccessibilityLabel("Clear Show / Hide shortcut")
+        let note = NSTextField(labelWithString: "Works in any app")
+        note.font = .systemFont(ofSize: 11)
+        note.textColor = .secondaryLabelColor
+        let controls = NSStackView(views: [globalRecorder, clear, note])
+        controls.spacing = 6
+        return row(label: "Show / Hide", view: controls)
+    }
+
     private func row(label: String, view: NSView) -> NSStackView {
         let title = NSTextField(labelWithString: label)
         title.alignment = .right
@@ -128,12 +160,18 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         refreshShortcutButtons()
     }
 
+    @objc private func clearGlobalShortcut(_ sender: Any?) {
+        globalShortcut = nil
+        refreshShortcutButtons()
+    }
+
     @objc private func updateOpacityLabel(_ sender: NSSlider) {
         opacityValueLabel.stringValue = "\(Int(sender.doubleValue.rounded()))%"
     }
 
     @objc private func restoreDefaults(_ sender: Any?) {
         shortcuts = ShortcutStore.defaults
+        globalShortcut = nil
         refreshShortcutButtons()
         errorLabel.stringValue = ""
     }
@@ -149,21 +187,41 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             errorLabel.stringValue = error
             return
         }
-        onSave(SettingsDraft(
+        if let error = ShortcutStore.validationError(for: globalShortcut, alongside: shortcuts) {
+            errorLabel.stringValue = error
+            return
+        }
+        let error = onSave(SettingsDraft(
             homepage: homepage,
             alwaysOnTop: alwaysOnTopButton.state == .on,
             opacity: FloatSettings.clampedOpacity(opacitySlider.doubleValue / 100),
-            shortcuts: shortcuts
+            shortcuts: shortcuts,
+            globalShortcut: globalShortcut
         ))
+        if let error {
+            errorLabel.stringValue = error
+            return
+        }
         window?.close()
     }
 
+    /// Hands a global press to the recorder that is capturing, so the window does not hide mid-recording.
+    func captureIfRecording(_ global: GlobalShortcut?) -> Bool {
+        guard let global, window?.isKeyWindow == true,
+              let recorder = recorders.first(where: \.isCapturing) else { return false }
+        recorder.accept(global)
+        return true
+    }
+
+    private var recorders: [ShortcutRecorderButton] { Array(shortcutButtons.values) + [globalRecorder] }
+
     private func refreshShortcutButtons() {
         for (action, button) in shortcutButtons { button.shortcut = shortcuts[action] }
+        globalRecorder.shortcut = globalShortcut?.appShortcut
     }
 
     func windowWillClose(_ notification: Notification) {
-        shortcutButtons.values.forEach { $0.stopCapturing() }
+        recorders.forEach { $0.stopCapturing() }
         onClose?()
     }
 }
@@ -171,7 +229,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 final class ShortcutRecorderButton: NSButton {
     var shortcut: AppShortcut? { didSet { refreshTitle() } }
     var onShortcut: ((AppShortcut?) -> Void)?
-    private var isCapturing = false
+    var onGlobalShortcut: ((GlobalShortcut?) -> Void)?
+    private(set) var isCapturing = false
 
     init(shortcut: AppShortcut?) {
         self.shortcut = shortcut
@@ -227,6 +286,7 @@ final class ShortcutRecorderButton: NSButton {
             isCapturing = false
             shortcut = nil
             onShortcut?(nil)
+            onGlobalShortcut?(nil)
             return
         }
         guard let key = event.charactersIgnoringModifiers, key.count == 1 else {
@@ -238,14 +298,19 @@ final class ShortcutRecorderButton: NSButton {
         if event.modifierFlags.contains(.control) { modifiers |= AppShortcut.control }
         if event.modifierFlags.contains(.option) { modifiers |= AppShortcut.option }
         if event.modifierFlags.contains(.shift) { modifiers |= AppShortcut.shift }
-        let candidate = AppShortcut(key: key, modifiers: modifiers)
-        guard candidate.isAppShortcut else {
+        let candidate = GlobalShortcut(keyCode: Int(event.keyCode), key: key, modifiers: modifiers)
+        guard candidate.appShortcut.isAppShortcut else {
             title = "Use ⌘, ⌥, or ⌃"
             return
         }
+        accept(candidate)
+    }
+
+    func accept(_ global: GlobalShortcut) {
         isCapturing = false
-        shortcut = candidate
-        onShortcut?(candidate)
+        shortcut = global.appShortcut
+        onShortcut?(global.appShortcut)
+        onGlobalShortcut?(global)
     }
 
     private func refreshTitle() { title = shortcut?.displayName ?? "Unassigned" }

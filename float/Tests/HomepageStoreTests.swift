@@ -1,3 +1,4 @@
+import Carbon.HIToolbox
 import Foundation
 
 @main
@@ -81,5 +82,92 @@ struct HomepageStoreTests {
         ShortcutStore.save([:], defaults: defaults)
         precondition(ShortcutStore.shortcuts(defaults: defaults).isEmpty)
         print("HomepageStore tests passed")
+        globalShortcutTests(defaults)
+    }
+
+    static func globalShortcutTests(_ defaults: UserDefaults) {
+        let appKey = "shortcut."
+        let globalKey = "globalShortcut.showHide"
+        let command = AppShortcut.command
+        let shift = AppShortcut.shift
+        var checks = 0
+        func check(_ name: String, _ condition: Bool) {
+            precondition(condition, name)
+            checks += 1
+        }
+        defaults.removeObject(forKey: appKey)
+
+        // unassigned by default
+        check("unassigned by default", ShortcutStore.globalShortcut(defaults: defaults) == nil)
+
+        // round trip: ⌘⇧= keeps Shift, which AppShortcut drops for "+"
+        let global = GlobalShortcut(keyCode: 24, key: "+", modifiers: command | shift)
+        ShortcutStore.saveGlobalShortcut(global, defaults: defaults)
+        let restored = ShortcutStore.globalShortcut(defaults: defaults)
+        check("round trip: keyCode", restored?.keyCode == 24)
+        check("round trip: key", restored?.key == "+")
+        check("round trip: modifiers", restored?.modifiers == command | shift)
+
+        // six untouched
+        let six = Dictionary(uniqueKeysWithValues: zip(ShortcutAction.allCases, ["1", "2", "3", "4", "5", "6"]).map {
+            ($0, AppShortcut(key: $1, modifiers: AppShortcut.option))
+        })
+        ShortcutStore.save(six, defaults: defaults)
+        ShortcutStore.saveGlobalShortcut(global, defaults: defaults)
+        check("six untouched: stored keys", Set(defaults.dictionary(forKey: appKey)!.keys) == Set(ShortcutAction.allCases.map(\.rawValue)))
+        check("six untouched: restored", ShortcutStore.shortcuts(defaults: defaults) == six)
+
+        // reads data from older version
+        defaults.removeObject(forKey: globalKey)
+        defaults.set(["reload": ["key": "j", "modifiers": command]], forKey: appKey)
+        check("reads data from older version: six", ShortcutStore.shortcuts(defaults: defaults) == [.reload: AppShortcut(key: "j", modifiers: command)])
+        check("reads data from older version: Show / Hide", ShortcutStore.globalShortcut(defaults: defaults) == nil)
+
+        // corrupt values
+        ShortcutStore.save(six, defaults: defaults)
+        let corrupt: [(String, [String: Any])] = [
+            ("missing keyCode", ["key": "r", "modifiers": command]),
+            ("missing key", ["keyCode": 15, "modifiers": command]),
+            ("missing modifiers", ["keyCode": 15, "key": "r"]),
+            ("keyCode type", ["keyCode": "15", "key": "r", "modifiers": command]),
+            ("key type", ["keyCode": 15, "key": 15, "modifiers": command]),
+            ("modifiers type", ["keyCode": 15, "key": "r", "modifiers": "1"]),
+            ("keyCode 128", ["keyCode": 128, "key": "r", "modifiers": command]),
+            ("no modifiers", ["keyCode": 15, "key": "r", "modifiers": 0]),
+            ("reserved ⌘Q", ["keyCode": 12, "key": "q", "modifiers": command])
+        ]
+        for (name, value) in corrupt {
+            defaults.set(value, forKey: globalKey)
+            check("corrupt values: \(name)", ShortcutStore.globalShortcut(defaults: defaults) == nil)
+        }
+        check("corrupt values: six", ShortcutStore.shortcuts(defaults: defaults) == six)
+
+        // clear
+        ShortcutStore.saveGlobalShortcut(global, defaults: defaults)
+        ShortcutStore.saveGlobalShortcut(nil, defaults: defaults)
+        check("clear: stored value", defaults.object(forKey: globalKey) == nil)
+        check("clear: restored", ShortcutStore.globalShortcut(defaults: defaults) == nil)
+
+        // conflicts
+        let appShortcuts = [
+            ShortcutAction.reload: AppShortcut(key: "r", modifiers: command),
+            .zoomIn: AppShortcut(key: "+", modifiers: command)
+        ]
+        func conflict(_ keyCode: Int, _ key: String, _ modifiers: Int) -> String? {
+            ShortcutStore.validationError(for: GlobalShortcut(keyCode: keyCode, key: key, modifiers: modifiers), alongside: appShortcuts)
+        }
+        check("conflicts: app shortcut", conflict(15, "r", command) == "Each shortcut must be unique.")
+        check("conflicts: + and ⇧=", conflict(24, "=", command | shift) == "Each shortcut must be unique.")
+        check("conflicts: reserved", conflict(12, "q", command) == "⌘Q is reserved by RMV Float.")
+        check("conflicts: free", conflict(15, "r", AppShortcut.control | AppShortcut.option) == nil)
+
+        // carbon modifiers
+        check("carbon modifiers: command", GlobalHotKey.carbonModifiers(command) == UInt32(cmdKey))
+        check("carbon modifiers: control", GlobalHotKey.carbonModifiers(AppShortcut.control) == UInt32(controlKey))
+        check("carbon modifiers: option", GlobalHotKey.carbonModifiers(AppShortcut.option) == UInt32(optionKey))
+        check("carbon modifiers: shift", GlobalHotKey.carbonModifiers(shift) == UInt32(shiftKey))
+
+        precondition(checks > 0, "GlobalShortcut tests ran no checks")
+        print("GlobalShortcut tests passed: \(checks) checks")
     }
 }
