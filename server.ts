@@ -246,7 +246,10 @@ async function historyItems() {
     if (typeof p?.session_id === "string" && p.session_id) askSid.set(session, p.session_id); // /sessions 用。仮 entry には sid が無く、返事ゼロの session は curSid にも居ない
     // 最初の返事より前の許可待ち (foyer の依頼はほぼこれ) もこの行に載せる。null 固定だと rmv に出なかった (2026-10-15)
     const perm = perms.get(session);
-    items.push({ name: `asking-${session}.md`, bot: null, botChat: null, prompt: null, ts: a.ts, cwd, root, label: labelOf(p), repo: root.split("/").filter(Boolean).pop() ?? "", head: "", terminal: isTerm || pane !== null, live, session, perm: perm ? { id: perm.id, tool: perm.tool, detail: perm.detail, ts: perm.ts } : null, agent: null, sub: subType(p, shown.tab, await firstTabsOf(herdrSockOf(p))), title: shown.title, status: shown.status, lastOutputAt: shown.lastOutputAt, bg: await readBg(session, typeof p?.session_id === "string" ? p.session_id : null) });
+    // 窓口役でない Bot の返事待ちは、返事の行と同じくワーカー側へ (bot・repo・sub = Bot の名前、live なし)。窓口役は今どおりメイン
+    const pb = typeof p?.orca_bot?.name === "string" ? p.orca_bot : null;
+    const hide: string | null = pb && !MAIN_BOTS.has(pb.name.toLowerCase()) && !MAIN_BOTS.has(String(pb.id).toLowerCase()) ? pb.name : null;
+    items.push({ name: `asking-${session}.md`, bot: hide, botChat: null, prompt: null, ts: a.ts, cwd, root, label: labelOf(p), repo: hide ?? root.split("/").filter(Boolean).pop() ?? "", head: "", terminal: isTerm || pane !== null, live: hide ? false : live, session, perm: perm ? { id: perm.id, tool: perm.tool, detail: perm.detail, ts: perm.ts } : null, agent: null, sub: hide ?? subType(p, shown.tab, await firstTabsOf(herdrSockOf(p))), title: shown.title, status: shown.status, lastOutputAt: shown.lastOutputAt, bg: await readBg(session, typeof p?.session_id === "string" ? p.session_id : null) });
   }
   items.sort((x, y) => (Date.parse(y.ts ?? "") || 0) - (Date.parse(x.ts ?? "") || 0)); // 仮の entry も時刻順。先頭固定だと端末が閉じた後も残る state/prompt の待機中が「最新」に居座り、追従が止まる (2026-10-13 実害: 19:57 の Crewforce が 2 時間先頭に残った)
   // 依頼文の無い返事 (自動の通知で始まった返事) に、同じ会話の 1 つ前の依頼がある返事の name を付ける。鍵は session (端末・pane) でなく session_id:

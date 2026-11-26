@@ -47,6 +47,10 @@ def main():
     rec = {"prompt": prompt.strip()[:PROMPT_MAX], "ts": datetime.now().astimezone().isoformat(timespec="seconds"),
            "session_id": data.get("session_id"), "cwd": data.get("cwd"),  # cwd: 返事ゼロの新セッションを server が repo 列に置く用
            "terminal": handle, "herdr_pane": herdr_pane, "herdr_socket": herdr_socket, "herdr_label": pane["label"], "herdr_tab": pane["tab"]}  # 同上: 仮 entry の端末・pane を key から割り戻さず記録から読む
+    if not handle and not herdr_pane:  # Bot の会話: 窓口役でない Bot の仮 entry を server がワーカー側へ回す用 (perm-state.py と同じ見分け)
+        bot = frag.orca_bot(data.get("transcript_path"))
+        if bot:
+            rec["orca_bot"] = bot
     os.makedirs(PROMPT, exist_ok=True)
     path = os.path.join(PROMPT, key + ".json")
     with open(path + ".tmp", "w", encoding="utf-8") as f:
