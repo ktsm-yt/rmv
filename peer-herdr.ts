@@ -28,8 +28,8 @@ export function herdrSockOf(meta: { herdr_socket?: unknown } | null | undefined)
 // herdr の list が取れない時 (agents null) は従来どおり Orca の値・alive=true。herdr agent list に出力時刻は無いので lastOutputAt は null (共有端末の別 pane の時刻を出さない)
 // herdr: true = 生死を herdr だけで決める。pane の ORCA_TERMINAL_HANDLE は herdr server を起動した時の Orca 端末のもので、その端末を閉じると Orca の一覧から消える (herdr の client は別の Orca 端末で動き続ける、2026-10-13 実測)
 // status = herdr の agent_status (working / blocked / idle / done)。題名の記号より確か: 裏で foyer の返事を待つ間に題名の ◑ が落ちると『静か』に見えた (2026-10-15)。Orca 端末・取れない時は null
-export function paneView(pane: string | null, agents: Map<string, { title: string; status: string | null; tab: string | null }> | null, orca?: Term): { alive: boolean; herdr: boolean; title: string | null; status: string | null; lastOutputAt: number | null; tab: string | null } {
-  if (pane && agents) { const a = agents.get(pane); return { alive: !!a, herdr: true, title: a?.title ?? null, status: a?.status ?? null, lastOutputAt: null, tab: a?.tab ?? null }; }
+export function paneView(pane: string | null, agents: Map<string, { title: string; status: string | null; tab: string | null; label?: string | null }> | null, orca?: Term): { alive: boolean; herdr: boolean; title: string | null; status: string | null; lastOutputAt: number | null; tab: string | null; label?: string | null } {
+  if (pane && agents) { const a = agents.get(pane); return { alive: !!a, herdr: true, title: a?.title ?? null, status: a?.status ?? null, lastOutputAt: null, tab: a?.tab ?? null, label: a ? a.label : undefined }; }
   return { alive: true, herdr: false, title: orca?.title ?? null, status: null, lastOutputAt: orca?.lastOutputAt ?? null, tab: null };
 }
 // 既定 socket と、記録 (history / prompt) にある名前付き session の socket ごとに pane list を取って合わせる。取れない socket は飛ばし、全部取れなければ null
@@ -153,15 +153,22 @@ export async function newInHerdr(cwd: string, near: unknown): Promise<string> {
 
 // herdr の Claude が居る pane: `herdr agent list` の pane_id → {title: terminal_title (先頭の ◑ / ✳ が作業中 / 入力待ち)}。取れない (herdr 無し / exit 非 0 / JSON 不正) 時は null。memo は liveTerminals と同じ
 // socket ごと (null = 既定 session) に memo する: pane id は herdr の session ごとに w1:p1 から振られて重なる。並走する呼びが同じ list を二重に叩かないよう promise を持つ
-const herdrCache = new Map<string, { at: number; agents: Promise<Map<string, { title: string; status: string | null; tab: string | null }> | null> }>();
-export function herdrAgents(sock: string | null, maxAge: number): Promise<Map<string, { title: string; status: string | null; tab: string | null }> | null> {
+const herdrCache = new Map<string, { at: number; agents: Promise<Map<string, { title: string; status: string | null; tab: string | null; label?: string | null }> | null> }>();
+export function herdrAgents(sock: string | null, maxAge: number): Promise<Map<string, { title: string; status: string | null; tab: string | null; label?: string | null }> | null> {
   const hit = herdrCache.get(sock ?? "");
   if (hit && Date.now() - hit.at < maxAge) return hit.agents;
   const agents = (async () => {
     try {
-      const r = await herdrRun(["agent", "list"], sock);
+      // pane 名は agent list に載らないので pane list から取る (今の名前。返事の後に付け直した名前も札・帯に出る)。取れない時は label を入れず、記録の名前に任せる
+      const [r, pl] = await Promise.all([herdrRun(["agent", "list"], sock), herdrRun(["pane", "list"], sock).catch(() => null)]);
       const list = r.code === 0 ? JSON.parse(r.out)?.result?.agents : null;
-      return Array.isArray(list) ? new Map<string, { title: string; status: string | null; tab: string | null }>(list.filter((a) => a?.agent === "claude" && typeof a?.pane_id === "string").map((a) => [a.pane_id, { title: String(a.terminal_title ?? ""), status: typeof a.agent_status === "string" ? a.agent_status : null, tab: typeof a.tab_id === "string" ? a.tab_id : null }])) : null;
+      let labels: Map<string, string | null> | null = null;
+      try {
+        const ps = pl?.code === 0 ? JSON.parse(pl.out)?.result?.panes : null;
+        if (Array.isArray(ps)) labels = new Map(ps.filter((p) => typeof p?.pane_id === "string").map((p) => [p.pane_id, typeof p.label === "string" && p.label.trim() ? p.label.trim() : null]));
+      } catch { labels = null; }
+      const withLabel = (m: Map<string, { title: string; status: string | null; tab: string | null; label?: string | null }>) => { if (labels) for (const [id, v] of m) if (labels.has(id)) v.label = labels.get(id); return m; };
+      return Array.isArray(list) ? withLabel(new Map<string, { title: string; status: string | null; tab: string | null; label?: string | null }>(list.filter((a) => a?.agent === "claude" && typeof a?.pane_id === "string").map((a) => [a.pane_id, { title: String(a.terminal_title ?? ""), status: typeof a.agent_status === "string" ? a.agent_status : null, tab: typeof a.tab_id === "string" ? a.tab_id : null }]))) : null;
     } catch { return null; }
   })();
   herdrCache.set(sock ?? "", { at: Date.now(), agents });

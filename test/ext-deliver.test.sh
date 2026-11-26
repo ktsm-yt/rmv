@@ -35,6 +35,7 @@ cat > "$TMP/herdr" <<STUB
 case "\$1 \$2" in
   "agent list") echo "{\"result\":{\"agents\":[{\"pane_id\":\"wS:p1\",\"agent\":\"claude\",\"agent_status\":\"idle\",\"terminal_title\":\"t\",\"tab_id\":\"wS:t1\"},{\"pane_id\":\"wS:p2\",\"agent\":\"claude\",\"agent_status\":\"\$(cat "$TMP/p2status")\",\"terminal_title\":\"t\",\"tab_id\":\"wS:t1\"},{\"pane_id\":\"wS:p3\",\"agent\":\"claude\",\"agent_status\":\"idle\",\"terminal_title\":\"t\",\"tab_id\":\"wS:t2\"}]}}"; exit 0 ;;
   "tab list") echo '{"result":{"tabs":[{"workspace_id":"wS","tab_id":"wS:t1","number":1},{"workspace_id":"wS","tab_id":"wS:t2","number":2}]}}'; exit 0 ;;
+  "pane list") echo '{"result":{"panes":[]}}'; exit 0 ;;
   "pane get") echo '{"result":{"pane":{"pane_id":"x","agent":"claude"}}}'; exit 0 ;;
   "pane read") cat "$TMP/hscreen"; exit 0 ;;
 esac

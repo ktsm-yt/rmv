@@ -77,7 +77,7 @@ export const NAME = /^[\w.-]+\.md$/; // [\w.-] のみ: "/" を含まないので
 // name (… .md) の meta。asking-<session>.md (返事ゼロの仮 entry) は history に meta が無いので state/prompt の記録 (terminal・herdr_pane・cwd 付き) を使う
 export const metaOf = (name: string) => Bun.file(name.startsWith("asking-") ? `${PROMPT}/${name.slice(7, -3)}.json` : `${HIST}/${name.slice(0, -3)}.json`).json().catch(() => null);
 export const TEXT = { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" };
-// herdr の pane 名 (hook が記録した herdr_label)。無い・空は null。/history には出さず /sessions だけが使う
+// herdr の pane 名 (hook が記録した herdr_label)。無い・空は null。/sessions と、viewer の札・帯 (/history の label) が使う
 export function labelOf(meta: { herdr_label?: unknown } | null | undefined): string | null {
   return typeof meta?.herdr_label === "string" && meta.herdr_label ? meta.herdr_label : null;
 }

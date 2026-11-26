@@ -372,7 +372,7 @@ check "/sessions: 稼働中でない entry (terminal なし) は出ない" "$(sr
 check "/sessions: 依頼文 (prompt) は本文のどこにも出ない、root / sub / perm / bg も無い (一覧は空でない)" "$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$TMP/sess.json" 2>/dev/null) $(grep -c '秘密の依頼S\|"prompt"\|"root"\|"sub"\|"perm"\|"bg"' "$TMP/sess.json")" "1 0"
 check "/sessions: 対照 /history には同じ依頼文が出ている" "$(curl -s "$BASE/history" | grep -c '秘密の依頼S')" 1
 check "/sessions: x-rmv-live は /history と同じ (ok)、ACAO は付けない" "$(grep -i '^x-rmv-live:' "$TMP/shead" | cut -d: -f2 | tr -d ' \r') $(grep -ic '^access-control-allow-origin' "$TMP/shead")" "ok 0"
-check "/sessions: /history に label は足さない (既存の口は変えない)" "$(curl -s "$BASE/history" | python3 -c 'import json,sys; print(sum("label" in e for e in json.load(sys.stdin)))')" 0
+check "/history: 返事に pane 名 (label) が載る (viewer の札に出す)" "$(curl -s "$BASE/history" | python3 -c 'import json,sys; print(sorted({e.get("label") for e in json.load(sys.stdin) if e.get("session")=="term_test" and not e.get("agent")} - {None}))')" "['ラベルS']"
 check "/sessions: 127.0.0.1 以外の Host (DNS rebinding) → 403" "$(curl -s -o /dev/null -w '%{http_code}' -H "Host: rebind:$PORT" "$BASE/sessions")" 403
 check "/sessions: RMV_ORIGINS と違う ts.net の host → 403" "$(curl -s -o /dev/null -w '%{http_code}' -H "Host: other.tailtest.ts.net" "$BASE/sessions")" 403
 # /ext/*: RMV_EXT_ORIGINS 未設定 (この server) なら、どの origin からも 403。RMV_ORIGINS / 自分の origin でも開かない (詳しくは test/ext-deliver.test.sh)
@@ -932,6 +932,14 @@ agentlist "$(ag w5:p1 '◑ 作業A')" "$(ag w5:p2 '✳ 待ちB')"
 check "herdr title: pane 付き entry の題名は herdr の pane から (Orca の共有端末の題名ではない)" "$(fld "$PPA" title) $(fld "$PPB" title)" "◑ 作業A ✳ 待ちB"
 check "herdr title: herdr に出力時刻は無いので共有端末の lastOutputAt は載せない" "$(fld "$PPA" lastOutputAt)" None
 check "herdr live: herdr に居る pane は live" "$(fld "$PPA" live) $(fld "$PPB" live)" "True True"
+# pane 名 (札に出す): herdr の pane list の今の名前を返事の記録より優先する。名前を消した pane は記録に古い名前があっても null。pane list が取れない時は記録の名前
+cp "$STATE/history/${PPB%.md}.json" "$TMP/ppb-meta.bak"
+python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["herdr_label"]="古い名前"; json.dump(d,open(p,"w"),ensure_ascii=False)' "$STATE/history/${PPB%.md}.json"
+printf '{"result":{"panes":[{"pane_id":"w5:p1","label":"名前A"},{"pane_id":"w5:p2"}]}}' > "$TMP/hpanes"
+check "herdr label: pane list の今の名前を出す (付け直した名前・消した名前は記録より優先)" "$(fld "$PPA" label) $(fld "$PPB" label)" "名前A None"
+rm -f "$TMP/hpanes"
+check "herdr label: pane list が取れない時は返事の時に記録した名前" "$(fld "$PPA" label) $(fld "$PPB" label)" "None 古い名前"
+cp "$TMP/ppb-meta.bak" "$STATE/history/${PPB%.md}.json"
 agentlist "$(ag w5:p1 '◑ 作業A')"
 check "herdr live: herdr に居なくなった pane は live=false (同じ端末の別 pane は live のまま)" "$(fld "$PPA" live) $(fld "$PPB" live)" "True False"
 # 会話を別の pane で再開した (claude --resume): B の会話 (sess-ppb) を p1 で再開 → p2 時代の返事も p1 の行に寄り稼働中になる
