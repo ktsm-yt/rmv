@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     private weak var opacitySlider: NSSlider?
     private var settingsWindowController: SettingsWindowController?
     private var shortcutMenuItems: [ShortcutAction: [NSMenuItem]] = [:]
+    private let hotKey = GlobalHotKey()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.mainMenu = makeMainMenu()
@@ -16,6 +17,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         applyMenuShortcuts()
         load(HomepageStore.homepage())
         window.makeKeyAndOrderFront(nil)
+        hotKey.onPress = { [weak self] in self?.toggleFloat() }
+        _ = hotKey.register(ShortcutStore.globalShortcut()) // Settings shows a notice when this fails.
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -151,11 +154,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
             return
         }
         settingsWindowController = nil
+        let globalShortcut = ShortcutStore.globalShortcut()
         let controller = SettingsWindowController(
             homepage: HomepageStore.homepage(),
             alwaysOnTop: window.level == .floating,
             opacity: window.alphaValue,
-            shortcuts: ShortcutStore.shortcuts()
+            shortcuts: ShortcutStore.shortcuts(),
+            globalShortcut: globalShortcut,
+            notice: hotKey.isRegistered ? nil : globalShortcut.map(unavailableMessage)
         ) { [weak self] draft in
             self?.applySettings(draft)
         }
@@ -165,6 +171,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         controller.window?.center()
         controller.showWindow(nil)
         controller.window?.makeKeyAndOrderFront(nil)
+    }
+
+    private func toggleFloat() {
+        if settingsWindowController?.captureIfRecording(hotKey.current) == true { return }
+        if NSApp.isActive && window.isVisible {
+            NSApp.hide(nil)
+            return
+        }
+        NSApp.unhide(nil)
+        if window.isMiniaturized {
+            window.deminiaturize(nil)
+        } else if !window.isVisible {
+            window.makeKeyAndOrderFront(nil)
+            settingsWindowController?.window?.makeKeyAndOrderFront(nil) // An open settings window stays in front.
+        }
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     private func load(_ url: URL) {
@@ -193,17 +215,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         shortcutMenuItems[.alwaysOnTop]?.forEach { $0.state = isAlwaysOnTop ? .on : .off }
     }
 
-    private func applySettings(_ draft: SettingsDraft) {
+    private func unavailableMessage(_ global: GlobalShortcut) -> String {
+        "\(global.appShortcut.displayName) is used by macOS or another app."
+    }
+
+    private func applySettings(_ draft: SettingsDraft) -> String? {
+        // An unchanged key that could not be registered at launch must not block the other settings.
+        if !hotKey.register(draft.globalShortcut), draft.globalShortcut != ShortcutStore.globalShortcut() {
+            return draft.globalShortcut.map(unavailableMessage) ?? "Could not clear the Show / Hide shortcut."
+        }
         let previousHomepage = HomepageStore.homepage()
         HomepageStore.save(draft.homepage)
         FloatSettings.save(alwaysOnTop: draft.alwaysOnTop, opacity: draft.opacity)
         ShortcutStore.save(draft.shortcuts)
+        ShortcutStore.saveGlobalShortcut(draft.globalShortcut)
         window.level = draft.alwaysOnTop ? .floating : .normal
         window.alphaValue = draft.opacity
         opacitySlider?.doubleValue = Double(draft.opacity)
         updateAlwaysOnTopButton()
         applyMenuShortcuts()
         if previousHomepage != draft.homepage { load(draft.homepage) }
+        return nil
     }
 
     private func addShortcutMenuItem(to menu: NSMenu, action: ShortcutAction, selector: Selector) {

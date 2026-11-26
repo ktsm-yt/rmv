@@ -126,3 +126,44 @@ enum ShortcutStore {
         return reserved.contains { $0.comparisonKey == shortcut.comparisonKey }
     }
 }
+
+struct GlobalShortcut: Equatable {
+    let keyCode: Int
+    let key: String
+    // Kept as pressed: AppShortcut drops Shift for "+", which would register a different key.
+    let modifiers: Int
+
+    var appShortcut: AppShortcut { AppShortcut(key: key, modifiers: modifiers) }
+}
+
+extension ShortcutStore {
+    // Stored apart from the app shortcuts: older versions reset all of them when they meet an unknown action.
+    private static let globalKey = "globalShortcut.showHide"
+
+    static func globalShortcut(defaults userDefaults: UserDefaults = .standard) -> GlobalShortcut? {
+        guard let stored = userDefaults.dictionary(forKey: globalKey),
+              let keyCode = stored["keyCode"] as? Int, (0...127).contains(keyCode),
+              let key = stored["key"] as? String,
+              let modifiers = stored["modifiers"] as? Int else { return nil }
+        let global = GlobalShortcut(keyCode: keyCode, key: key, modifiers: modifiers)
+        return validationError(for: global, alongside: [:]) == nil ? global : nil
+    }
+
+    static func saveGlobalShortcut(_ global: GlobalShortcut?, defaults userDefaults: UserDefaults = .standard) {
+        guard let global else {
+            userDefaults.removeObject(forKey: globalKey)
+            return
+        }
+        userDefaults.set(["keyCode": global.keyCode, "key": global.key, "modifiers": global.modifiers], forKey: globalKey)
+    }
+
+    static func validationError(for global: GlobalShortcut?, alongside shortcuts: [ShortcutAction: AppShortcut]) -> String? {
+        guard let shortcut = global?.appShortcut else { return nil }
+        guard shortcut.isAppShortcut else { return "Shortcuts need Command, Control, or Option." }
+        guard !isReserved(shortcut) else { return "\(shortcut.displayName) is reserved by RMV Float." }
+        guard !shortcuts.values.contains(where: { $0.comparisonKey == shortcut.comparisonKey }) else {
+            return "Each shortcut must be unique."
+        }
+        return nil
+    }
+}
