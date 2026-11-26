@@ -391,6 +391,10 @@
   html.mob #cattach { margin-right: 0; padding: 0; }
   html.mob #cact .cpick { flex: 0 1 auto; font-size: 14px; padding: 0 4px; }
   html.mob #csend { margin-left: auto; padding: 0 18px; font-weight: 700; }
+  /* 1 列の定型キーは 1 行に並べて小さく (高さ 32px、幅は字に合わせる)。入らない数に増えたら 2 行目へ折り返す。あまり押さないので 3 段 144px は占めすぎた (2026-11-27 user)。2 列は上の格子のまま */
+  html.mob:not(.split) #cform { display: flex; flex-wrap: wrap; }
+  html.mob:not(.split) #cact .q { flex: 1 1 auto; min-width: 32px; min-height: 32px; height: 32px; font-size: 13px; padding: 0 6px; }
+  html.mob:not(.split) :is(#ctext, #cbar) { flex-basis: 100%; }
   /* 送り先・文脈量・▼ を最下段のモデル・エフォートと送信の間に 2 段で詰める。▼ は送信から離して左に置く (押し違えて送らない)。幅が足りない端末では送信と一緒に次の行へ回る */
   html.mob #cbar { flex-wrap: wrap; }
   /* 1 列の送り先は 1 つの部品 (#chead) を、閉じた帯と開いた送信欄の最下段で同じ形・同じ位置に置く (切り替えで部品を変えない、2026-11-13 user)。
@@ -983,7 +987,8 @@ const scope = () => {
   }
   return inSess(entries).filter((e) => SESS || !e.codexPane);
 };
-const setParam = (k, v) => { const u = new URL(location.href); if (v) u.searchParams.set(k, v); else u.searchParams.delete(k); history.replaceState(null, "", u); };
+let urlNow = location.href; // 最新の URL。スマホの戻るで着いた古い印 (下の backSync) にも置き直す
+const setParam = (k, v) => { const u = new URL(location.href); if (v) u.searchParams.set(k, v); else u.searchParams.delete(k); history.replaceState(history.state, "", u); urlNow = u.href; };
 function renderBar() {
   document.getElementById("pos").textContent = list.length ? `${list.length - idx} / ${list.length}` : "";
   document.getElementById("prev").disabled = idx >= list.length - 1;
@@ -1262,7 +1267,7 @@ function zoomGallery(i) {
   zbarUpdate();
   if (zoomSet[zoomAt].tagName !== "IMG") return openZoom(zoomSet[zoomAt]); // mermaid 図
   const im = new Image();
-  im.onload = () => zoomImage(im);
+  im.onload = () => zoomSet && zoomImage(im); // 読み込みの間に閉じた (× ・戻る) なら開き直さない
   im.src = zoomSet[zoomAt].src;
 }
 const closeZoom = () => { zoom.hidden = true; zoom.querySelector("svg")?.remove(); zoomSet = null; };
@@ -1382,11 +1387,7 @@ document.addEventListener("keydown", (ev) => {
   }
   if (ev.key === "r" && !speakBtn.hidden) return toggleSpeak(); // r = 読み上げ (他のキーと重ならない)
   // Esc (欄の外) = 1 回ごとに新しいピンから外す。ひとことが書いてあるピンに当たったら止める (打った文字は消さない)
-  if (ev.key === "Escape") {
-    const pins = drafts.get(curName())?.pins, last = pins && [...pins.keys()].pop();
-    if (last != null && !keepPin(drafts.get(curName()), last)) { pins.delete(last); refresh(); }
-    return;
-  }
+  if (ev.key === "Escape") return dropPin();
   if (ev.key === "ArrowLeft") { ev.preventDefault(); older(); }
   else if (ev.key === "ArrowRight") { ev.preventDefault(); newer(); }
 });
@@ -1407,6 +1408,8 @@ const canSendNotes = () => {
 const draftOf = (n) => { if (!drafts.has(n)) drafts.set(n, { pins: new Map(), free: "", imgs: [] }); return drafts.get(n); };
 // 空のひとことでも写真が付いていれば外さない (Esc 1 回で写真だけの一言を失わせない)
 const keepPin = (d, k) => !!d.pins.get(k)?.comment.trim() || d.imgs.some((i) => i.pin === k);
+// 新しいピンから 1 つ外す (Esc とスマホの戻る)。ひとことか写真のあるピンに当たったら止める (打った文字は消さない)
+const dropPin = () => { const d = drafts.get(curName()), last = d && [...d.pins.keys()].pop(); if (last != null && !keepPin(d, last)) { d.pins.delete(last); refresh(); } };
 const hasDraft = (n) => { const d = drafts.get(n ?? ""); return !!d && (d.pins.size > 0 || !!d.free.trim() || d.imgs.length > 0); };
 const cut = (s, n) => { const t = s.replace(/\s+/g, " ").trim(); return t.length > n ? t.slice(0, n) + "…" : t; };
 const textOf = (el) => {
@@ -1598,6 +1601,7 @@ function renderTray() {
     document.body.classList.toggle("pen", !tray.hidden && !penFold);
     const dpen = document.getElementById("dpen"); dpen.hidden = !penFold; dpen.querySelector("b").textContent = d ? d.pins.size : "";
     placeNav();
+    backSync(); // ピンの数だけ戻るの印を積む
   } // スマホ: 赤ペン中は下の欄を赤ペン欄に入れ替える (送信欄と 2 段に積まない)
   scheduleMargin();
   const free = document.getElementById("free");
@@ -2461,6 +2465,36 @@ newpop.addEventListener("click", async (ev) => {
 });
 document.addEventListener("click", () => { if (!newpop.hidden) closeNew(); });
 document.addEventListener("keydown", (ev) => { if (ev.code === "Escape" && !newpop.hidden) closeNew(); });
+
+// スマホ: ブラウザの戻る (ジェスチャー) = Esc。開いている物の数だけ履歴に印 { rmv: n } を積み、戻る 1 回で上から 1 つ閉じる (前のページへ出て書きかけが消えた、2026-11-27 user)。
+// 積むのは開く操作の中 (操作なしで積んだ印は Chrome・Gecko が戻るで飛ばす)。× や外を押して閉じた後の余りの印はそのまま使い、何も開いていない所へ戻ったら印を全部飛ばして前のページへ。PC では積まない
+// 深さ = 図の拡大 + ＋ + ☰ + 開いた赤ペン欄のピンの数 + 1 列の送信欄
+const backDepth = () => { const b = document.body.classList; return !zoom.hidden + !newpop.hidden + !b.contains("proj-closed") + (b.contains("pen") ? drafts.get(curName())?.pins.size ?? 0 : 0) + (!document.documentElement.classList.contains("split") && !b.contains("chat-closed")); };
+const backN = () => history.state?.rmv ?? 0;
+let backAt = backN(); // 前に居た印の番号。戻ると進むを見分ける
+function backSync() {
+  if (!isMobileUA) return;
+  for (let n = backN(); n < backDepth(); ) history.pushState({ rmv: ++n }, "");
+  backAt = backN();
+}
+if (isMobileUA) {
+  new MutationObserver(backSync).observe(document.body, { attributes: true, attributeFilter: ["class"] });
+  for (const e of [zoom, newpop]) new MutationObserver(backSync).observe(e, { attributes: true, attributeFilter: ["hidden"] });
+  addEventListener("pageshow", () => { backAt = backN(); });
+  addEventListener("popstate", () => {
+    const n = backN(), back = n < backAt, b = document.body.classList;
+    backAt = n;
+    if (location.href !== urlNow) history.replaceState(history.state, "", urlNow);
+    if (!back) return; // 進む: 開き直さない
+    if (!backDepth()) return history.go(-(n + 1)); // ponytail: rmv がタブの最初のページだと戻る先が無く、余りの印の分だけ空振りする
+    if (!zoom.hidden) closeZoom();
+    else if (!newpop.hidden) closeNew();
+    else if (!b.contains("proj-closed")) b.add("proj-closed");
+    else if (b.contains("pen")) dropPin(); // ひとことのあるピンでは止まり、下の backSync が印を 1 つ積み直す
+    else { b.add("chat-closed"); b.remove("to-open"); }
+    backSync();
+  });
+}
 
 let fragMod = null;
 // 入力中 = 右の欄か、カーソルのある入力欄に文字がある。この間は画面を差し替えない (送信後も右の欄にカーソルが残るので、空なら追従を止めない)

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # スマホ (mobile UA) の画面の試験 (2026-11-13 user: スマホでも使いやすく)。PC の UA では何も変わらないことも見る。
 # 本物の state・herdr・Orca・走っている Claude は見ない (RMV_STATE_DIR を一時領域へ、orca / herdr / ps は差し替え)。送信・許可・新規は押さない。
-# 実行: bash rmv/test/mobile-dock.test.sh   (bun / uv / playwright の chromium が要る)
+# 実行: bash rmv/test/mobile-dock.test.sh   (bun / uv / playwright の chromium が要る。firefox は任意: あれば戻る操作の試験を firefox でも回し、無ければ SKIP)
 #   RMV_DIR=<dir> で server.ts + index.html の置き場を差し替えられる (旧 index.html に当てると FAIL = negative control)
 #   SHOTS=<dir> で各状態の画面を 1 画面 1 ファイルで保存する
 # 幅と高さは仮の値: 360×860 = 閉じた Fold / 820×900 = 開いた Fold (実機は短い辺 821、2026-11-14 実測) / 高さ 480・505・420 = キーボードが出た近似。
@@ -126,8 +126,8 @@ window.T = {
   r: (q) => { const e = typeof q === 'string' ? document.querySelector(q) : q; if (!e || !e.checkVisibility()) return null; const b = e.getBoundingClientRect(); return b.width && b.height ? { l: b.left, t: b.top, r: b.right, b: b.bottom, w: b.width, h: b.height } : null; },
   // 画面 (0〜innerWidth × 0〜innerHeight) に全部入っているか
   inView: (q) => { const b = T.r(q); return !!b && b.l >= -0.5 && b.t >= -0.5 && b.r <= innerWidth + 0.5 && b.b <= innerHeight + 0.5; },
-  // 押せる物 (button / select / chip) のうち、描かれていて 44px に足りない物
-  small: () => [...document.querySelectorAll('button, select, .chip')].filter((e) => !e.closest('#mmzoom') && e.checkVisibility()).map((e) => [e, e.getBoundingClientRect()]).filter(([, b]) => b.width && b.height && (b.width < 43.5 || b.height < 43.5)).map(([e, b]) => `${e.tagName.toLowerCase()}${e.id ? '#' + e.id : ''}.${e.className} ${Math.round(b.width)}x${Math.round(b.height)}`),
+  // 押せる物 (button / select / chip) のうち、描かれていて 44px に足りない物。1 列の定型キーは小さくした (32px、2026-11-27 user) ので別の試験で見る
+  small: () => [...document.querySelectorAll('button, select, .chip')].filter((e) => !e.closest('#mmzoom') && !e.matches('html.mob:not(.split) #cact .q') && e.checkVisibility()).map((e) => [e, e.getBoundingClientRect()]).filter(([, b]) => b.width && b.height && (b.width < 43.5 || b.height < 43.5)).map(([e, b]) => `${e.tagName.toLowerCase()}${e.id ? '#' + e.id : ''}.${e.className} ${Math.round(b.width)}x${Math.round(b.height)}`),
   // 返事の本文までスクロールして、main の枠と画面の中に見えている返事の高さ
   replyH: () => { const m = document.querySelector('main'), e = document.querySelector('#reply'); m.scrollTop += e.getBoundingClientRect().top - m.getBoundingClientRect().top; const a = e.getBoundingClientRect(), c = m.getBoundingClientRect(), t = m.querySelector('#tray:not([hidden])')?.getBoundingClientRect(); return Math.max(0, Math.min(a.bottom, c.bottom, innerHeight, t ? t.top : Infinity) - Math.max(a.top, c.top, 0)); }, // 返事の上に貼り付く赤ペン欄 (旧版) に隠れた分は数えない
   // 返事 (main) と送信欄 (#chat) が左右に並び、どちらも画面の縦いっぱい
@@ -143,7 +143,7 @@ def live_ok(route): # 生死を判定できた時の一覧: gamma を終了扱�
     r = route.fetch(); items = r.json()
     for e in items: e["live"] = e["repo"] != "gamma"
     route.fulfill(response=r, headers={**r.headers, "x-rmv-live": "ok"}, body=json.dumps(items))
-def page(b, w, h, ua=ANDROID, mobile=True, init="", dead=False):
+def page(b, w, h, ua=ANDROID, mobile=True, init="", dead=False, start=None):
     c = b.new_context(viewport={"width": w, "height": h}, user_agent=ua, has_touch=mobile, is_mobile=mobile, device_scale_factor=2)
     c.add_init_script(LIB + init)
     pg = c.new_page()
@@ -153,6 +153,7 @@ def page(b, w, h, ua=ANDROID, mobile=True, init="", dead=False):
     pg.route(re.compile(r"/now\?"), lambda r: r.fulfill(status=200, body=json.dumps({"model": "fable[1m]", "effort": "medium", "ctx": {"used": 271000, "limit": 1000000}}), content_type="application/json"))
     pg.route(re.compile(r"/media\?"), lambda r: r.fulfill(status=200, body=json.dumps([{"p": "/tmp/rmv-fixture/shot.png", "t": 1}]), content_type="application/json"))
     if dead: pg.route(re.compile(r"/history$"), live_ok)
+    if start: pg.goto(start)  # 戻る操作の試験: rmv の前のページ
     pg.goto(base)
     pg.wait_for_function("document.querySelector('#reply table') && document.querySelector('#reply pre')", timeout=10000)
     pg.evaluate("document.fonts.ready"); pg.wait_for_timeout(300)
@@ -460,6 +461,108 @@ with sync_playwright() as p:
     pg.evaluate("T.toTop('#reply table[data-ptbl]')"); pg.wait_for_timeout(150); shot(pg, "3d-open-redpen-keyboard")
     pg.context.close()
     # Fold の開閉 (読み直さずに幅が変わる) と、前に ⇆ で左を選んだ端末
+
+    # ---- 段 4: スマホの戻る操作 = Esc (開いた物を上から 1 つ閉じる。何も開いていなければ前のページ、2026-11-27 user)。前のページは /history
+    PREV = base + "/history"
+    ST = "({ url: location.pathname, proj: !document.body.classList.contains('proj-closed'), pop: document.querySelector('#newpop')?.hidden === false, zoom: document.querySelector('#mmzoom')?.hidden === false, send: !document.body.classList.contains('chat-closed'), pen: document.body.classList.contains('pen'), pins: document.querySelectorAll('#pins .pin').length })"
+    MM = "document.querySelector('#reply').insertAdjacentHTML('afterbegin', '<pre class=\"mermaid\" id=\"mmt\"><svg viewBox=\"0 0 200 100\" width=\"200\" height=\"100\"><rect width=\"200\" height=\"100\" fill=\"#ddd\"/></svg></pre>')"
+    IMG = f"{state}/pin.png"
+    import base64
+    open(IMG, "wb").write(base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="))
+    def st(pg):
+        try: return pg.evaluate(ST)
+        except Exception as e: return {"url": "?", "err": str(e)[:80]}
+    def back(pg, fwd=False):
+        try: (pg.go_forward if fwd else pg.go_back)(timeout=3000)
+        except Exception: pass
+        pg.wait_for_timeout(600)
+    def zoom_open(pg): # 図の拡大を開く (旧版で前のページへ出ていたら False)
+        try: pg.evaluate(MM)
+        except Exception: return False
+        return tap(pg, "#mmt svg")
+    def back_tests(bb, name):
+        # 1. 開いた物を 1 つずつ閉じる
+        pg = page(bb, 360, 860, start=PREV)
+        o = tap(pg, "#ptoggle"); back(pg); g = st(pg)
+        check(f"{name}: ☰ を開いて戻る → ☰ だけ閉じ、ページはそのまま", o and g["url"] == "/" and not g["proj"], g)
+        tap(pg, "#ptoggle"); tap(pg, "#newbtn"); g0 = st(pg); back(pg); g = st(pg)
+        check(f"{name}: ☰ → ＋ と開いて戻る → ＋ が閉じる", g0.get("pop") and g["url"] == "/" and not g["pop"] and not g["proj"], (g0, g))
+        back(pg); g = st(pg)
+        check(f"{name}: 続けて戻る → 前のページ", g["url"] == "/history", g)
+        pg.context.close()
+        pg = page(bb, 360, 860, start=PREV)
+        open_sheet(pg); z = zoom_open(pg); back(pg); g = st(pg)
+        check(f"{name}: 送信欄 → 図の拡大と開いて戻る → 図だけ閉じ、送信欄は開いたまま", z and g["url"] == "/" and not g["zoom"] and g["send"], g)
+        back(pg); g = st(pg)
+        check(f"{name}: もう 1 回戻る → 送信欄が閉じる (ページはそのまま)", g["url"] == "/" and not g["send"], g)
+        # 3. 進む: 開き直さず、ページも変わらない
+        open_sheet(pg); zoom_open(pg); back(pg); back(pg, fwd=True); g = st(pg)
+        check(f"{name}: 図を閉じた後に進む → 送信欄は開いたまま、図は閉じたまま、ページも同じ", g["url"] == "/" and g["send"] and not g["zoom"], g)
+        pg.context.close()
+        # 2. 何も開いていない時と、余りの印がある時は 1 回で前のページ
+        pg = page(bb, 360, 860, start=PREV)
+        back(pg); g = st(pg)
+        check(f"{name}: 何も開かずに戻る → 前のページ", g["url"] == "/history", g)
+        pg.context.close()
+        pg = page(bb, 360, 860, start=PREV)
+        open_sheet(pg); tap(pg, "#ctoggle"); back(pg); g = st(pg)
+        check(f"{name}: 送信欄を開いて ▼ で閉じてから戻る → 1 回で前のページ", g["url"] == "/history", g)
+        pg.context.close()
+        # 4. 赤ペン: 新しいピンから 1 つずつ外し、ひとことか写真のあるピンで止まる
+        pg = page(bb, 360, 860, start=PREV)
+        for k in (2, 3, 4): pin(pg, k)
+        try: pg.locator("#pins textarea >> nth=1").fill("メモ", timeout=1500)
+        except Exception: pass
+        pg.evaluate("document.activeElement?.blur()")
+        back(pg); g = st(pg)
+        check(f"{name}: ピン 3 つ (真ん中にひとこと) で戻る → 一番新しいピンだけ外れる", g["url"] == "/" and g["pen"] and g["pins"] == 2, g)
+        back(pg); g = st(pg)
+        check(f"{name}: もう 1 回戻る → ひとことのあるピンで止まる (欄は開いたまま、ページも同じ)", g["url"] == "/" and g["pen"] and g["pins"] == 2, g)
+        back(pg); g = st(pg)
+        check(f"{name}: 触らずにもう 1 回戻っても同じ", g["url"] == "/" and g["pen"] and g["pins"] == 2, g)
+        pg.context.close()
+        pg = page(bb, 360, 860, start=PREV)
+        for k in (2, 3): pin(pg, k)
+        try:
+            with pg.expect_file_chooser(timeout=3000) as fc: pg.locator("#pins .pin >> nth=1 >> .pa").click()
+            fc.value.set_files(IMG); pg.wait_for_function("document.querySelectorAll('#fimgs .cimg').length > 0", timeout=5000)
+        except Exception: pass
+        pg.evaluate("document.activeElement?.blur()")
+        back(pg); g = st(pg)
+        check(f"{name}: 写真だけのピンでも止まる", g["url"] == "/" and g["pen"] and g["pins"] == 2, g)
+        pg.context.close()
+        pg = page(bb, 360, 860, start=PREV)
+        for k in (2, 3, 4): pin(pg, k)
+        tap(pg, "#pfold"); tap(pg, "#dpen")
+        seen = []
+        for _ in range(3): back(pg); seen.append(st(pg))
+        check(f"{name}: 畳んだ欄 (ピン 3 つ) を『赤ペン N』で開いて戻る 3 回 → ピンが 0 になるまでページはそのまま", [(s["url"], s["pins"]) for s in seen] == [("/", 2), ("/", 1), ("/", 0)], seen)
+        back(pg); g = st(pg)
+        check(f"{name}: 4 回目の戻る → 前のページ", g["url"] == "/history", g)
+        pg.context.close()
+    back_tests(b, "chromium")
+    try: fb = p.firefox.launch()
+    except Exception as e: fb = None; print(f"SKIP firefox ({str(e).splitlines()[0][:80]})")
+    if fb: back_tests(fb, "firefox"); fb.close()
+    # 5. 定型キー: 1 列では 1 行に並べて小さく (32px)
+    pg = page(b, 360, 860)
+    open_sheet(pg)
+    KEYS = "(() => { const q = [...document.querySelectorAll('#cact .q')].filter((e) => e.checkVisibility()).map((e) => e.getBoundingClientRect()); return { n: q.length, rows: new Set(q.map((r) => Math.round(r.top))).size, minH: Math.min(...q.map((r) => r.height)), minW: Math.min(...q.map((r) => r.width)), band: Math.max(...q.map((r) => r.bottom)) - Math.min(...q.map((r) => r.top)) }; })()"
+    g = pg.evaluate(KEYS)
+    check("360×860 の送信欄: 定型キー 7 個が 1 行、1 個 32px 以上 × 24px 以上、段の高さ 40px 以下", g["n"] == 7 and g["rows"] == 1 and g["minH"] >= 32 and g["minW"] >= 24 and g["band"] <= 40, g)
+    print("     keys", g)
+    pg.evaluate("const c = document.querySelector('#copt'); for (const t of ['x1', 'x2', 'x3']) { const q = document.querySelector('#cact .q').cloneNode(true); q.textContent = t; c.append(q); }")
+    g = pg.evaluate(KEYS)
+    check("定型キーが 10 個になっても 2 行以内で、どれも 32px 以上 × 24px 以上", g["n"] == 10 and g["rows"] <= 2 and g["minH"] >= 32 and g["minW"] >= 24, g)
+    pg.context.close()
+    # 6. PC の UA では履歴に積まない
+    pg = page(b, 1280, 800, ua=None, mobile=False)
+    h0 = pg.evaluate("history.length")
+    for sel in ("#ptoggle", "#ptoggle", "#ctoggle", "#ctoggle"): pg.click(sel); pg.wait_for_timeout(150)
+    pg.evaluate(MM); pg.click("#mmt svg"); pg.wait_for_timeout(150); z = pg.evaluate("!document.querySelector('#mmzoom').hidden"); pg.keyboard.press("Escape"); pg.wait_for_timeout(150)
+    g = pg.evaluate("history.length")
+    check("PC の UA: ☰・送信欄・図の拡大を開いて閉じても history.length は増えない", z and g == h0, (h0, g, z))
+    pg.context.close()
 
     # ---- PC の UA では何も変わらない
     for (w, h) in ((360, 860), (1280, 800)):
