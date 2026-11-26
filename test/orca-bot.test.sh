@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
@@ -91,6 +92,13 @@ with tempfile.TemporaryDirectory(prefix="rmv-orca-bot-") as tmp:
     stop({"last_assistant_message": "手紙で回答済み\n\nNO_REPLY\n"})
     assert not pending.exists() and list(hist.glob("*-bot.md")) == bot_entries
     print("ok   hook: NO_REPLY を記録せず依頼文を消す", flush=True)
+
+    asked = prompt / "77777777-7777-4777-8777-777777777777.json"
+    subprocess.run([sys.executable, root / "hooks/prompt-state.py"], text=True, env={**env, **structured}, check=True,
+                   input=json.dumps({**request, "hook_event_name": "UserPromptSubmit", "session_id": asked.stem, "prompt": "依頼"}))
+    assert read_json(asked)["orca_bot"] == meta["orca_bot"], read_json(asked)
+    asked.unlink()
+    print("ok   hook: Bot の依頼の記録に、返事の記録と同じ Bot の印を書く", flush=True)
 
     calls = tmp / "calls.jsonl"
     mode = tmp / "mode"
@@ -186,7 +194,18 @@ Bun.serve = (options) => realServe({ ...options, fetch(req, server) {
             write_json(worker_meta, {**meta, "session_id": "44444444-4444-4444-8444-444444444444", "name": worker.name,
                                      "orca_bot": {**meta["orca_bot"], "name": "Reviewer", "id": "66383e77-ea45-4f17-9bd6-5b6698528645"}})
             write_json(state / "keys.json", {"9": "/help"})
+            # 返事がまだ無い会話の依頼 (仮の行)。窓口役でない Reviewer の分が一番新しい
+            replied = datetime.fromisoformat(meta["ts"])
+            asks = {"Reviewer": "88888888-8888-4888-8888-888888888888", "Manager": "99999999-9999-4999-8999-999999999999"}
+            for name, ask_sid in asks.items():
+                write_json(prompt / f"{ask_sid}.json", {"prompt": f"{name} への依頼", "session_id": ask_sid, "cwd": str(tmp / "bots" / name.lower()),
+                    "ts": (datetime.now().astimezone() if name == "Reviewer" else replied - timedelta(minutes=1)).isoformat(timespec="seconds"),
+                    "terminal": None, "herdr_pane": None, "orca_bot": {**meta["orca_bot"], "name": name, "id": bot_id if name == "Manager" else "66383e77-ea45-4f17-9bd6-5b6698528645"}})
             entries = {row["name"]: row for row in json.loads(http("/history")[1])}
+            hidden, shown = (entries[f"asking-{asks[name]}.md"] for name in ("Reviewer", "Manager"))
+            assert hidden["agent"]["type"] == hidden["bot"] == hidden["repo"] == "Reviewer" and hidden["live"] is False, hidden
+            assert shown["agent"] is None and shown["bot"] is None, shown
+            assert f"asking-{asks['Reviewer']}.md" not in [row.get("name") for row in json.loads(http("/sessions")[1])]
             assert entries[entry.name]["bot"] == entries[entry.name]["repo"] == "Manager"
             assert entries[entry.name]["terminal"] and not entries[entry.name]["live"] and entries[entry.name]["agent"] is None
             assert entries[worker.name]["agent"]["type"] == "Reviewer"
@@ -199,6 +218,7 @@ with sync_playwright() as p:
     page = browser.new_page()
     page.goto(sys.argv[1], wait_until="domcontentloaded")
     expect(page.locator("#stamp")).to_contain_text("Manager:")
+    expect(page.locator("#cto")).to_contain_text("Manager")
     expect(page.locator('#plist [data-r="Reviewer"]')).to_have_count(0)
     expect(page.locator("#ctext")).to_have_attribute("placeholder", "Bot へ送る (⌘+Enter)")
     expect(page.locator("#cact > .q:enabled")).to_have_count(5)
@@ -211,7 +231,9 @@ with sync_playwright() as p:
 ''')
             worker.unlink()
             worker_meta.unlink()
-            print("ok   画面: メインは窓口役、他はワーカー。Bot では 1〜5 だけ有効", flush=True)
+            for ask_sid in asks.values():
+                (prompt / f"{ask_sid}.json").unlink()
+            print("ok   画面: メインは窓口役、他はワーカー (返事待ちも)。Bot では 1〜5 だけ有効", flush=True)
 
             annotation = "-先頭の指摘\n\n2 行目の指摘"
             response = send(annotation)
