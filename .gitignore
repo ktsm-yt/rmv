@@ -4,3 +4,5 @@ state/
 .claude/
 hooks/dev-harness/
 float/build/
+__pycache__/
+*.pyc
