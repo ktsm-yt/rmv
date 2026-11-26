@@ -160,6 +160,14 @@
   .cpdf { display: block; height: 56px; max-width: 120px; padding: 0 8px; line-height: 56px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; border-radius: 6px; border: 1px solid var(--line); }
   .cimg img, .cimg video { display: block; height: 56px; max-width: 120px; object-fit: cover; border-radius: 6px; border: 1px solid var(--line); }
   .cimg button { position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; padding: 0; border-radius: 50%; border: 1px solid var(--line); background: var(--panel); color: var(--fg); font-size: 11px; line-height: 1; cursor: pointer; }
+  #tstat .note.clear { --rc: var(--line); cursor: default; } html.mob #tstat .note.clear { border: 0; } html.mob #tstat .note.clear button { min-height: 44px; }
+  #askbox { max-width: var(--measure); margin: 14px 0; padding: 10px 14px; border: 1px solid var(--line); border-left: 4px solid #e5a50a; border-radius: 10px; background: var(--panel); font-size: 14px; }
+  #asktext { display: block; box-sizing: border-box; width: 100%; margin: 0 0 8px; padding: 8px 10px; font: inherit; font-size: 16px; line-height: 1.5; resize: vertical; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--fg); }
+  #askbox #asksend { background: var(--red); border-color: var(--red); color: #fff; padding: 4px 22px; } #askbox > .rs { align-items: center; margin: 0; }
+  #askbox p { margin: 6px 0; font-weight: 700; } #askbox .rs { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 8px; }
+  #askbox button { font: inherit; min-height: 44px; padding: 4px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--fg); cursor: pointer; text-align: left; } #askbox button[aria-pressed="true"] { border-color: #e5a50a; box-shadow: inset 0 0 0 1px #e5a50a; } #askbox button:disabled { opacity: .45; cursor: default; }
+  #askbox small { margin-left: 8px; color: #b57f00; } #askbox .say { flex: 1 1 12em; min-height: 1.5em; color: var(--muted); font-size: 13px; } #askbox .say.bad { color: var(--red); }
+  #askbox[hidden] { display: none; }
   #cwhy { color: var(--muted); }
   #cmsg { color: var(--red); overflow-wrap: anywhere; }
   #cmsg .queue-accepted { color: var(--green); }
@@ -648,7 +656,7 @@ if (isMobileUA && window.visualViewport) {
     const typing = !!document.activeElement?.matches?.("textarea, input");
     document.documentElement.classList.toggle("kbd", h < maxH - 120 && typing);
     document.documentElement.style.setProperty("--vvh", `${h}px`);
-    requestAnimationFrame(() => { const a = document.activeElement; if (a?.matches?.("textarea, input") && a.closest("#chat")) { a.closest("#tray")?.querySelector(".row")?.scrollIntoView({ block: "nearest" }); a.scrollIntoView({ block: "nearest" }); } }); // 赤ペン欄は欄の下の『コピー / 送信』も見せる (欄だけ送るとボタンがキーボードの裏に残った、2026-11-13 user)。狭くて両方入らない時は書いている欄を優先
+    requestAnimationFrame(() => { const a = document.activeElement; if (a?.matches?.("textarea, input") && a.closest("#chat")) { a.closest("#tray")?.querySelector(".row")?.scrollIntoView({ block: "nearest" }); a.scrollIntoView({ block: "nearest" }); } if (a?.id === "asktext") a.closest("#askbox").querySelector("#asksend").scrollIntoView({ block: "nearest" }); }); // 赤ペン欄は欄の下の『コピー / 送信』も見せる (欄だけ送るとボタンがキーボードの裏に残った、2026-11-13 user)。狭くて両方入らない時は書いている欄を優先
   };
   visualViewport.addEventListener("resize", fit);
   fit();
@@ -906,7 +914,10 @@ async function show(md, entry) {
   const el = document.getElementById("reply");
   stopSpeak(); // 返事が替わったら読み上げは止める
   mediaV = Date.now();
-  el.innerHTML = md ? renderLowLoad(md) : "";
+  const ansOn = !!entry?.notice?.decisions, cut2 = ansOn ? md.indexOf("\n\n**この問いを置いた時の返事**\n\n") : -1, [md1, md2] = cut2 < 0 ? [md, ""] : [md.slice(0, cut2), md.slice(cut2)];
+  if (ansOn && askbox.parentNode === el) { for (const n of [...el.childNodes]) if (n !== askbox) n.remove(); askbox.insertAdjacentHTML("beforebegin", renderLowLoad(md1)); } // 箱を外さない (書いている途中の変換と焦点が切れる)
+  else { el.innerHTML = md ? renderLowLoad(md1) : ""; if (ansOn) el.append(askbox); }
+  if (md2) el.insertAdjacentHTML("beforeend", renderLowLoad(md2));
   if (entry?.sid && entry.cwd && !entry.codex) {
     const { sid, cwd } = entry;
     const footer = document.createElement("footer");
@@ -945,7 +956,7 @@ async function show(md, entry) {
 let all = [], list = [], idx = 0, following = true, shownName = null, showRequest = 0;
 let botPerms = [];
 // Bot の完了・判断待ちの知らせ (name が botitem-)。all に混ぜず、行を押した時だけ本文に出す。開いている分は一覧から消えても持っておく (読んでいる途中で本文が消えない)
-let botNotes = [], noteMore = false, noteBack = { sess: "", name: null, follow: true, why: "" }; // noteBack = もう一度押した時に戻る表示 (name は前の返事を見ていた時と、書きかけの赤ペンがある時だけ)
+let botNotes = [], noteMore = false, noteBack = { sess: "", name: null, follow: true, why: "", at: "" }; // noteBack = もう一度押した時に戻る表示 (name は前の返事を見ていた時と、書きかけの赤ペンがある時だけ)
 const noteSession = (s) => s.startsWith("botitem-");
 const params = new URLSearchParams(location.search);
 let SESS = params.get("s") || ""; // "" = 最新 (最後に返事したセッションを追う)
@@ -1348,13 +1359,13 @@ document.addEventListener("keydown", (ev) => {
   if (ev.ctrlKey && !ev.metaKey && !ev.altKey && /^[-=+;^0]$/.test(ev.key)) { ev.preventDefault(); return setPageZoom(ev.key === "0" ? 1 : (+document.documentElement.style.zoom || 1) + (ev.key === "-" ? -0.1 : 0.1)); } // Ctrl + / - / 0 = 拡大 / 縮小 / 戻す (JIS の ; ^ も +。Cmd +/- はブラウザの拡大のまま)
   if (ev.code === "KeyN" && ev.ctrlKey && !ev.metaKey && !ev.altKey && !ev.shiftKey) { ev.preventDefault(); return newpop.hidden ? openNew().then(() => newpop.querySelector(".it")?.focus()) : closeNew(); } // Ctrl+N = 新規セッションの一覧を開く / 閉じる (入力欄の中でも。Cmd+N はブラウザ・Orca の新規ウィンドウ、Option+N は ˜ の入力なので空いている Ctrl に置いた)
   if (!newpop.hidden && (ev.key === "ArrowUp" || ev.key === "ArrowDown")) { ev.preventDefault(); const its = [...newpop.querySelectorAll(".it")], i = its.indexOf(document.activeElement); return its.at(i < 0 && ev.key === "ArrowUp" ? -1 : (i + (ev.key === "ArrowDown" ? 1 : -1)) % its.length)?.focus(); } // 一覧が開いている間の ↑↓ = 行の移動 (Enter で起動、Esc で閉じる)
-  if (ev.key === "Enter" && (ev.metaKey || ev.ctrlKey) && !ev.isComposing) { ev.preventDefault(); return document.getElementById(ev.target === ctext ? "csend" : "send").click(); } // Cmd+Enter = 送信 (入力欄の中でも。チャット欄にいる時はチャット欄の送信)
+  if (ev.key === "Enter" && (ev.metaKey || ev.ctrlKey) && !ev.isComposing) { ev.preventDefault(); return (ev.target === asktext ? asksend : document.getElementById(ev.target === ctext ? "csend" : "send")).click(); } // Cmd+Enter = 送信 (入力欄の中でも。チャット欄にいる時はチャット欄の送信)
   if (ev.code === "KeyR" && ev.shiftKey && !ev.altKey && !ev.ctrlKey && !ev.metaKey && !ev.target.closest?.("input, textarea, [contenteditable]")) return togglePause(); // Shift+R = 読み上げの一時停止 / 再開 (下の修飾キー除けより前で拾う。ev.key だと Caps Lock ON で "r" になるので物理キーで見る)
   if (ev.altKey || ev.ctrlKey || ev.metaKey || ev.shiftKey) return;
   const qb = /^[0-9]$/.test(ev.key) && document.querySelector(`#cact .q[data-k="${ev.key}"]`);
   if (qb && !qb.disabled && !ev.target.closest?.("input, textarea, [contenteditable]") && sug.hidden) { ev.preventDefault(); return qb.click(); } // 数字 1〜0 = クイック送信 (欄の外だけ。空のチャット欄でも拾うと「3」を打とうとして A が送られた、2026-09-30)
   // ↑↓ = 送り先 chip (= 端末) を上下に移る。欄の外、または空のチャット欄で (skill 候補が出ている時は候補の移動が先)
-  if ((ev.key === "ArrowUp" || ev.key === "ArrowDown") && sug.hidden && (ev.target === ctext ? !ctext.value : !ev.target.closest?.("input, textarea, [contenteditable]"))) {
+  if ((ev.key === "ArrowUp" || ev.key === "ArrowDown") && sug.hidden && !noteSession(SESS) && (ev.target === ctext ? !ctext.value : !ev.target.closest?.("input, textarea, [contenteditable]"))) {
     const cs = [...cchips.querySelectorAll(".chip")], i = cs.findIndex((c) => c.classList.contains("on")), n = cs[i + (ev.key === "ArrowDown" ? 1 : -1)];
     if (n) { ev.preventDefault(); n.click(); }
     return;
@@ -1389,6 +1400,7 @@ let pageVer = null; // 読み込んだ index.html の版 (/history の x-rmv-pag
 let cur = null; // 表示中の履歴 entry。latest.html だけ映している間は null (送信不可・コピーのみ)
 const curName = () => cur?.name ?? "";
 const canSendNotes = () => {
+  if (noteSession(SESS)) return false; // 本文の取得中は cur が前の返事のまま
   if (!cur?.codex) return !!cur?.terminal;
   if (cur.codexPane || cur.name !== shownName || cur.name !== list[idx]?.name || cur.livePane !== list[idx]?.livePane) return false;
   return !cur.livePane || all.some((e) => e.codexPane && e.name === cur.livePane && e.sid === cur.sid);
@@ -1856,8 +1868,9 @@ function renderChat() {
     renderSug();
   }
   if (!to?.notice) { loadMedia(pane ? null : to); loadNow(pane ? null : to); } // 知らせを開いている間は元の会話の画像・モデルを置いたまま (消すと周りが動く)
+  const ask = !!to?.notice?.decisions, desk = ask ? deskTo() : null;
   const lbl = to?.notice ? `${to.bot} item ${to.notice.number}` : pane ? `Codex · ${pane.label}` : to ? (to.codex ? "Codex · " : "") + (chipLabels.get(to.session) ?? `${to.repo || "?"} · ${to.session}`) : pin;
-  document.getElementById("cto").textContent = (isMobileUA ? "" : "→ ") + (lbl ? `${pin ? "📌 " : ""}${lbl}` : "(送り先なし)"); // スマホは名前に幅を回す (左の ▲▼ と点が送り先の印)
+  document.getElementById("cto").textContent = (isMobileUA ? "" : "→ ") + (lbl ? `${pin && !to?.notice ? "📌 " : ""}${lbl}` : "(送り先なし)"); // スマホは名前に幅を回す (左の ▲▼ と点が送り先の印)
   const why = pane ? (codexPaneReady(pane) ? "" : "Codexが入力できる状態になるまで待ってください")
     : !to ? (codexPaneSession(pin || SESS) ? "選んだ端末が見つかりません" : pin ? "固定先のセッションの返事が一覧に無い (送れない)" : "表示中の返事が無い (送れない)")
     : !to.terminal && !to.codex ? (pin ? "固定先は Orca / herdr 外の端末 (送れない)" : "この返事は Orca / herdr 外の端末 (送れない)") : "";
@@ -1865,7 +1878,8 @@ function renderChat() {
   ctext.placeholder = (to?.bot ? "Bot へ送る" : pane && !pane.sid ? "Codexへ1行送る" : to?.codex ? "Codexへ文字を送る" : "端末へ送る") + (isMobileUA ? "" : " (⌘+Enter)");
   ctext.disabled = pane ? chatBusy : !!why || chatBusy;
   csend.disabled = !!why || chatBusy;
-  if (to?.notice) { document.getElementById("cwhy").textContent = noteBack.why; ctext.placeholder = "知らせを表示中 (ここからは返せません)"; } // 案内の行を足しも消しもしない (下の知らせの行が動くため)
+  if (to?.notice) { document.getElementById("cwhy").textContent = noteBack.why; ctext.placeholder = ask ? "答えは問いの下の欄から送れます" : "知らせを表示中 (ここからは返せません)"; } // 案内の行を足しも消しもしない (下の知らせの行が動くため)
+  renderAnswer(ask ? to : null, desk);
   const terminalControlsDisabled = csend.disabled || !!to?.codex;
   document.getElementById("cattach").disabled = terminalControlsDisabled;
   document.querySelectorAll("#cact .q, #cact .cpick").forEach((b) => { b.disabled = terminalControlsDisabled; });
@@ -1900,7 +1914,7 @@ function renderChat() {
   if (isMobileUA) { // 下の帯: 送り先の名前と状態の点、返事を待っているセッションの数 (閉じていても分かるように)
     const sts = [...new Map([...perms, ...chipEntries.values()].filter((e) => e.live).map((e) => [e.session, stOf(e).st])).values()];
     const wait = botPerms.length + botNotes.filter((e) => !e.notice.seen).length + sts.filter((x) => x === "ng" || x === "wait" || x === "perm").length, run = sts.filter((x) => x === "busy" || x === "bg").length;
-    document.getElementById("dname").textContent = lbl ? (pin ? "📌 " : "") + lbl : "送り先なし"; // 幅が無いので矢印は付けない (点が送り先の印)
+    document.getElementById("dname").textContent = lbl ? (pin && !to?.notice ? "📌 " : "") + lbl : "送り先なし"; // 幅が無いので矢印は付けない (点が送り先の印)
     document.getElementById("ddot").className = to?.live ? stOf(to).st : "";
     document.getElementById("dwait").innerHTML = (wait ? `<b>待ち </b>${wait}` : "") + (run ? `<span>${wait ? " / " : ""}動作中 ${run}</span>` : "");
   }
@@ -1939,21 +1953,23 @@ const bgSum = (bg) => [...bg.reduce((m, t) => m.set(t.type, (m.get(t.type) ?? 0)
 // 知らせの行。3 件を超えた分は『ほか』に畳む。『ほか』は押しても動かない所に置く: 列 (PC と開いた Fold) は上から並ぶので 4 行目、スマホの 1 列は下の帯に付くので最後
 const NOTE_MAX = 3;
 const noteRows = (notes) => {
-  if (notes.length <= NOTE_MAX) return notes;
+  const old = notes.filter((e) => e.notice.kind !== "ask" && e.session !== SESS).map((e) => e.name), clear = old.length > 1 ? [{ name: "botitem-clear", clear: old }] : [];
+  if (notes.length <= NOTE_MAX) return [...notes, ...clear];
   const rest = noteMore ? notes.slice(NOTE_MAX) : [], more = { name: "botitem-more", rest: notes.length - NOTE_MAX };
-  return [...notes.slice(0, NOTE_MAX), ...(isMobileUA && !document.documentElement.classList.contains("split") ? [...rest, more] : [more, ...rest])];
+  return [...notes.slice(0, NOTE_MAX), ...(isMobileUA && !document.documentElement.classList.contains("split") ? [...rest, ...clear, more] : [more, ...clear, ...rest])];
 };
 const NOTE = { ask: ["ng", "判断待ち"], done: ["ok", "完了"], canceled: ["idle", "取り下げ"] };
 const noteRow = (e) => {
+  if (e.name === "botitem-clear") return `<div class="trow note clear"><button data-clear="1" title="完了と取り下げの行を消す (判断待ちは残る。Orca の item は消えない)">終わった ${e.clear.length} 件をまとめて消す</button></div>`;
   if (e.name === "botitem-more") return `<div class="trow note more" data-more="1"><span>${noteMore ? "▲ 減らす" : `▼ ほか ${e.rest} 件`}</span></div>`;
-  const [dot, word] = NOTE[e.notice.kind], on = e.session === SESS;
+  const [dot, word] = e.notice.sent ? ["idle", "送信済み"] : NOTE[e.notice.kind], on = e.session === SESS;
   const bold = (tag, t) => `<${tag} data-t="${esc(t)}"><b>${esc(t)}</b></${tag}>`;
   return `<div class="trow note${e.notice.seen ? "" : " new"}${on ? " on" : ""}" data-note="${esc(e.session)}" title="${esc(e.bot)} の返事を開く${on ? " / もう一度押すと戻る" : ""}"><i class="${dot}"></i>${bold("span", `${e.bot} ${word}: ${e.head}`)}${bold("time", ago(tsOf(e)))}</div>`;
 };
 async function openNote(session) {
   const e = session === SESS ? null : botNotes.find((n) => n.session === session); // null = もう一度押した
   if (e === undefined) return;
-  if (e && !noteSession(SESS)) noteBack = { sess: SESS, name: idx > 0 || hasDraft(shownName) ? shownName : null, follow: following, why: document.getElementById("cwhy").textContent };
+  if (e && !noteSession(SESS)) noteBack = { at: cur?.desk ?? "", sess: SESS, name: idx > 0 || hasDraft(shownName) ? shownName : null, follow: following, why: document.getElementById("cwhy").textContent };
   SESS = e ? session : noteBack.sess;
   setParam("s", SESS);
   const seen = !e || e.notice.seen;
@@ -1969,7 +1985,15 @@ async function openNote(session) {
     }
   }
 }
+async function clearNotes(b) {
+  const names = tstatList.find((e) => e.clear)?.clear ?? [], say = document.getElementById("cmsg");
+  b.disabled = true;
+  const r = await fetch("/notice/seen", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ names }) }).catch(() => null);
+  if (r?.ok) { say.textContent = ""; botNotes = botNotes.filter((e) => !names.includes(e.name)); renderChat(); }
+  else { b.disabled = false; say.textContent = `消せませんでした: ${r ? r.status + " " + await r.text() : "通信が切れました"}`; }
+}
 function onNote(ev) {
+  if (ev.target.closest("[data-clear]")) { clearNotes(ev.target.closest("[data-clear]")); return true; }
   if (ev.target.closest("[data-more]")) { noteMore = !noteMore; renderChat(); return true; }
   const n = ev.target.closest("[data-note]");
   if (n) openNote(n.dataset.note);
@@ -2029,6 +2053,65 @@ async function pickChip(s) {
   SESS = s;
   setParam("s", SESS);
   await reselect();
+}
+// 判断待ちの答えの届け先 = 窓口の会話 (server が desk を付けた行)。知らせを開いた時に 1 つ決めて、開いている間は変えない (押す直前に替わらない)。
+// 順: 直前に見ていた会話 → 固定した送り先 → 最後に返事した窓口の会話
+function deskTo() {
+  const ds = all.filter((e) => e.desk);
+  if (noteBack.desk === undefined && all.length) noteBack.desk = (ds.find((e) => e.desk === noteBack.at) ?? ds.find((e) => e.session === chatPin()) ?? ds[0])?.desk ?? null; // 会話 ID で持つ (同じ pane で開き直した別の会話に替わらない)
+  return noteBack.desk ? ds.find((e) => e.desk === noteBack.desk) ?? null : null;
+}
+const deskName = (e) => chipLabels.get(e.session) ?? `${e.repo || "?"} ${e.ts ? hhmm(new Date(e.ts)) : ""}`;
+const picks = new Map(); // 知らせの名前 (問いの鍵つき) → [選んだ番号か null]
+const ansDrafts = new Map(); // 知らせ → 書きかけのひとこと
+const wroteFor = new Map(); // 知らせ → 書き始めた時の問いの名前 (書いている間の問い直しに気づく)
+// 箱は 1 つを使い回し、欄は描き直さない (日本語入力の変換中に欄を作り直すと、変換が切れる)。描き直すのは選択肢の段だけ
+const askbox = document.createElement("div"); askbox.id = "askbox"; askbox.hidden = true;
+askbox.innerHTML = '<div class="qs"></div><textarea id="asktext" rows="2"></textarea><div class="rs"><button id="asksend">送る</button><span class="say"></span></div>';
+const [askQ, asktext, asksend, askSayEl] = [".qs", "#asktext", "#asksend", ".say"].map((q) => askbox.querySelector(q));
+asktext.addEventListener("input", () => { const e = chatTo(); if (!e?.notice?.decisions) return; if (!asktext.value.trim()) wroteFor.delete(e.session); else if (!wroteFor.has(e.session)) wroteFor.set(e.session, e.name); renderChat(); });
+let askHtml = "", askKey = null, askSay = { name: "", ok: false, text: "" };
+function renderAnswer(e, desk) {
+  const key = e?.session ?? null;
+  if (key !== askKey) { if (askKey) ansDrafts.set(askKey, asktext.value); askKey = key; asktext.value = ansDrafts.get(key) ?? ""; }
+  askbox.hidden = !e;
+  if (!e) return;
+  const ds = e.notice.decisions, choice = ds.filter((d) => d.replies.length).length, p = picks.get(e.name) ?? [], n = p.filter((i) => i != null).length, sent = e.notice.sent, mine = askSay.name === e.name && !(sent?.at > askSay.at);
+  const dead = !desk || e.gone || cur?.name !== e.name;
+  const html = ds.map((d, q) => d.replies.length ? `<p>${esc(d.question)}</p><div class="rs">${d.replies.map((r, i) => `<button data-q="${q}" data-i="${i}" aria-pressed="${p[q] === i}"${dead || chatBusy ? " disabled" : ""}>${esc(r.label)}${r.recommended ? "<small>推奨</small>" : ""}</button>`).join("")}</div>` : "").join("");
+  if (html !== askHtml) { askHtml = html; askQ.innerHTML = html; }
+  asktext.placeholder = choice ? "ひとこと (任意)" : "答えを書く";
+  asksend.disabled = dead || chatBusy || (!n && !asktext.value.trim());
+  askSayEl.textContent = mine ? askSay.text : e.gone ? "この問いはもう動きました" : !desk ? "窓口の会話が開いていないので送れません (書いた文は残ります)" : (sent ? `✓ ${hhmm(new Date(sent.at))} に送信済み: ${cut(sent.text, 40)} · ` : "") + `届け先: ${deskName(desk)}` + (choice > 1 ? ` · ${choice} 問中 ${n} 問を選択` : "");
+  askSayEl.classList.toggle("bad", mine && !askSay.ok);
+}
+askbox.addEventListener("click", (ev) => {
+  const b = ev.target.closest("button"), e = chatTo();
+  if (!b || !e?.notice?.decisions) return;
+  if (b === asksend) return sendAnswer();
+  const p = [...(picks.get(e.name) ?? [])], q = +b.dataset.q, i = +b.dataset.i;
+  p[q] = p[q] === i ? null : i; // もう一度押すと外れる
+  picks.set(e.name, p); renderChat();
+});
+async function sendAnswer() {
+  const e = chatTo(), to = e?.notice?.decisions && !e.gone && cur?.name === e.name ? deskTo() : null; // decisions = 判断待ちで、窓口が設定してある
+  if (!to || chatBusy) return;
+  const text = asktext.value, comment = text.trim(), p = Array.from(e.notice.decisions, (_, q) => picks.get(e.name)?.[q] ?? null);
+  if (!comment && p.every((i) => i === null)) return;
+  const say = (ok, t) => { askSay = { name: e.name, ok, at: Date.now(), text: t }; };
+  if (comment && wroteFor.has(e.session) && wroteFor.get(e.session) !== e.name) { wroteFor.set(e.session, e.name); say(false, "書いている間に問いが替わりました。見直して、もう一度押すと送ります"); return renderChat(); }
+  chatBusy = true; say(true, "送信中…"); renderChat();
+  try {
+    const r = await fetch("/notice/answer", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: e.name, to: to.name, sid: to.desk, picks: p, comment }) });
+    if (!r.ok) return say(false, (await r.text()) || String(r.status));
+    const { saved, text: sentText } = await r.json();
+    e.notice.sent = { text: sentText, at: Date.now() };
+    if (saved) askSay = { name: "", ok: true, text: "" }; else { say(true, "✓ 届きました (印を書けなかったので、起動し直すと『送信済み』が消えます)"); askSay.at += 1; }
+    picks.delete(e.name); // 送った分は空に戻す (もう一度押しても 2 通目にならない)
+    const here = askKey === e.session;
+    if ((here ? asktext.value : ansDrafts.get(e.session)) === text) { ansDrafts.delete(e.session); if (here) asktext.value = ""; wroteFor.delete(e.session); }
+  } catch { say(false, "通信が切れ、届いたか分かりません。窓口の会話を見てください"); }
+  finally { chatBusy = false; renderChat(); }
 }
 async function sendText(text, clear) {
   const to = chatTo(), say = document.getElementById("cmsg");
@@ -2460,17 +2543,18 @@ async function poll() {
     const page = hr.headers.get("x-rmv-page");
     if (page) {
       const savedChat = [...chatDrafts].some(([key, text]) => key !== draftSession && text.trim());
-      if (pageVer && page !== pageVer && !drafts.size && !savedChat && !busy()) return location.reload();
+      if (pageVer && page !== pageVer && !picks.size && !asktext.value.trim() && ![...ansDrafts.values()].some((t) => t.trim()) && !drafts.size && !savedChat && !busy()) return location.reload();
       pageVer = page;
     }
     liveState = hr.headers.get("x-rmv-live");
     const rows = await hr.json();
     botPerms = rows.filter((e) => e.name.startsWith("botperm-"));
     const notes = rows.filter((e) => e.name.startsWith("botitem-"));
+    for (const e of botNotes) e.gone = e.session === SESS && !notes.some((n) => n.session === SESS);
     botNotes = [...notes, ...botNotes.filter((e) => e.session === SESS && !notes.some((n) => n.session === SESS))];
     all = rows.filter((e) => !e.name.startsWith("botperm-") && !e.name.startsWith("botitem-"));
     // 選んでいた repo が履歴から消えたら (repo の決め方が変わった・古い URL 等) すべてに戻す。空の画面で止めない
-    if (REPO && !codexPaneSession(SESS) && !codexPaneSession(chatPin()) && !all.some((e) => e.repo.toLowerCase() === REPO.toLowerCase())) { REPO = ""; SESS = ""; setParam("repo", ""); setParam("s", ""); renderFilter(); }
+    if (REPO && !noteSession(SESS) && !codexPaneSession(SESS) && !codexPaneSession(chatPin()) && !all.some((e) => e.repo.toLowerCase() === REPO.toLowerCase())) { REPO = ""; SESS = ""; setParam("repo", ""); setParam("s", ""); renderFilter(); }
     renderChips();
     renderProjects();
     const next = scope();

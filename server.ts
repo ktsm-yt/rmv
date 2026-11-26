@@ -15,6 +15,7 @@ const FRAGMENT = `${STATE}/latest.html`;
 const HIST = `${STATE}/history`;
 const MAIN_BOTS = new Set((process.env.RMV_MAIN_BOTS ?? "Usher").split(",").map((name) => name.trim().toLowerCase()).filter(Boolean));
 const NOTICE_BOT = (process.env.RMV_NOTICE_BOT ?? "Manager").trim(); // 完了と判断待ちをメインに 1 行出す Bot の名前。空なら出さない
+const DESK = (process.env.RMV_DESK_DIR ?? "").trim().replace(/\/+$/, "").toLowerCase(); // 窓口の会話を起こすフォルダ (絶対パス)。判断待ちの答えはここで起こした Claude の会話にだけ送る。空なら答えられない
 const CODEX = process.env.RMV_CODEX_BIN || "codex"; // 同上。Codex の会話への赤ペンを `codex queue` で積む (launchd の PATH では /opt/homebrew/bin/codex)
 const CODEX_QUEUE_TIMEOUT = 30_000;
 const SIPS = "/usr/bin/sips"; // 貼った画像の縮小 (macOS 標準)
@@ -297,8 +298,14 @@ async function historyItems() {
 function labelOf(meta: { herdr_label?: unknown } | null | undefined): string | null {
   return typeof meta?.herdr_label === "string" && meta.herdr_label ? meta.herdr_label : null;
 }
+// その行が窓口の会話か (Bot・Codex・subagent・作業役・動いていない会話は違う)
+function isDesk(e: { name: string; session: string; live: boolean; terminal: boolean; agent: unknown; sub: string | null; bot: string | null; codex?: boolean; sid?: string | null }, askSid: Map<string, string>, desk: Set<string>): string | null {
+  const sid = e.sid ?? (e.name.startsWith("asking-") ? askSid.get(e.session) : null) ?? null;
+  return sid && desk.has(sid) && e.live && e.terminal && !e.agent && !e.sub && !e.bot && !e.codex ? sid : null;
+}
 async function history(repo: string | null, withNotices: boolean): Promise<Response> {
-  const [{ items, curSid, replySid, asking, botPerms, live }, panes] = await Promise.all([historyItems(), liveCodexPanes()]);
+  const [{ items, curSid, replySid, asking, askSid, botPerms, live }, panes] = await Promise.all([historyItems(), liveCodexPanes()]);
+  const desk = withNotices ? await deskSids(LIVE_TTL) : new Set<string>();
   const blocked = botPerms.size ? await blockedBotChats() : null;
   const botAlerts = [];
   for (const [session, p] of botPerms) {
@@ -308,7 +315,7 @@ async function history(repo: string | null, withNotices: boolean): Promise<Respo
       perm: { id: p.id, tool: p.tool, detail: p.detail, ts: p.ts } });
   }
   // sub は出口でだけ agent にする (上の集計は sub を本体の返事として数える: 端末ごとの最新の返事・今のセッションの判定が pane ごとに要る)
-  const replies = items.map(({ root, sub, label, botChat, ...e }) => ({ ...e, agent: sub ? { type: sub, id: e.session } : e.agent, asking: (e.name.startsWith("asking-") || curSid.get(e.session) === replySid.get(e.session) ? asking.get(e.session) : null) ?? null })); // 次のセッションの依頼は前のセッションの返事に付けない
+  const replies = items.map(({ root, sub, label, botChat, ...e }) => ({ ...e, agent: sub ? { type: sub, id: e.session } : e.agent, ...(isDesk({ ...e, sub }, askSid, desk) ? { desk: isDesk({ ...e, sub }, askSid, desk) } : {}), asking: (e.name.startsWith("asking-") || curSid.get(e.session) === replySid.get(e.session) ? asking.get(e.session) : null) ?? null })); // 次のセッションの依頼は前のセッションの返事に付けない
   // 本文のある履歴や /sessions・/ext/deliver には混ぜず、viewer の一覧だけに出す。
   const livePanes = await Promise.all(panes.map(async (p) => {
     const session = `codex-pane-${p.pane.replace(":", "-")}-${p.terminal}`;
@@ -329,12 +336,13 @@ async function history(repo: string | null, withNotices: boolean): Promise<Respo
 // /history は待たせない: 今持っている分で答え、古ければ裏で取り直す (次の poll に出る)。取れない間は前の分のまま。
 // ponytail: 判断待ち 100 件・閉じた物は最後に動いた順に 30 件まで。未読の完了がそれより溜まると古い分は出ない (--cursor で続きを読めば増やせる)
 // 済み = 判断待ちは item が動いたら消え、閉じた知らせは開いたら消える (state/notice-seen.json に残すので、起動し直しても別の端末でも戻らない)
-type Notice = { uid: string; key: string; kind: "ask" | "done" | "canceled"; number: number; title: string; at: number; chat: string | null; texts: string[] }; // texts = 判断待ちは問い、閉じた物は closeNote と閉じた時の一言
+type Notice = { uid: string; key: string; kind: "ask" | "done" | "canceled"; number: number; title: string; at: number; chat: string | null; texts: string[]; decisions: { question: string; replies: { label: string; recommended: boolean }[] }[] }; // texts = 判断待ちは問い、閉じた物は closeNote と閉じた時の一言
 const NOTICE_TTL = Number(process.env.RMV_NOTICE_TTL_MS ?? 15_000); // env は試験用
 const NOTICE_WAIT = 120_000; // 返事が載るのを待つ長さ = その turn の返事とみなす長さ (実物は最大 48 秒、別の turn の返事は 230 秒から)
 const NOTICE_SEEN = `${STATE}/notice-seen.json`;
 const savedSeen = await Bun.file(NOTICE_SEEN).json().catch(() => null);
-const noticeSeen: { since: number; seen: Record<string, string> } = {
+const noticeSeen: { since: number; seen: Record<string, string>; sent: Record<string, { key: string; text: string; at: number }> } = {
+  sent: savedSeen?.sent && typeof savedSeen.sent === "object" ? savedSeen.sent : {}, // 答えを送った問い (item が動くまで『送信済み』と出し、二度押しを防ぐ)
   since: Number.isFinite(savedSeen?.since) ? savedSeen.since : Date.now(), // これより前に閉じた item は出さない (入れた日に過去の分が並ばない)
   seen: savedSeen?.seen && typeof savedSeen.seen === "object" ? savedSeen.seen : {},
 };
@@ -366,6 +374,13 @@ async function itemDetail(number: number, status: string) {
   const said = events.slice(0, i).findLast((e) => e?.kind === "commented" && e.actor?.kind === "bot");
   return { at: events[i].at, chat: events[i].actor?.chatId ?? null, text: String(said?.data?.text ?? "") };
 }
+// 問いの選択肢。一覧の question.decisions は、問いの無い Needs you では無く、選択肢の無い問いでは replies が空 (Orca 1.4 の botItemQuestionShape)
+function decisionsOf(q: { decisions?: unknown } | null): Notice["decisions"] {
+  return (Array.isArray(q?.decisions) ? q.decisions : []).filter((d) => typeof d?.question === "string" && Array.isArray(d.replies)).map((d) => ({
+    question: d.question, replies: d.replies.filter((r: { label?: unknown }) => typeof r?.label === "string" && r.label.trim()).map((r: { label: string; recommended?: unknown }) => ({ label: r.label, recommended: r.recommended === true })) }));
+}
+let noticeLoad: Promise<void> | null = null;
+const freshNotices = () => (noticeLoad ??= loadNotices().finally(() => { noticeLoad = null; }));
 async function loadNotices(): Promise<void> {
   noticeBusy = true;
   try {
@@ -390,7 +405,7 @@ async function loadNotices(): Promise<void> {
         return ask && isTime(it.updatedAt) ? { at: it.updatedAt, chat: null, text: "" } : null;
       });
       const texts = ask ? [it.question?.text || d?.text] : [it.closeNote, d?.text];
-      return d && { uid: it.uid, key, kind: ask ? "ask" : it.status, number: it.number, title: it.title, at: d.at, chat: d.chat, texts: texts.filter(Boolean).map(String) };
+      return d && { uid: it.uid, key, kind: ask ? "ask" : it.status, number: it.number, title: it.title, at: d.at, chat: d.chat, texts: texts.filter(Boolean).map(String), decisions: ask ? decisionsOf(it.question) : [] };
     }))).filter((n): n is Notice => n !== null);
     notices = next;
     if (!sinceSaved) { await saveSeen(); sinceSaved = true; } // since を残す
@@ -417,11 +432,11 @@ function noticeRows(items: NoticeItem[]) {
   noticeItems = items.filter((e) => e.bot);
   const bot = noticeItems.find((e) => e.bot!.toLowerCase() === NOTICE_BOT.toLowerCase())?.bot ?? (existsSync(NOTICE_SEEN) ? NOTICE_BOT : "");
   if (!bot) return []; // その Bot の返事が 1 件も無く、一度も Orca を読めていない環境では呼ばない。一度読めたら、返事が 100 件の枠から落ちても呼び続ける (答えていない判断待ちの行を消さない)
-  if (!noticeBusy && Date.now() - noticeAt >= NOTICE_TTL) void loadNotices();
+  if (!noticeBusy && Date.now() - noticeAt >= NOTICE_TTL) void freshNotices();
   // Bot の返事は item が動いた少し後 (実物で 5〜48 秒) に書かれる。返事が載るまで 2 分だけ待ってから出す
   return notices.filter((n) => (n.kind === "ask" || noticeSeen.seen[n.uid] !== n.key) && (Date.now() - n.at > NOTICE_WAIT || noticeReply(n, noticeItems))).map((n) => ({
     name: noticeName(n), session: `botitem-${n.uid}`, bot, repo: bot, head: n.title, ts: new Date(n.at).toISOString(), live: false, terminal: false, agent: null, perm: null, asking: null,
-    notice: { kind: n.kind, number: n.number, seen: noticeSeen.seen[n.uid] === n.key } }));
+    notice: { kind: n.kind, number: n.number, seen: noticeSeen.seen[n.uid] === n.key, ...(DESK && n.kind === "ask" ? { decisions: n.decisions, sent: noticeSeen.sent[n.uid]?.key === n.key ? noticeSeen.sent[n.uid] : null } : {}) } }));
 }
 // 名前に鍵を入れる: 開いたまま問い直されたら、本文も読み直される
 const noticeName = (n: Notice) => `botitem-${n.uid}.${n.key}.md`;
@@ -441,15 +456,63 @@ async function noticeBody(n: Notice): Promise<string> {
 async function noticeSeenPost(req: Request): Promise<Response> {
   if (!ORIGINS.has(req.headers.get("origin") ?? "")) return new Response("forbidden origin", { status: 403 });
   const b = await req.json().catch(() => null);
-  const n = notices.find((n) => noticeName(n) === b?.name);
-  if (!n) return new Response("not found", { status: 404 });
-  const before = noticeSeen.seen[n.uid];
-  noticeSeen.seen[n.uid] = n.key;
+  // names = まとめて消す。画面が出していた閉じた知らせの名前だけを受け、判断待ちは消さない
+  const many = Array.isArray(b?.names);
+  const ns = notices.filter((n) => (many ? n.kind !== "ask" && b.names.includes(noticeName(n)) : noticeName(n) === b?.name));
+  if (!ns.length && !many) return new Response("not found", { status: 404 });
+  const before = ns.map((n) => [n.uid, noticeSeen.seen[n.uid]] as const);
+  for (const n of ns) noticeSeen.seen[n.uid] = n.key;
   try { await saveSeen(); } catch (e) {
-    if (before === undefined) delete noticeSeen.seen[n.uid]; else noticeSeen.seen[n.uid] = before;
+    for (const [uid, v] of before) if (v === undefined) delete noticeSeen.seen[uid]; else noticeSeen.seen[uid] = v;
     return new Response(`notice-seen: ${e}`, { status: 500 });
   }
-  return Response.json({ ok: true });
+  return Response.json({ ok: true, n: ns.length });
+}
+// POST /notice/answer {name: 知らせ, to: 窓口の会話の行, sid, picks: 問いごとの選択肢の番号か null, comment: ひとこと}: 判断待ちの答えを 1 通で窓口の会話へ送る。文は server が自分の持つ問いから作る。頭の文は server が付ける (付かない文が届く道を作らない)。
+// 送り方は /ext/deliver と同じ: /send を内側から exact で呼び、打つ直前に extCheck (今の会話か・許可待ちか・入力欄に書きかけがあるか) を通す
+// 届く文 (頭の文の後ろ)。選んだ答えは 1 問 1 行、ひとことは最後に『ひとこと: 』を付けて分ける (選択肢の無い問いでは文がそのまま答え)
+const oneLine = (t: string) => t.trim().split("\n")[0].replace(/[\s\x00-\x1f\x7f-\x9f]+/g, " ").trim();
+function answerText(ds: Notice["decisions"], picks: unknown[], comment: string): string | null {
+  if (picks.length > ds.length || picks.some((i, q) => i !== null && !(Number.isInteger(i) && ds[q].replies[i as number]))) return null;
+  const got = ds.map((d, q) => (picks[q] == null ? null : oneLine(d.replies[picks[q] as number].label)));
+  const lines = got.every((g) => g === null) ? [] : ds.length === 1 ? [got[0]] : ds.map((d, q) => `${oneLine(d.question)} → ${got[q] ?? "(選択なし)"}`);
+  if (comment) lines.push(ds.some((d) => d.replies.length) ? `ひとこと: ${comment}` : comment);
+  return lines.join("\n") || null;
+}
+const answering = new Set<string>();
+async function noticeAnswer(req: Request): Promise<Response> {
+  if (!ORIGINS.has(req.headers.get("origin") ?? "")) return new Response("forbidden origin", { status: 403 });
+  const b = await req.json().catch(() => null);
+  const comment = typeof b?.comment === "string" ? b.comment.trim() : "", to = typeof b?.to === "string" ? b.to : "", picks: unknown[] = Array.isArray(b?.picks) ? b.picks : [];
+  // 改行とタブのほかの制御文字は断る (端末に生で打つので、途中の Enter や Ctrl+U で頭の文が外れる)
+  if (comment.length > 20000 || !NAME.test(to) || /[\x00-\x08\x0b-\x1f\x7f-\x9f]/.test(comment)) return new Response("bad to / comment", { status: 400 });
+  const asked = () => notices.find((n) => n.kind === "ask" && noticeName(n) === b?.name);
+  const moved = () => new Response("この問いは差し替わったか、もう動きました。送っていません", { status: 409 });
+  const n = asked();
+  if (!n) return moved();
+  const text = answerText(n.decisions, picks, comment);
+  if (!text) return new Response("選択肢を選ぶか、ひとことを書いてください", { status: 400 });
+  if (answering.has(n.uid)) return new Response("同じ問いの答えを送っている途中です", { status: 409 });
+  answering.add(n.uid);
+  try {
+    const { items, askSid } = await historyItems();
+    const e = items.find((x) => x.name === to);
+    const sid = e && isDesk(e, askSid, await deskSids(0));
+    if (!sid || sid !== b?.sid) return new Response("届け先が窓口の会話ではないか、閉じました。送っていません", { status: 409 });
+    const own = `http://127.0.0.1:${PORT}`;
+    const r = await send(new Request(`${own}/send`, { method: "POST", headers: { origin: own, host: `127.0.0.1:${PORT}`, "content-type": "application/json" }, body: JSON.stringify({ name: to, text: `item ${n.number} (${n.title.replace(/[\s\x00-\x1f\x7f-\x9f]+/g, " ")}) への答え: ${text}`, focus: false, reset: false }) }), { exact: true, check: async (t) => {
+      const why = (await extCheck(t, sid)) ?? aborted(req);
+      if (why) return why;
+      // 打つ直前にもう一度 Orca を読む (途中の取り直しは古いかもしれないので、終わってから読み直す)。読めなければ打たない
+      await noticeLoad; await freshNotices();
+      return noticeFailed ? new Response("Orca で問いを確かめられません。送っていません", { status: 502 }) : asked() ? aborted(req) : moved();
+    } });
+    if (!r.ok) return r;
+    if (r.headers.has("x-rmv-stuck")) return new Response("端末の入力欄に文が残りました。窓口の会話で Enter を押すか、消してください", { status: 502 }); // 届いたと書かない
+    noticeSeen.sent[n.uid] = { key: n.key, text: text.slice(0, 200), at: Date.now() };
+    const saved = await saveSeen().then(() => true, (e) => { console.error("notice-seen:", String(e)); return false; }); // 届いた後なので失敗にしない。画面には出す
+    return Response.json({ ok: true, saved, text });
+  } finally { answering.delete(n.uid); }
 }
 
 // GET /sessions: 外部ツール (別アプリから送り先の Claude を選ぶ等) 向けの、今動いているセッションの一覧。読み取り専用。
@@ -856,15 +919,17 @@ async function claudeTerminals(maxAge: number): Promise<Set<string> | null> {
 // /sessions の deliverable 用。ps は claudeTerminals のキャッシュ (LIVE_TTL) を使い回し、記録のファイルだけ毎回読む (走っている Claude の数だけ)。
 // 一覧の表示用なので fail open: ps が失敗した・記録が読めない分は「待っていない」に倒す (打つ直前の extCheck が fail closed で止める)。
 // ponytail: background セッションを映している対話側の待ち (parkedJobId 経由) は拾わない。それも打つ直前の extCheck が止める
-async function waitingSids(maxAge: number): Promise<Set<string>> {
+async function ccRecords(maxAge: number): Promise<{ sessionId: string; status?: unknown; kind?: unknown; cwd?: unknown }[]> {
   await claudeTerminals(maxAge);
-  const out = new Set<string>();
-  await Promise.all((claudeCache?.procs ?? []).map(async (p) => {
+  const rs = await Promise.all((claudeCache?.procs ?? []).map(async (p) => {
     const r = await Bun.file(`${ccSessionsDir(p.env)}/${p.pid}.json`).json().catch(() => null);
-    if (r && typeof r.sessionId === "string" && String(r.pid ?? p.pid) === p.pid && r.status === "waiting") out.add(r.sessionId);
+    return r && typeof r.sessionId === "string" && String(r.pid ?? p.pid) === p.pid ? r : null;
   }));
-  return out;
+  return rs.filter((r) => r !== null);
 }
+const waitingSids = async (maxAge: number) => new Set((await ccRecords(maxAge)).filter((r) => r.status === "waiting").map((r) => r.sessionId));
+// 窓口の会話 = DESK で起こした対話の Claude。記録の cwd は起こした時のフォルダで、会話の中で cd しても変わらない (返事の記録の cwd と /history の repo は変わる)
+const deskSids = async (maxAge: number) => new Set(DESK ? (await ccRecords(maxAge)).filter((r) => r.kind === "interactive" && typeof r.cwd === "string" && r.cwd.replace(/\/+$/, "").toLowerCase() === DESK).map((r) => r.sessionId) : []);
 // 今走っている対話 Claude の pid と環境変数 (ps -Eww の 1 行)。ps が失敗したら null。間に終了した pid は落とす
 async function claudeProcs(): Promise<{ pid: string; env: string }[] | null> {
   const run = async (args: string[]) => {
@@ -1412,7 +1477,7 @@ async function send(req: Request, opt: { exact?: boolean; check?: (t: SendTarget
     if (r.code !== 0) return new Response(failure(target, r), { status: 502 });
     // herdr 内で特定 pane を選ぶ CLI は無い (pane focus は方向指定のみ): Orca のタブを前に出すところまで
     if (focus && handle) await focusTerminal(handle);
-    return new Response(r.out || "{}", { headers: { "content-type": "application/json; charset=utf-8" } });
+    return new Response(r.out || "{}", { headers: { "content-type": "application/json; charset=utf-8", ...(r.retry?.stuck ? { "x-rmv-stuck": "1" } : {}) } });
   } catch (e) {
     return new Response(`orca spawn failed: ${e}`, { status: 502 });
   }
@@ -1814,6 +1879,7 @@ Bun.serve({
       extendCodexTimeout: () => server.timeout(req, CODEX_QUEUE_TIMEOUT / 1000 + 5), // CLI の打ち切りを待って 504 を返せるようにする
     });
     if (pathname === "/notice/seen" && req.method === "POST") return noticeSeenPost(req);
+    if (pathname === "/notice/answer" && req.method === "POST") return noticeAnswer(req);
     if (pathname === "/dbg" && req.method === "POST") return dbg(req);
     if (pathname === "/switch" && req.method === "POST") return switchTo(req);
     if (pathname === "/approve" && req.method === "POST") return approve(req);
