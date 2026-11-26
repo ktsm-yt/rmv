@@ -11,7 +11,7 @@
 8. 各版の節はそのまま GitHub Release の本文になる
 
 出し方
-9. main に入れる時に、その変更の節 `## vX.Y.Z (YYYY-MM-DD)` を書き、`vX.Y.Z` のタグも push する (release.yml がリリースを作る)。忘れると .githooks/pre-push が main の push を止める (clone ごとに `git config core.hooksPath .githooks` を 1 回)
+9. main に入れる時に、その変更の節 `## vX.Y.Z (YYYY-MM-DD)` を書き、`vX.Y.Z` のタグも push する (release.yml がリリースを作る)。PR で入れる時は、merge した者が merge でできた main の commit にタグを付けて push し、`gh release view vX.Y.Z` でリリースができたのを確かめる (PR の枝の先頭には付けない。版の節を足さない merge には付けない)。手元から main に push する時は、忘れると .githooks/pre-push が止める (clone ごとに `git config core.hooksPath .githooks` を 1 回)。PR の merge はこの hook を通らない (2026-11-22〜26 に 11 版がタグなしで入り、リリースが v0.22.3 で止まった)。タグは 1 回の push で 3 本まで (4 本以上を一度に push すると release.yml が走らない)
 10. 破壊的な変更 (機能を無くす、使い方が変わる、`**要対応:**` が付く) は枝のまま試し、落ち着いてから main に入れる。試して戻した変更を版に残さないため (v0.11.0 で足したプルダウンを同じ日の v0.13.0 で無くした)
 11. 上げる数字: 画面に新しい欄や機能のまとまりが増える、または機能を無くす時は真ん中 (0.x.0)。キーやボタン 1 つ程度の追加と、変更・修正だけなら末尾 (0.0.x) (2026-10-04 user: y キーの追加は v0.13.3 でよい)
 -->
