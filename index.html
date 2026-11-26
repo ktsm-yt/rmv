@@ -929,7 +929,8 @@ async function show(md, entry) {
   document.getElementById("ask").open = false;
   renderPrompt(entry);
   const time = entry?.ts ? new Date(entry.ts).toLocaleTimeString("ja-JP", { hour12: false }) : "";
-  document.getElementById("stamp").textContent = entry ? agentTag(entry) + (entry.codexPane ? [entry.label, entry.repo, entry.title] : [entry.notice ? `item ${entry.notice.number}` : entry.repo || "?", time]).filter(Boolean).join(" · ") : "";
+  // herdr の pane 名があれば先頭に出す (札はあまり見ないので、いつも目に入る帯で会話を見分ける。2026-11-27 user)
+  document.getElementById("stamp").textContent = entry ? agentTag(entry) + (entry.codexPane ? [entry.label, entry.repo, entry.title] : [entry.notice ? null : entry.label, entry.notice ? `item ${entry.notice.number}` : entry.repo || "?", time]).filter(Boolean).join(" · ") : "";
   cur = entry;
   fitTopic();
   renderChat();
