@@ -2280,9 +2280,10 @@ function renderChips() {
   for (const e of inRepo(all)) if (e.session && !seen.has(e.session)) seen.set(e.session, e);
   const ss = [...seen.values()];
   const perRepo = new Map();
-  for (const e of ss) perRepo.set(e.repo, (perRepo.get(e.repo) ?? 0) + 1);
+  const own = (e) => (e.label ? `${e.label} · ` : "") + (e.repo || "?"); // herdr の pane 名があれば先に付ける (同じ repo の会話を名前で見分ける)
+  for (const e of ss) perRepo.set(own(e), (perRepo.get(own(e)) ?? 0) + 1);
   const chip = (key, label, title) => chipBtn(key, key === SESS, label, title);
-  const base = (e) => e.codexPane ? `Codex · ${e.label}` : (e.repo || "?") + (perRepo.get(e.repo) > 1 && e.ts ? ` ${hhmm(new Date(e.ts))}` : "");
+  const base = (e) => e.codexPane ? `Codex · ${e.label}` : own(e) + (perRepo.get(own(e)) > 1 && e.ts ? ` ${hhmm(new Date(e.ts))}` : "");
   const dup = new Map();
   for (const e of ss) dup.set(base(e), (dup.get(base(e)) ?? 0) + 1);
   const label = (e) => base(e) + (dup.get(base(e)) > 1 ? ` ·${e.session.slice(-4)}` : ""); // 同じ分に返事した同 repo 同士は鍵の末尾で見分ける

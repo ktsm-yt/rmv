@@ -133,8 +133,8 @@ function herdrSockOf(meta: { herdr_socket?: unknown } | null | undefined): strin
 // herdr の list が取れない時 (agents null) は従来どおり Orca の値・alive=true。herdr agent list に出力時刻は無いので lastOutputAt は null (共有端末の別 pane の時刻を出さない)
 // herdr: true = 生死を herdr だけで決める。pane の ORCA_TERMINAL_HANDLE は herdr server を起動した時の Orca 端末のもので、その端末を閉じると Orca の一覧から消える (herdr の client は別の Orca 端末で動き続ける、2026-10-13 実測)
 // status = herdr の agent_status (working / blocked / idle / done)。題名の記号より確か: 裏で foyer の返事を待つ間に題名の ◑ が落ちると『静か』に見えた (2026-10-15)。Orca 端末・取れない時は null
-function paneView(pane: string | null, agents: Map<string, { title: string; status: string | null; tab: string | null }> | null, orca?: Term): { alive: boolean; herdr: boolean; title: string | null; status: string | null; lastOutputAt: number | null; tab: string | null } {
-  if (pane && agents) { const a = agents.get(pane); return { alive: !!a, herdr: true, title: a?.title ?? null, status: a?.status ?? null, lastOutputAt: null, tab: a?.tab ?? null }; }
+function paneView(pane: string | null, agents: Map<string, { title: string; status: string | null; tab: string | null; label?: string | null }> | null, orca?: Term): { alive: boolean; herdr: boolean; title: string | null; status: string | null; lastOutputAt: number | null; tab: string | null; label?: string | null } {
+  if (pane && agents) { const a = agents.get(pane); return { alive: !!a, herdr: true, title: a?.title ?? null, status: a?.status ?? null, lastOutputAt: null, tab: a?.tab ?? null, label: a ? a.label : undefined }; }
   return { alive: true, herdr: false, title: orca?.title ?? null, status: null, lastOutputAt: orca?.lastOutputAt ?? null, tab: null };
 }
 
@@ -190,7 +190,7 @@ async function historyItems() {
       const botChat = bot && typeof meta.orca_bot.chat === "string" ? meta.orca_bot.chat : null; // 知らせ (noticeRows) がどの会話の返事かを見る。/history には出さない
       const mainBot = bot && (MAIN_BOTS.has(bot.toLowerCase()) || MAIN_BOTS.has(String(meta.orca_bot.id).toLowerCase()));
       const sub = bot ? (mainBot ? null : bot) : subType(meta, shown.tab, await firstTabsOf(herdrSockOf(meta)));
-      return { name, codex, bot, botChat, prompt: typeof meta.prompt === "string" ? meta.prompt : null, ts: meta.ts ?? null, cwd, root, label: labelOf(meta), repo: bot ?? (root.split("/").filter(Boolean).pop() ?? ""), head: said.body.replace(/\s+/g, " ").trim().slice(0, 40), end: endOf(body), topic: said.topic.slice(0, 200) || (typeof meta.session_title === "string" ? meta.session_title : ""), askFrom: null as string | null, next: null as string | null, sid: typeof meta.session_id === "string" && meta.session_id ? meta.session_id : null, terminal: !!bot || Boolean(meta.terminal) || pane !== null, live: bot || codex || gone ? false : shown.herdr ? shown.alive : (pane !== null && !meta.terminal ? true : terms ? Boolean(meta.terminal) && handles.has(meta.terminal) : claude ? Boolean(meta.terminal) && claude.has(meta.terminal) : true) && shown.alive, session, perm: perm ? { id: perm.id, tool: perm.tool, detail: perm.detail, ts: perm.ts } : null, agent: meta.agent ?? null, sub, title: shown.title, status: shown.status, lastOutputAt: shown.lastOutputAt, bg: await readBg(session, typeof meta.session_id === "string" ? meta.session_id : null) };
+      return { name, codex, bot, botChat, prompt: typeof meta.prompt === "string" ? meta.prompt : null, ts: meta.ts ?? null, cwd, root, label: shown.label !== undefined ? shown.label : labelOf(meta), repo: bot ?? (root.split("/").filter(Boolean).pop() ?? ""), head: said.body.replace(/\s+/g, " ").trim().slice(0, 40), end: endOf(body), topic: said.topic.slice(0, 200) || (typeof meta.session_title === "string" ? meta.session_title : ""), askFrom: null as string | null, next: null as string | null, sid: typeof meta.session_id === "string" && meta.session_id ? meta.session_id : null, terminal: !!bot || Boolean(meta.terminal) || pane !== null, live: bot || codex || gone ? false : shown.herdr ? shown.alive : (pane !== null && !meta.terminal ? true : terms ? Boolean(meta.terminal) && handles.has(meta.terminal) : claude ? Boolean(meta.terminal) && claude.has(meta.terminal) : true) && shown.alive, session, perm: perm ? { id: perm.id, tool: perm.tool, detail: perm.detail, ts: perm.ts } : null, agent: meta.agent ?? null, sub, title: shown.title, status: shown.status, lastOutputAt: shown.lastOutputAt, bg: await readBg(session, typeof meta.session_id === "string" ? meta.session_id : null) };
     }),
   )).filter((e): e is NonNullable<typeof e> => e !== null);
   // 1 つの端末で順に別の repo を開くと、端末が生きている限り昔の repo まで live になる (2026-09-29 実機: 1 端末で 4 repo)。
@@ -249,7 +249,7 @@ async function historyItems() {
     // 窓口役でない Bot の返事待ちは、返事の行と同じくワーカー側へ (bot・repo・sub = Bot の名前、live なし)。窓口役は今どおりメイン
     const pb = typeof p?.orca_bot?.name === "string" ? p.orca_bot : null;
     const hide: string | null = pb && !MAIN_BOTS.has(pb.name.toLowerCase()) && !MAIN_BOTS.has(String(pb.id).toLowerCase()) ? pb.name : null;
-    items.push({ name: `asking-${session}.md`, bot: hide, botChat: null, prompt: null, ts: a.ts, cwd, root, label: labelOf(p), repo: hide ?? root.split("/").filter(Boolean).pop() ?? "", head: "", terminal: isTerm || pane !== null, live: hide ? false : live, session, perm: perm ? { id: perm.id, tool: perm.tool, detail: perm.detail, ts: perm.ts } : null, agent: null, sub: hide ?? subType(p, shown.tab, await firstTabsOf(herdrSockOf(p))), title: shown.title, status: shown.status, lastOutputAt: shown.lastOutputAt, bg: await readBg(session, typeof p?.session_id === "string" ? p.session_id : null) });
+    items.push({ name: `asking-${session}.md`, bot: hide, botChat: null, prompt: null, ts: a.ts, cwd, root, label: shown.label !== undefined ? shown.label : labelOf(p), repo: hide ?? root.split("/").filter(Boolean).pop() ?? "", head: "", terminal: isTerm || pane !== null, live: hide ? false : live, session, perm: perm ? { id: perm.id, tool: perm.tool, detail: perm.detail, ts: perm.ts } : null, agent: null, sub: hide ?? subType(p, shown.tab, await firstTabsOf(herdrSockOf(p))), title: shown.title, status: shown.status, lastOutputAt: shown.lastOutputAt, bg: await readBg(session, typeof p?.session_id === "string" ? p.session_id : null) });
   }
   items.sort((x, y) => (Date.parse(y.ts ?? "") || 0) - (Date.parse(x.ts ?? "") || 0)); // 仮の entry も時刻順。先頭固定だと端末が閉じた後も残る state/prompt の待機中が「最新」に居座り、追従が止まる (2026-10-13 実害: 19:57 の Crewforce が 2 時間先頭に残った)
   // 依頼文の無い返事 (自動の通知で始まった返事) に、同じ会話の 1 つ前の依頼がある返事の name を付ける。鍵は session (端末・pane) でなく session_id:
@@ -300,7 +300,7 @@ async function historyItems() {
   for (const e of own) if (workers.has(e.session)) e.sub = "worker";
   return { items, curSid, replySid, asking, askSid, botPerms, live: terms || agents || named ? "ok" : "unknown" };
 }
-// herdr の pane 名 (hook が記録した herdr_label)。無い・空は null。/history には出さず /sessions だけが使う
+// herdr の pane 名 (hook が記録した herdr_label)。無い・空は null。/sessions と、viewer の札 (/history の label) が使う
 function labelOf(meta: { herdr_label?: unknown } | null | undefined): string | null {
   return typeof meta?.herdr_label === "string" && meta.herdr_label ? meta.herdr_label : null;
 }
@@ -315,7 +315,7 @@ async function history(repo: string | null, withNotices: boolean): Promise<Respo
       perm: { id: p.id, tool: p.tool, detail: p.detail, ts: p.ts } });
   }
   // sub は出口でだけ agent にする (上の集計は sub を本体の返事として数える: 端末ごとの最新の返事・今のセッションの判定が pane ごとに要る)
-  const replies = items.map(({ root, sub, label, botChat, ...e }) => ({ ...e, agent: sub ? { type: sub, id: e.session } : e.agent, asking: (e.name.startsWith("asking-") || curSid.get(e.session) === replySid.get(e.session) ? asking.get(e.session) : null) ?? null })); // 次のセッションの依頼は前のセッションの返事に付けない
+  const replies = items.map(({ root, sub, botChat, ...e }) => ({ ...e, agent: sub ? { type: sub, id: e.session } : e.agent, asking: (e.name.startsWith("asking-") || curSid.get(e.session) === replySid.get(e.session) ? asking.get(e.session) : null) ?? null })); // 次のセッションの依頼は前のセッションの返事に付けない
   // 本文のある履歴や /sessions・/ext/deliver には混ぜず、viewer の一覧だけに出す。
   const livePanes = await Promise.all(panes.map(async (p) => {
     const session = `codex-pane-${p.pane.replace(":", "-")}-${p.terminal}`;
@@ -808,15 +808,22 @@ async function liveTerminals(maxAge: number): Promise<Term[] | null> {
 
 // herdr の Claude が居る pane: `herdr agent list` の pane_id → {title: terminal_title (先頭の ◑ / ✳ が作業中 / 入力待ち)}。取れない (herdr 無し / exit 非 0 / JSON 不正) 時は null。memo は liveTerminals と同じ
 // socket ごと (null = 既定 session) に memo する: pane id は herdr の session ごとに w1:p1 から振られて重なる。並走する呼びが同じ list を二重に叩かないよう promise を持つ
-const herdrCache = new Map<string, { at: number; agents: Promise<Map<string, { title: string; status: string | null; tab: string | null }> | null> }>();
-function herdrAgents(sock: string | null, maxAge: number): Promise<Map<string, { title: string; status: string | null; tab: string | null }> | null> {
+const herdrCache = new Map<string, { at: number; agents: Promise<Map<string, { title: string; status: string | null; tab: string | null; label?: string | null }> | null> }>();
+function herdrAgents(sock: string | null, maxAge: number): Promise<Map<string, { title: string; status: string | null; tab: string | null; label?: string | null }> | null> {
   const hit = herdrCache.get(sock ?? "");
   if (hit && Date.now() - hit.at < maxAge) return hit.agents;
   const agents = (async () => {
     try {
-      const r = await herdrRun(["agent", "list"], sock);
+      // pane 名は agent list に載らないので pane list から取る (今の名前。返事の後に付け直した名前も札に出る)。取れない時は label を入れず、記録の名前に任せる
+      const [r, pl] = await Promise.all([herdrRun(["agent", "list"], sock), herdrRun(["pane", "list"], sock).catch(() => null)]);
       const list = r.code === 0 ? JSON.parse(r.out)?.result?.agents : null;
-      return Array.isArray(list) ? new Map<string, { title: string; status: string | null; tab: string | null }>(list.filter((a) => a?.agent === "claude" && typeof a?.pane_id === "string").map((a) => [a.pane_id, { title: String(a.terminal_title ?? ""), status: typeof a.agent_status === "string" ? a.agent_status : null, tab: typeof a.tab_id === "string" ? a.tab_id : null }])) : null;
+      let labels: Map<string, string | null> | null = null;
+      try {
+        const ps = pl?.code === 0 ? JSON.parse(pl.out)?.result?.panes : null;
+        if (Array.isArray(ps)) labels = new Map(ps.filter((p) => typeof p?.pane_id === "string").map((p) => [p.pane_id, typeof p.label === "string" && p.label.trim() ? p.label.trim() : null]));
+      } catch { labels = null; }
+      const withLabel = (m: Map<string, { title: string; status: string | null; tab: string | null; label?: string | null }>) => { if (labels) for (const [id, v] of m) if (labels.has(id)) v.label = labels.get(id); return m; };
+      return Array.isArray(list) ? withLabel(new Map<string, { title: string; status: string | null; tab: string | null; label?: string | null }>(list.filter((a) => a?.agent === "claude" && typeof a?.pane_id === "string").map((a) => [a.pane_id, { title: String(a.terminal_title ?? ""), status: typeof a.agent_status === "string" ? a.agent_status : null, tab: typeof a.tab_id === "string" ? a.tab_id : null }]))) : null;
     } catch { return null; }
   })();
   herdrCache.set(sock ?? "", { at: Date.now(), agents });
