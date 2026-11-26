@@ -929,7 +929,8 @@ async function show(md, entry) {
   document.getElementById("ask").open = false;
   renderPrompt(entry);
   const time = entry?.ts ? new Date(entry.ts).toLocaleTimeString("ja-JP", { hour12: false }) : "";
-  document.getElementById("stamp").textContent = entry ? agentTag(entry) + (entry.codexPane ? [entry.label, entry.repo, entry.title] : [entry.notice ? `item ${entry.notice.number}` : entry.repo || "?", time]).filter(Boolean).join(" · ") : "";
+  // herdr の pane 名があれば先頭に出す (札はあまり見ないので、いつも目に入る帯で会話を見分ける。2026-11-27 user)
+  document.getElementById("stamp").textContent = entry ? agentTag(entry) + (entry.codexPane ? [entry.label, entry.repo, entry.title] : [entry.notice ? null : entry.label, entry.notice ? `item ${entry.notice.number}` : entry.repo || "?", time]).filter(Boolean).join(" · ") : "";
   cur = entry;
   fitTopic();
   renderChat();
@@ -2280,9 +2281,10 @@ function renderChips() {
   for (const e of inRepo(all)) if (e.session && !seen.has(e.session)) seen.set(e.session, e);
   const ss = [...seen.values()];
   const perRepo = new Map();
-  for (const e of ss) perRepo.set(e.repo, (perRepo.get(e.repo) ?? 0) + 1);
+  const own = (e) => (e.label ? `${e.label} · ` : "") + (e.repo || "?"); // herdr の pane 名があれば先に付ける (同じ repo の会話を名前で見分ける)
+  for (const e of ss) perRepo.set(own(e), (perRepo.get(own(e)) ?? 0) + 1);
   const chip = (key, label, title) => chipBtn(key, key === SESS, label, title);
-  const base = (e) => e.codexPane ? `Codex · ${e.label}` : (e.repo || "?") + (perRepo.get(e.repo) > 1 && e.ts ? ` ${hhmm(new Date(e.ts))}` : "");
+  const base = (e) => e.codexPane ? `Codex · ${e.label}` : own(e) + (perRepo.get(own(e)) > 1 && e.ts ? ` ${hhmm(new Date(e.ts))}` : "");
   const dup = new Map();
   for (const e of ss) dup.set(base(e), (dup.get(base(e)) ?? 0) + 1);
   const label = (e) => base(e) + (dup.get(base(e)) > 1 ? ` ·${e.session.slice(-4)}` : ""); // 同じ分に返事した同 repo 同士は鍵の末尾で見分ける
