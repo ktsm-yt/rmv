@@ -91,7 +91,8 @@
   #cchips .chip time.wait, #cchips .chip time.ng { color: #e5a50a; font-weight: 700; }
   #cchips .chip time.bg, #cchips .chip time.hold { color: #3584e4; } /* 待つだけ (人の番ではない) は青、太字にしない。黄は人の番だけ */
   #cchips .chip time.ok { color: #2ec27e; }
-  #cchips .chip.on time { color: inherit; }
+  #cchips .chip.on time, #cchips .chip.mbot time { color: inherit; }
+  #cchips .chip i.mbot { width: auto; height: auto; margin-top: 0; border-radius: 0; font-style: normal; }
   #cchips .chip i { margin-top: 5px; }
   #cchips .chip span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   #cchips:has(.live-codex-label) { max-height: 38vh; overflow-y: auto; }
@@ -236,6 +237,9 @@
   #chips:empty { display: none; }
   .chip { flex: none; font: inherit; font-size: 12px; line-height: 1.6; padding: 1px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); color: var(--fg); cursor: pointer; }
   .chip.on { background: var(--fg); border-color: var(--fg); color: var(--bg); font-weight: 600; }
+  .chip.mbot { --rc: #6D28D9; background: #6D28D9; border-color: #6D28D9; color: #fff; font-weight: 600; } /* 窓口役の Bot (RMV_MAIN_BOTS): 塗りつぶしの紫 + 🤖。同じ名前の repo の会話の札と見分ける (2026-11-27 user「Usher Botだけはすぐに見てわかる見た目にしたい」)。選んでいる札の黒と被らない色 */
+  .chip.mbot.on { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--fg); } /* 選んでいる時は紫のまま外に黒の輪 */
+  .chip.mbot time { font-weight: 400; opacity: .8; }
   #filter:empty { display: none; }
 
   /* 返事: 型ごとに置き場所を固定する */
@@ -512,7 +516,7 @@
   html.mob #cchips .chip i { margin: 0; }
   html.mob #cchips .chip b { overflow: hidden; text-overflow: ellipsis; }
   html.mob #cchips .chip span { grid-column: 2 / -1; font-size: 12px; color: var(--muted); }
-  html.mob #cchips .chip.on span { color: inherit; opacity: .7; }
+  html.mob #cchips .chip:is(.on, .mbot) span { color: inherit; opacity: .7; }
   html.mob #cchips .chip .task { grid-column: 1 / -1; max-height: 30vh; overflow: auto; padding-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere; }
   /* 許可待ちの行 */
   html.mob #tstat { gap: 6px; font-size: 13px; color: var(--fg); }
@@ -965,9 +969,13 @@ let REPO = params.get("repo") || ""; // "" = すべて
 // inRepo で落とす = 一覧・← →・追従・chip・送り先リスト・プロジェクト列がモードの entry だけを見る。?mode=agents に残す (localStorage には持たない = 開けば main)
 let AGENTS = params.get("mode") === "agents";
 const inMode = (e) => !!e.agent === AGENTS;
+const isMainBot = (e) => !!e?.bot && !e.agent; // 窓口役の Bot (RMV_MAIN_BOTS)。窓口役でない Bot には server が agent を付けて「🤖 ワーカー」側に出す
+// 窓口役の Bot は会話がいくつあっても Bot ごとに 1 個 (一番新しい会話) だけ出す。es は新しい順
+const mainBots = (es) => es.filter((e, i) => isMainBot(e) && es.findIndex((x) => isMainBot(x) && x.bot === e.bot) === i);
 const agentTag = (e) => (e?.bot ? `${e.agent ? "🤖 " : ""}${e.bot}: ` : e?.agent ? `🤖 ${String(e.agent.type ?? "").split(":").pop() || "agent"}: ` : e?.codex ? "Codex: " : ""); // "claude-code-harness:worker" → "🤖 worker: "
 // ponytail: repo の照合は cwd basename の完全一致 (大文字小文字は無視) だけ。上限 = 1 repo ずつ切り替えて見る用途。
-const inRepo = (es) => es.filter((e) => inMode(e) && (!REPO || e.repo.toLowerCase() === REPO.toLowerCase()));
+// bots = 窓口役の Bot は repo で絞っても通す (札・送り先の一覧と、Bot の会話を選んでいる時の表示。許可待ちの行と同じく絞り込みに関係なく出す。『最新』の追従には混ぜない)
+const inRepo = (es, bots = false) => es.filter((e) => inMode(e) && (!REPO || (bots && isMainBot(e)) || e.repo.toLowerCase() === REPO.toLowerCase()));
 // repo 名 → 決定的な色 (文字列 hash → hue)。照合と同じく大文字小文字は無視
 const repoColor = (r) => { let h = 0; for (const c of String(r ?? "").toLowerCase()) h = (h * 31 + c.codePointAt(0)) >>> 0; return `hsl(${h % 360} 55% 55%)`; };
 const rcDot = '<i class="rc">●</i>';
@@ -975,7 +983,7 @@ const inSess = (es) => (SESS ? es.filter((e) => e.session === SESS) : es);
 const codexPaneSession = (s) => s.startsWith("codex-pane-");
 const scope = () => {
   if (noteSession(SESS)) return botNotes.filter((e) => e.session === SESS);
-  const entries = inRepo(all);
+  const entries = inRepo(all, !!SESS);
   const pane = entries.find((e) => e.codexPane && e.session === SESS);
   if (pane?.sid) {
     const replies = all.filter((e) => e.codex && !e.codexPane && e.sid === pane.sid);
@@ -1885,18 +1893,21 @@ function renderChat() {
   csend.textContent = chatBusy ? "送信中…" : "送信";
   // 各行 = 時刻 + 最新返事の冒頭。同じ repo の chip は時刻だけでは見分けられない (2026-09-29 user)
   // 時刻の左に下の一覧と同じ丸、時刻の色も状態で変える (作業中 = 明るく太字 / 黄 = 返事が要る / 緑 = 閉じてよい / 灰 = 静か・終了)。2026-10-25 user
-  const row = (e) => { const st = e.live ? stOf(e).st : "dead"; return `<i class="${st}"></i>${e.ts ? `<time class="${st}">${esc(hhmm(new Date(e.ts)))}</time>` : ""}<span>${esc(agentTag(e) + (e.head || ""))}</span>`; };
+  const dot = (e, st) => isMainBot(e) ? '<i class="mbot">🤖</i>' : `<i class="${st}"></i>`;
+  const row = (e) => { const st = e.live ? stOf(e).st : "dead"; return `${dot(e, st)}${e.ts ? `<time class="${st}">${esc(hhmm(new Date(e.ts)))}</time>` : ""}<span>${esc((isMainBot(e) ? "" : agentTag(e)) + (e.head || ""))}</span>`; };
   // スマホ: 送り先の一覧は 1 回だけ出す。下の状態行に出していた物は一覧の行に載せる: 2 行目 = 依頼文の冒頭・裏の待ち・経過時間、行を押すと依頼文の全文 (もう一度押すと畳む)
   const mobRow = (e) => {
     const { st, bg } = e.live ? stOf(e) : { st: "dead" };
-    const sub = (e.perm ? `${e.perm.tool} 許可待ち` : e.asking ? askText(e) : bg && st !== "ng" ? "裏で待ち: " + bgSum(bg) : agentTag(e) + (e.head || "")) + (e.live && e.lastOutputAt ? ` · ${ago(e.lastOutputAt)}` : "");
+    const sub = (e.perm ? `${e.perm.tool} 許可待ち` : e.asking ? askText(e) : bg && st !== "ng" ? "裏で待ち: " + bgSum(bg) : (isMainBot(e) ? "" : agentTag(e)) + (e.head || "")) + (e.live && e.lastOutputAt ? ` · ${ago(e.lastOutputAt)}` : "");
     const ask = openAsk.has(e.session) && (e.asking?.prompt ?? e.prompt);
-    return `<i class="${st}"></i><b>${esc(chipLabels.get(e.session) ?? (e.repo || "?"))}</b><time class="${st}">${esc(hhmm(new Date(e.ts)))}</time><span>${esc(sub)}</span>${ask ? `<span class="task">${esc(ask)}</span>` : ""}`;
+    return `${dot(e, st)}<b>${esc(chipLabels.get(e.session) ?? (e.repo || "?"))}</b><time class="${st}">${esc(hhmm(new Date(e.ts)))}</time><span>${esc(sub)}</span>${ask ? `<span class="task">${esc(ask)}</span>` : ""}`;
   };
   const entries = [...chipEntries.values()].filter((e) => e.live || e.codex || e.bot || showDead || e.session === pin);
-  // Bot の行は終了扱いにならないので、枠は端末の行が先に取り、Bot は余った分だけ (窓口役の Bot の会話が増えても稼働中の端末の chip を押し出さない)
+  // Bot の行は終了扱いにならないので、枠は端末の行が先に取り、Bot は余った分だけ (窓口役でない Bot の会話が増えても稼働中の端末の chip を押し出さない)
+  // 窓口役の Bot は枠の外で『追従』のすぐ下に Bot ごとに 1 行 (端末の会話が 5 つ以上あっても押し出されない)
+  const bots = mainBots(entries);
   const cap = isMobileUA ? 12 : 5, plain = entries.filter((e) => !e.codexPane && !e.bot).slice(0, cap);
-  const keep = new Set([...plain, ...entries.filter((e) => !e.codexPane && e.bot).slice(0, cap - plain.length)]);
+  const keep = new Set([...plain, ...entries.filter((e) => !e.codexPane && e.bot && !isMainBot(e)).slice(0, cap - plain.length)]);
   const shown = [...entries.filter((e) => keep.has(e)), ...entries.filter((e) => e.codexPane)];
   const chipContent = (e) => e.codexPane
     ? `<i class="${stOf(e).st}"></i><span class="live-codex-label">${esc(`Codex · ${e.label} · ${e.repo} · ${codexPaneStatus.get(e.status) ?? "状態不明"}`)}</span>`
@@ -1915,7 +1926,7 @@ function renderChat() {
     document.getElementById("ddot").className = to?.live ? stOf(to).st : "";
     document.getElementById("dwait").innerHTML = (wait ? `<b>待ち </b>${wait}` : "") + (run ? `<span>${wait ? " / " : ""}動作中 ${run}</span>` : "");
   }
-  let html = chipBtn("", !pin, "追従", "表示中の会話へ送る") + shown.map((e) => chipBtn(e.session, e.session === pin, chipContent(e), `送り先をここに固定: ${chipLabels.get(e.session)}`, true, e.repo)).join("");
+  let html = chipBtn("", !pin, "追従", "表示中の会話へ送る") + bots.map((e) => chipBtn(e.session, e.session === pin, chipContent(e), `送り先を ${e.bot} の一番新しい会話に固定`, true, null, " mbot")).join("") + shown.map((e) => chipBtn(e.session, e.session === pin, chipContent(e), `送り先をここに固定: ${chipLabels.get(e.session)}`, true, e.repo)).join("");
   if (pin && !chipLabels.has(pin)) html += chipBtn(pin, true, "固定中 (返事なし)", pin);
   if (html === cchipsHtml) return; // 毎 poll 描き直すと横スクロール位置が飛ぶ
   cchipsHtml = html;
@@ -2282,10 +2293,10 @@ if (isMobileUA) csend.addEventListener("mousedown", (ev) => ev.preventDefault())
 // セッション chip: 選択中プロジェクトの all (新しい順) で各セッションが最初に現れた entry = そのセッションの最新返事。並びも新しい順。
 // 同じ repo のセッションが 2 つ以上なら HH:MM を添えて見分ける。
 let chipsHtml = null;
-const chipBtn = (key, on, label, title, raw = false, repo = null) => `<button class="chip${on ? " on" : ""}" data-s="${esc(key)}" aria-pressed="${on}" title="${esc(title)}"${repo === null ? "" : ` style="--rc:${repoColor(repo)}"`}>${raw ? label : esc(label)}</button>`;
+const chipBtn = (key, on, label, title, raw = false, repo = null, cls = "") => `<button class="chip${cls}${on ? " on" : ""}" data-s="${esc(key)}" aria-pressed="${on}" title="${esc(title)}"${repo === null ? "" : ` style="--rc:${repoColor(repo)}"`}>${raw ? label : esc(label)}</button>`;
 function renderChips() {
   const seen = new Map();
-  for (const e of inRepo(all)) if (e.session && !seen.has(e.session)) seen.set(e.session, e);
+  for (const e of inRepo(all, true)) if (e.session && !seen.has(e.session)) seen.set(e.session, e);
   const ss = [...seen.values()];
   const perRepo = new Map();
   const own = (e) => (e.label ? `${e.label} · ` : "") + (e.repo || "?"); // herdr の pane 名があれば先に付ける (同じ repo の会話を名前で見分ける)
@@ -2299,9 +2310,11 @@ function renderChips() {
   chipEntries = seen;
   renderChat();
   // 既定は live なセッションだけ (終了したものは #pdead で出す)。選択中は live でなくても出す (消えると迷子)
-  const shown = ss.filter((e) => e.live || e.codex || e.bot || showDead || e.session === SESS); // Codex と Bot の返事は live にならないが終了扱いで隠さない
+  const shown = ss.filter((e) => !isMainBot(e) && (e.live || e.codex || e.bot || showDead || e.session === SESS)); // Codex と Bot の返事は live にならないが終了扱いで隠さない
   const note = noteSession(SESS) && botNotes.find((e) => e.session === SESS);
-  let html = ss.length || SESS ? chip("", "最新", "最後に返事したセッションを追う") + shown.map((e) => chipBtn(e.session, e.session === SESS, rcDot + esc(label(e)), `${e.repo} / ${e.session}`, true, e.repo)).join("") : "";
+  // 窓口役の Bot は『最新』のすぐ隣に Bot ごとに 1 個。押すと一番新しい会話を開く (選んだ後に次の会話が来たら光が外れ、もう一度押すとそちらへ移る)
+  const bots = mainBots(ss).map((e) => chipBtn(e.session, e.session === SESS, `🤖 ${esc(e.bot)} Bot${e.ts ? ` <time>${esc(hhmm(new Date(e.ts)))}</time>` : ""}`, `${e.bot} の一番新しい返事を開く`, true, null, " mbot")).join("");
+  let html = ss.length || SESS ? chip("", "最新", "最後に返事したセッションを追う") + bots + shown.map((e) => chipBtn(e.session, e.session === SESS, rcDot + esc(label(e)), `${e.repo} / ${e.session}`, true, e.repo)).join("") : "";
   if (SESS && !seen.has(SESS)) html += chip(SESS, note ? `${note.bot} item ${note.notice.number}` : "選択中 (返事なし)", SESS); // 履歴から消えたセッションを URL で指している
   if (html === chipsHtml) return; // 毎 poll 描き直すと横スクロール位置が飛ぶ
   chipsHtml = html;
