@@ -949,8 +949,15 @@ async function show(md, entry) {
 let all = [], list = [], idx = 0, following = true, shownName = null, showRequest = 0;
 let botPerms = [];
 // Bot の完了・判断待ちの知らせ (name が botitem-)。all に混ぜず、行を押した時だけ本文に出す。開いている分は一覧から消えても持っておく (読んでいる途中で本文が消えない)
-let botNotes = [], noteMore = false, noteBack = { sess: "", name: null, follow: true, why: "" }; // noteBack = もう一度押した時に戻る表示 (name は前の返事を見ていた時と、書きかけの赤ペンがある時だけ)
+let botNotes = [], noteMore = false, noteBack = { sess: "", name: null, follow: true, why: "", at: "" }; // noteBack = もう一度押した時に戻る表示 (name は前の返事を見ていた時と、書きかけの赤ペンがある時だけ)。at = 開いた時に本文に出ていた返事の session
 const noteSession = (s) => s.startsWith("botitem-");
+// 出す知らせ: 頼んだ会話 (notice.session) が開いている会話のもの + 頼んだ会話の分からないもの (閉じた・印なし・未確定 = null) + 今開いている知らせ。
+// 開いている会話 = 本文に出している返事の session (送り先の固定とは別。固定先の行を見ている会話に出さない)。知らせを開いている間は開いた時の控え (noteBack.at)
+// 行・右の列の未読の印・スマホの待ちの数は全部これで数える。scope・chatTo・openNote は元の botNotes のまま (開いた本文を消さない)
+const shownNotes = () => {
+  const at = noteSession(SESS) ? noteBack.at : list[idx]?.session ?? "";
+  return botNotes.filter((e) => !e.notice.session || e.notice.session === at || e.session === SESS);
+};
 const params = new URLSearchParams(location.search);
 let SESS = params.get("s") || ""; // "" = 最新 (最後に返事したセッションを追う)
 let REPO = params.get("repo") || ""; // "" = すべて
@@ -1897,13 +1904,13 @@ function renderChat() {
   // 許可待ちはプロジェクトの絞り込みと 5 件の枠に関係なく先頭に出す (別 repo の foyer の画面の許可待ちが見えなかった、2026-10-15)
   const perms = [...new Map(all.filter((e) => e.session && e.live && e.perm).map((e) => [e.session, e])).values()];
   // 知らせの順: 判断待ち → 閉じた物、それぞれ新しい順。開いても並べ替えない (押した行を動かさない)。3 件を超えた分は『ほか』を押すと出す (スマホの返事を隠さない)
-  const notes = [...botNotes].sort((x, y) => (x.notice.kind !== "ask") - (y.notice.kind !== "ask") || tsOf(y) - tsOf(x));
+  const notes = shownNotes().sort((x, y) => (x.notice.kind !== "ask") - (y.notice.kind !== "ask") || tsOf(y) - tsOf(x));
   document.getElementById("ctoggle").classList.toggle("unread", notes.some((e) => !e.notice.seen)); // 右の列を畳んでいても気づけるように
   const alerts = [...perms, ...botPerms, ...noteRows(notes)];
   renderTstat(isMobileUA ? alerts : [...alerts, ...shown.filter((e) => e.live && !perms.some((p) => p.session === e.session))]);
   if (isMobileUA) { // 下の帯: 送り先の名前と状態の点、返事を待っているセッションの数 (閉じていても分かるように)
     const sts = [...new Map([...perms, ...chipEntries.values()].filter((e) => e.live).map((e) => [e.session, stOf(e).st])).values()];
-    const wait = botPerms.length + botNotes.filter((e) => !e.notice.seen).length + sts.filter((x) => x === "ng" || x === "wait" || x === "perm").length, run = sts.filter((x) => x === "busy" || x === "bg" || x === "hold").length;
+    const wait = botPerms.length + shownNotes().filter((e) => !e.notice.seen).length + sts.filter((x) => x === "ng" || x === "wait" || x === "perm").length, run = sts.filter((x) => x === "busy" || x === "bg" || x === "hold").length;
     document.getElementById("dname").textContent = lbl ? (pin ? "📌 " : "") + lbl : "送り先なし"; // 幅が無いので矢印は付けない (点が送り先の印)
     document.getElementById("ddot").className = to?.live ? stOf(to).st : "";
     document.getElementById("dwait").innerHTML = (wait ? `<b>待ち </b>${wait}` : "") + (run ? `<span>${wait ? " / " : ""}動作中 ${run}</span>` : "");
@@ -1959,7 +1966,7 @@ const noteRow = (e) => {
 async function openNote(session) {
   const e = session === SESS ? null : botNotes.find((n) => n.session === session); // null = もう一度押した
   if (e === undefined) return;
-  if (e && !noteSession(SESS)) noteBack = { sess: SESS, name: idx > 0 || hasDraft(shownName) ? shownName : null, follow: following, why: document.getElementById("cwhy").textContent };
+  if (e && !noteSession(SESS)) noteBack = { sess: SESS, name: idx > 0 || hasDraft(shownName) ? shownName : null, follow: following, why: document.getElementById("cwhy").textContent, at: list[idx]?.session ?? "" };
   SESS = e ? session : noteBack.sess;
   setParam("s", SESS);
   const seen = !e || e.notice.seen;

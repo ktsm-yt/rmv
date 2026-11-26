@@ -52,6 +52,11 @@ if a[:2] == ["bot", "item"]:
         ev = f["events"][a[3]]; after = a[a.index("--after") + 1] if "--after" in a else None
         if len(ev) > 50 and not after: ok({"events": ev[:50], "nextCursor": ev[49]["id"]})
         else: ok({"events": ev[50:] if after else ev})
+elif a[:2] == ["orchestration", "inbox"]: # 頼んだ会話を引く。inbox_fail の会話は失敗させる (f["mode"] とは別)
+    chat = a[a.index("--terminal") + 1].split(":", 1)[1]
+    with (d / "icalls").open("a") as c: c.write(json.dumps([chat, sorted(k for k in os.environ if k.startswith("ORCA_")), os.getcwd(), a]) + "\\n")
+    if chat in f.get("inbox_fail", []): sys.exit(1)
+    m = f.get("inbox", {}).get(chat, []); ok({"messages": m, "count": len(m)})
 elif a[:2] == ["orchestration", "worker-list"]: ok({"workers": []})
 elif a[:2] == ["agent", "list"]: ok({"agents": []})
 else: ok({"terminals": f["terminals"]})
@@ -152,6 +157,53 @@ else: ok({"terminals": f["terminals"]})
         (state / "notice-seen.json").unlink(); start(); c = len(calls()); check("Manager の返事もファイルも無ければ聞かない", notes() == {} and len(calls()) == c, len(calls()) - c)
         (state / "notice-seen.json").write_text(json.dumps({"since": ms(9000), "seen": {}})); reply(10, CHAT(9), "Manager の返事")
         start({"RMV_NOTICE_BOT": ""}); c = len(calls()); check("RMV_NOTICE_BOT が空なら出さず、呼ばない", notes() == {} and len(calls()) == c)
+        # 10 頼んだ会話 (item 141): 最初の依頼の連絡の『頼んだ会話: <sid>』の行 → その会話が今いる pane の鍵を notice.session に付ける。分からない件は null (どの会話でも出す)
+        SID = lambda k: f"{40000000 + k}-4444-4444-8444-444444444444"
+        iso = lambda ago: dt.datetime.fromtimestamp(time.time() - ago, dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        mark = lambda sid: f"頼んだ会話: {sid}"
+        def talk(ago, sid, body, terminal, pane): # usher の会話の返事 (同じ端末の別 pane)
+            t = dt.datetime.fromtimestamp(time.time() - ago).astimezone(); name = f"{t.strftime('%Y%m%dT%H%M%S000')}-{sid[:8]}.md"
+            (hist / name).write_text(body); (hist / (name[:-3] + ".json")).write_text(json.dumps({"session_id": sid, "ts": t.isoformat(timespec="seconds"), "name": name, "cwd": "/work/usher", "terminal": terminal, "herdr_pane": pane, "prompt": "見本の依頼"}))
+        def asking(sid, terminal, pane, ago=250): # 返事前の会話 (依頼だけ)
+            (state / "prompt").mkdir(exist_ok=True); (state / f"prompt/{terminal}__{pane.replace(':', '-')}.json").write_text(json.dumps({"session_id": sid, "prompt": "返事前の依頼", "ts": dt.datetime.fromtimestamp(time.time() - ago).astimezone().isoformat(timespec="seconds"), "cwd": "/work/usher", "terminal": terminal, "herdr_pane": pane}))
+        def asked(chat, text, sender="term_a", kind="handoff", ago=700): # Manager の会話に届いた連絡
+            fix["inbox"].setdefault(chat, []).append({"id": f"msg_{len(fix['inbox'])}_{ago}", "from_handle": sender, "to_handle": f"orca_session_id:{chat}", "type": kind, "subject": "見本", "body": f"見本の依頼の本文\n\n{text}", "created_at": iso(ago)})
+        icalls = lambda: [json.loads(l) for l in (tmp / "icalls").read_text().splitlines()] if (tmp / "icalls").exists() else []
+        def requester_scene():
+            global NOW
+            NOW = time.time()
+            if proc: proc.terminate(); proc.wait()
+            for f in [*hist.glob("*"), *(state / "prompt").glob("*")]: f.unlink()
+            (tmp / "icalls").unlink(missing_ok=True)
+            (state / "notice-seen.json").write_text(json.dumps({"since": ms(9000), "seen": {}}))
+            fix.update(mode="ok", items=[], events={}, inbox={}, inbox_fail=[], terminals=[{"handle": h, "connected": True, "writable": True, "title": "✳ claude"} for h in ("term_a", "term_z")])
+        X, Y, Z1, Z2, W = SID(1), SID(2), SID(3), SID(4), SID(5)
+        KEY = {X: "term_a__w1-p1", Y: "term_a__w1-p2", Z1: "term_z__w2-p1", Z2: "term_a__w1-p3", W: "term_a__w1-p4"}
+        requester_scene()
+        talk(300, X, "X の返事", "term_a", "w1:p1"); talk(200, Y, "Y の返事", "term_a", "w1:p2"); talk(250, Z1, "Z1 の返事", "term_z", "w2:p1"); talk(260, Z2, "Z2 の返事", "term_a", "w1:p3"); asking(W, "term_a", "w1:p4")
+        for k, sid in ((51, X), (52, Y), (53, Z1), (60, Z2), (61, W)): item(k, "needs_you", 600, CHAT(k), question=f"問い {k}"); asked(CHAT(k), mark(sid))
+        item(59, "needs_you", 600, CHAT(51), question="同じ会話の 2 つ目の item")
+        item(54, "needs_you", 600, CHAT(54), question="印なし"); asked(CHAT(54), "")
+        item(55, "needs_you", 600, CHAT(55), question="読めない"); asked(CHAT(55), mark(Y)); fix["inbox_fail"] = [CHAT(55)]
+        item(56, "needs_you", 600, CHAT(56), question="印が 2 種類"); asked(CHAT(56), mark(X) + "\n" + mark(Y))
+        item(57, "done", 600, CHAT(57), comment="最初の依頼が正"); asked(CHAT(57), mark(Y), ago=800); asked(CHAT(57), mark(X), ago=900); asked(CHAT(57), mark(Y), sender=f"orca_session_id:{CHAT(1)}", ago=1000); asked(CHAT(57), mark(Y), kind="status", ago=1100)
+        item(58, "needs_you", 600, CHAT(58), question="上限ちょうど"); fix["inbox"][CHAT(58)] = [{"id": f"msg_{i}", "from_handle": "term_a", "to_handle": f"orca_session_id:{CHAT(58)}", "type": "status", "body": "", "created_at": iso(i)} for i in range(1000)]
+        item(62, "needs_you", 600, CHAT(62), question="連絡なし")
+        put(); start(); N = notes(); S = {k: e["notice"]["session"] for k, e in N.items()}
+        check("頼んだ会話が今いる pane の鍵が付く (同じ端末の別 pane・返事前の会話・同じ会話の 2 つ目の item)", all(S.get(k) == KEY[sid] for k, sid in ((51, X), (59, X), (52, Y), (53, Z1), (60, Z2), (61, W))), S)
+        check("頼んだ会話は最初の依頼 (usher の端末発の handoff / question で一番古い物) の印で決める", S.get(57) == KEY[X], S.get(57))
+        check("印なし・印が 2 種類・連絡なし・読めない・上限ちょうどは null (どの会話でも出す)", all(k in S and S[k] is None for k in (54, 55, 56, 58, 62)), S)
+        ic = icalls(); per = lambda c: sum(x[0] == c for x in ic)
+        check("確定した会話は 1 回だけ引き、読めない・上限ちょうどは取り直しのたびに引き直す", per(CHAT(51)) == 1 and per(CHAT(54)) == 1 and per(CHAT(55)) >= 2 and per(CHAT(58)) >= 2, [(c, per(CHAT(c))) for c in (51, 54, 55, 58)])
+        check("ORCA_* を渡さず / で、1000 件までを読む", ic and all(x[1] == [] and x[2] == "/" and x[3][x[3].index("--limit") + 1] == "1000" for x in ic), ic[:1])
+        check("読めない間も判断待ちの行は出る (他の行も消えない)", sorted(N) == [51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62], sorted(N))
+        fix["inbox_fail"] = []; put(); S = {k: e["notice"]["session"] for k, e in notes().items()}
+        check("読めるようになると、頼んだ会話にだけ出る行に戻る", S.get(55) == KEY[Y], S.get(55))
+        talk(5, SID(6), "同じ pane の次の会話", "term_a", "w1:p3"); S = {k: e["notice"]["session"] for k, e in notes().items()}
+        check("頼んだ会話を閉じた (同じ pane で次の会話を始めた) 件は null", S.get(60) is None and S.get(51) == KEY[X], S)
+        fix["terminals"] = [t for t in fix["terminals"] if t["handle"] != "term_z"]; put(); S = {k: e["notice"]["session"] for k, e in notes().items()}
+        check("頼んだ会話を閉じた (端末ごと閉じた) 件は null", S.get(53) is None and S.get(52) == KEY[Y], S)
+        requester_scene()
         # 9 画面 (PC 1280・閉じた Fold 360・開いた Fold 820)
         def say(ago, sid, repo, body, terminal=None, prompt="見本の依頼"): # 端末の会話の返事
             t = dt.datetime.fromtimestamp(time.time() - ago).astimezone(); name = f"{t.strftime('%Y%m%dT%H%M%S000')}-{sid}.md"
@@ -275,6 +327,48 @@ else: ok({"terminals": f["terminals"]})
                 g.wait_for_selector("[data-note]", timeout=12000); g.wait_for_function("cwhy.textContent.includes('送れない')", timeout=5000); g.wait_for_timeout(500); a = g.evaluate(J); g.locator("[data-note]").first.click(); g.wait_for_timeout(3000)
                 check("送れない返事を見ていても、開いて 1px より動かない", not (m := moved(a, g.evaluate(J))) and g.evaluate("csend.disabled"), m[:3])
             except Exception as e: check("送れない返事を見ていても、開いて 1px より動かない", False, repr(e))
+            # 頼んだ会話を開いている時だけ出す (item 141)。行・右の列の未読の印 (PC)・待ちの数 (スマホ) を同じ期待値で見る
+            def scene141():
+                requester_scene(); talk(300, Y, "1\\. Y の会話の返事です。", "term_a", "w1:p2"); talk(200, X, "1\\. X の会話の返事です。", "term_a", "w1:p1"); asking(W, "term_a", "w1:p4")
+                for k, sid in ((51, X), (57, X), (52, Y), (61, W)): item(k, "needs_you", 600, CHAT(k), question=f"問い {k}", title=f"sample: {k} 番の件"); asked(CHAT(k), mark(sid))
+                item(54, "needs_you", 600, CHAT(54), question="印なし", title="sample: 頼んだ会話の分からない件"); asked(CHAT(54), "")
+                (state / "notice-seen.json").write_text(json.dumps({"since": ms(9000), "seen": {UID(52): "e52600q", UID(54): "e54600q"}})); put(); start()
+            NUM = {f"botitem-{UID(k)}": k for k in (51, 52, 54, 57, 61)}
+            for w, h, mob in ((1280, 800, False), (360, 780, True)):
+                at = f"頼んだ会話 {w} 幅: "; errs = []
+                def look(g, s, pin=None, want=None):
+                    g.goto(url + (f"/?s={s}" if s else "/"))
+                    if pin is not None: g.evaluate(f"localStorage.setItem('rmx.chat.pin', JSON.stringify({json.dumps({'': pin} if pin else {})}))"); g.reload() # 送り先の固定 ("" = 外す)
+                    js = "[...document.querySelectorAll('#tstat [data-note]')].map((e) => e.dataset.note)"
+                    try: g.wait_for_function(f"(() => {{ const n = {js}; return {json.dumps(sorted(NUM_INV[k] for k in want))}.every((x) => n.includes(x)); }})()", timeout=15000); g.wait_for_timeout(2500)
+                    except Exception: pass
+                    return state141(g)
+                def state141(g):
+                    r = g.evaluate("[[...document.querySelectorAll('#tstat [data-note]')].map((e) => e.dataset.note), document.getElementById('ctoggle').classList.contains('unread'), document.getElementById('dwait')?.textContent ?? '']")
+                    return sorted(NUM.get(x, x) for x in r[0]), r[1], int(m.group(1)) if (m := re.search(r"待ち\s*(\d+)", r[2])) else 0
+                NUM_INV = {k: n for n, k in NUM.items()}
+                scene141(); c = b.new_context(viewport={"width": w, "height": h}, **({"user_agent": ANDROID, "has_touch": True, "is_mobile": True} if mob else {})); g = c.new_page(); g.on("pageerror", lambda e: errs.append(str(e)))
+                try:
+                    rx = look(g, KEY[X], want=[51, 57, 54]); ry = look(g, KEY[Y], want=[52, 54])
+                    check(at + "X を開くと X の件と頼んだ会話の分からない件だけ、Y を開くと Y の件と分からない件だけ出る", rx[0] == [51, 54, 57] and ry[0] == [52, 54], (rx, ry))
+                    if mob: check(at + "Y を開いている時、待ちの数に X の未読の 2 件を数えない", rx[2] - ry[2] == 2, (rx, ry))
+                    else: check(at + "Y を開いている時、右の列の未読の印に X の件を数えない", rx[1] and not ry[1], (rx, ry))
+                    rp = look(g, KEY[Y], pin=KEY[X], want=[52, 54])
+                    check(at + "Y を見ながら送り先を X に固定しても、X の行・未読・待ちの数は出ない", rp == ry, (rp, ry))
+                    rw = look(g, KEY[W], pin="", want=[61, 54])
+                    check(at + "返事前 (依頼だけ) の会話にも、その会話の件が出る", rw[0] == [54, 61], rw)
+                    rf = look(g, "", want=[51, 57, 54])
+                    check(at + "最新を追っている時は、最後に返事した会話 (X) の件が出る", rf[0] == [51, 54, 57], rf)
+                    g.locator(f'[data-note="botitem-{UID(51)}"]').click(timeout=3000); g.wait_for_function("document.querySelector('#reply').innerText.includes('問い 51')", timeout=8000)
+                    talk(-1, Y, "1\\. 知らせを開いている間に届いた Y の返事です。", "term_a", "w1:p2"); g.wait_for_timeout(6000); ro = state141(g)
+                    check(at + "最新を追ったまま X の知らせを開き、Y の返事が届いて poll が回っても、X の行は消えない", ro[0] == [51, 54, 57] and "問い 51" in g.evaluate("document.querySelector('#reply').innerText"), ro)
+                    g.locator(f'[data-note="botitem-{UID(51)}"]').click(timeout=3000)
+                    try: g.wait_for_function("document.querySelector('#reply').innerText.includes('知らせを開いている間に届いた')", timeout=8000); g.wait_for_timeout(2500)
+                    except Exception: pass
+                    rc = state141(g)
+                    check(at + "閉じると最新 (Y) を追い、X の行は出なくなる", rc[0] == [52, 54], rc)
+                except Exception as e: check(at + "途中で止まらない", False, repr(e))
+                check(at + "画面のエラーなし", errs == [], errs[:3]); c.close()
             b.close()
     except Exception as e:
         check(f"途中で止まらない", False, repr(e))

@@ -192,7 +192,7 @@ async function historyItems() {
   return { items, curSid, replySid, asking, askSid, botPerms, live: terms || agents || named ? "ok" : "unknown" };
 }
 async function history(repo: string | null, withNotices: boolean): Promise<Response> {
-  const [{ items, curSid, replySid, asking, botPerms, live }, panes] = await Promise.all([historyItems(), liveCodexPanes()]);
+  const [{ items, curSid, replySid, asking, askSid, botPerms, live }, panes] = await Promise.all([historyItems(), liveCodexPanes()]);
   const blocked = botPerms.size ? await blockedBotChats() : null;
   const botAlerts = [];
   for (const [session, p] of botPerms) {
@@ -213,7 +213,14 @@ async function history(repo: string | null, withNotices: boolean): Promise<Respo
     return { name, session, codex: true, codexPane: true, replyTurn: reply?.identity ?? null, sid, repo: p.repo, head: p.label, label: p.label,
       title: p.pane, status: p.status, live: true, terminal: false, ts: null, agent: null, perm: null, asking: null };
   }));
-  const out = [...replies, ...livePanes, ...botAlerts, ...(withNotices ? noticeRows(items) : [])];
+  // 知らせの頼んだ会話 (session id) → それが今いる pane の鍵。今の会話 (curSid、返事前の会話は askSid) が同じで、その pane に live の行がある時だけ。
+  // curSid は端末ごと閉じた pane にも残るので live を見る (見ないと閉じた会話の行が、もう開けない pane でしか出なくなる)
+  const sidAt = new Map<string, string>();
+  for (const e of items) {
+    const sid = e.live ? curSid.get(e.session) ?? askSid.get(e.session) : undefined;
+    if (sid && !sidAt.has(sid)) sidAt.set(sid, e.session); // items は新しい順
+  }
+  const out = [...replies, ...livePanes, ...botAlerts, ...(withNotices ? noticeRows(items, sidAt) : [])];
   const want = repo?.toLowerCase();
   return Response.json(want ? out.filter((e) => e.repo.toLowerCase() === want) : out, { headers: { "cache-control": "no-store", "x-rmv-live": live } });
 }

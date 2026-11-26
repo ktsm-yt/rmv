@@ -10,7 +10,7 @@ const NOTICE_BOT = (process.env.RMV_NOTICE_BOT ?? "Manager").trim(); // 完了�
 // /history は待たせない: 今持っている分で答え、古ければ裏で取り直す (次の poll に出る)。取れない間は前の分のまま。
 // ponytail: 判断待ち 100 件・閉じた物は最後に動いた順に 30 件まで。未読の完了がそれより溜まると古い分は出ない (--cursor で続きを読めば増やせる)
 // 済み = 判断待ちは item が動いたら消え、閉じた知らせは開いたら消える (state/notice-seen.json に残すので、起動し直しても別の端末でも戻らない)
-type Notice = { uid: string; key: string; kind: "ask" | "done" | "canceled"; number: number; title: string; at: number; chat: string | null; texts: string[] }; // texts = 判断待ちは問い、閉じた物は closeNote と閉じた時の一言
+type Notice = { uid: string; key: string; kind: "ask" | "done" | "canceled"; number: number; title: string; at: number; chat: string | null; texts: string[]; sid: string | null }; // texts = 判断待ちは問い、閉じた物は closeNote と閉じた時の一言。sid = 頼んだ会話 (requesterOf)、null = 印なし・未確定
 const NOTICE_TTL = Number(process.env.RMV_NOTICE_TTL_MS ?? 15_000); // env は試験用
 const NOTICE_WAIT = 120_000; // 返事が載るのを待つ長さ = その turn の返事とみなす長さ (実物は最大 48 秒、別の turn の返事は 230 秒から)
 const NOTICE_SEEN = `${STATE}/notice-seen.json`;
@@ -47,8 +47,41 @@ async function itemDetail(number: number, status: string) {
   const said = events.slice(0, i).findLast((e) => e?.kind === "commented" && e.actor?.kind === "bot");
   return { at: events[i].at, chat: events[i].actor?.chatId ?? null, text: String(said?.data?.text ?? "") };
 }
+// 頼んだ会話 = item を作った会話 (item.chat.id) 宛ての最初の依頼の連絡 (usher の端末 term_… 発の handoff / question) の本文にある『頼んだ会話: <session id>』の行。
+// 確定 (sid か印なし) は起動中ずっと覚える (最初の連絡は後から変わらない)。読めない・上限ちょうど (最初まで届いていない恐れ) は未確定で覚えず、次の取り直しで引き直す
+// 未確定は印なしと同じく、どの会話にも出す (判断待ちを見落とす方には倒さない)
+// 同じ規則を usher 側の道具 (macro-harness の scripts/orca_requester.py。0 番キー) も持つ。片方だけ直さない
+const REQ_LIMIT = 1000;
+const requesters = new Map<string, Promise<string | null>>(); // item 135・136 のように 1 つの会話に item が 2 つあっても、1 回の取り直しで 1 回だけ引く
+const unsure = new Set<string>(); // 未確定の会話。次の取り直しの始めに忘れる
+let requesterFailed = false;
+function requesterOf(chat: string): Promise<string | null> {
+  let hit = requesters.get(chat);
+  if (!hit) requesters.set(chat, hit = (async () => {
+    try {
+      const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("ORCA_")));
+      const p = Bun.spawn([ORCA, "orchestration", "inbox", "--terminal", `orca_session_id:${chat}`, "--limit", String(REQ_LIMIT), "--full", "--json"], { cwd: "/", env, stdout: "pipe", stderr: "ignore", timeout: 5000 });
+      const [out, code] = await Promise.all([new Response(p.stdout).text(), p.exited]);
+      const msgs = code === 0 ? JSON.parse(out)?.result?.messages : null;
+      if (!Array.isArray(msgs) || msgs.length >= REQ_LIMIT) throw new Error(`exit ${code}${Array.isArray(msgs) ? ` ${msgs.length} 件` : ""}`);
+      const first = msgs.filter((m) => m?.to_handle === `orca_session_id:${chat}` && String(m.from_handle).startsWith("term_") && (m.type === "handoff" || m.type === "question"))
+        .sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at))[0];
+      const marks = new Set([...String(first?.body ?? "").matchAll(/^頼んだ会話: ([0-9a-f-]{36})[ \t]*$/gm)].map((m) => m[1]));
+      requesterFailed = false;
+      return marks.size === 1 ? [...marks][0] : null; // 印が無い・違う値が 2 つ以上・対象の連絡が 0 通は、確定の印なし
+    } catch (e) {
+      if (!requesterFailed) console.error("orca orchestration inbox:", String(e).replace(/\s+/g, " ")); // 続けて失敗しても 1 回だけ
+      requesterFailed = true;
+      unsure.add(chat);
+      return null;
+    }
+  })());
+  return hit;
+}
 async function loadNotices(): Promise<void> {
   noticeBusy = true;
+  for (const c of unsure) requesters.delete(c);
+  unsure.clear();
   try {
     const [open, closed] = await Promise.all([
       orcaItem(["list", "--bot", NOTICE_BOT, "--status", "needs_you", "--limit", "100"]),
@@ -71,7 +104,8 @@ async function loadNotices(): Promise<void> {
         return ask && isTime(it.updatedAt) ? { at: it.updatedAt, chat: null, text: "" } : null;
       });
       const texts = ask ? [it.question?.text || d?.text] : [it.closeNote, d?.text];
-      return d && { uid: it.uid, key, kind: ask ? "ask" : it.status, number: it.number, title: it.title, at: d.at, chat: d.chat, texts: texts.filter(Boolean).map(String) };
+      const sid = d && isBotUuid(it.chat?.id) ? await requesterOf(it.chat.id) : null; // d.chat (状態を変えた会話) でなく item を作った会話
+      return d && { uid: it.uid, key, kind: ask ? "ask" : it.status, number: it.number, title: it.title, at: d.at, chat: d.chat, texts: texts.filter(Boolean).map(String), sid };
     }))).filter((n): n is Notice => n !== null);
     notices = next;
     if (!sinceSaved) { await saveSeen(); sinceSaved = true; } // since を残す
@@ -94,7 +128,9 @@ function noticeReply(n: Notice, items: NoticeItem[]) {
   return items.findLast((e) => e.botChat !== null && e.botChat === n.chat && late(e) >= 0 && late(e) < NOTICE_WAIT) ?? null; // items は新しい順
 }
 let noticeItems: NoticeItem[] = []; // 直近の /history の Bot の返事
-export function noticeRows(items: NoticeItem[]) {
+// at = 頼んだ会話の session id → それが今いる pane の鍵 (historyItems の curSid・askSid を引き直した物。live の行がある session だけ)。
+// 見つからない (閉じた会話・印なし・未確定) 行の notice.session は null で、画面はどの会話を開いていても出す
+export function noticeRows(items: NoticeItem[], at: Map<string, string> = new Map()) {
   noticeItems = items.filter((e) => e.bot);
   const bot = noticeItems.find((e) => e.bot!.toLowerCase() === NOTICE_BOT.toLowerCase())?.bot ?? (existsSync(NOTICE_SEEN) ? NOTICE_BOT : "");
   if (!bot) return []; // その Bot の返事が 1 件も無く、一度も Orca を読めていない環境では呼ばない。一度読めたら、返事が 100 件の枠から落ちても呼び続ける (答えていない判断待ちの行を消さない)
@@ -102,7 +138,7 @@ export function noticeRows(items: NoticeItem[]) {
   // Bot の返事は item が動いた少し後 (実物で 5〜48 秒) に書かれる。返事が載るまで 2 分だけ待ってから出す
   return notices.filter((n) => (n.kind === "ask" || noticeSeen.seen[n.uid] !== n.key) && (Date.now() - n.at > NOTICE_WAIT || noticeReply(n, noticeItems))).map((n) => ({
     name: noticeName(n), session: `botitem-${n.uid}`, bot, repo: bot, head: n.title, ts: new Date(n.at).toISOString(), live: false, terminal: false, agent: null, perm: null, asking: null,
-    notice: { kind: n.kind, number: n.number, seen: noticeSeen.seen[n.uid] === n.key } }));
+    notice: { kind: n.kind, number: n.number, seen: noticeSeen.seen[n.uid] === n.key, session: (n.sid && at.get(n.sid)) ?? null } }));
 }
 // 名前に鍵を入れる: 開いたまま問い直されたら、本文も読み直される
 export const noticeName = (n: Notice) => `botitem-${n.uid}.${n.key}.md`;
