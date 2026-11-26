@@ -88,7 +88,8 @@
   #cchips .chip { display: flex; gap: 8px; text-align: left; overflow: hidden; white-space: nowrap; border-radius: 6px; border-left: 3px solid var(--rc, var(--line)); }
   #cchips .chip time { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
   #cchips .chip time.busy, #cchips .chip time.perm { color: var(--fg); font-weight: 700; }
-  #cchips .chip time.wait, #cchips .chip time.ng, #cchips .chip time.bg { color: #e5a50a; font-weight: 700; }
+  #cchips .chip time.wait, #cchips .chip time.ng { color: #e5a50a; font-weight: 700; }
+  #cchips .chip time.bg, #cchips .chip time.hold { color: #3584e4; } /* 待つだけ (人の番ではない) は青、太字にしない。黄は人の番だけ */
   #cchips .chip time.ok { color: #2ec27e; }
   #cchips .chip.on time { color: inherit; }
   #cchips .chip i { margin-top: 5px; }
@@ -119,7 +120,8 @@
   #cchips .chip i.idle, #tstat i.idle { border: 2px solid var(--line); }
   #cchips .chip i.ng, #tstat i.ng { background: #e5a50a; box-shadow: 0 0 0 3px rgb(229 165 10 / .25); } /* 返事が要る (終了: NG) = 入力待ちと同じ黄の点 */
   #cchips .chip i.ok, #tstat i.ok { background: #2ec27e; } /* 閉じてよい (終了: OK) = 緑の点、光らせない */
-  #cchips .chip i.bg, #tstat i.bg { border: 2px solid #e5a50a; animation: tblink 2s step-end infinite; } /* 裏で待ち (shell / monitor / subagent が走っていて、終わると起きる) = 黄のリング (中を塗らないので入力待ちの黄の点と見分けられる) がゆっくり明滅する。なめらかな明滅 (1.6s ease-in-out) は 10 秒で 600 回描き直した。0.5 秒ごとの 4 コマ (v0.21.16、25 回) は粗いと言われた (2026-11-16 user) ので、作業中の回転と同じ 1 秒 12 コマで刻み、同じ瞬間に描き直す。10 秒 125 回で、作業中の印と一緒に出ても 125 回のまま (headless 実測、test/bg-blink.test.sh) */
+  #cchips .chip i.hold, #tstat i.hold { border: 2px solid #3584e4; } /* 作業待ち (終了: NG の括弧が作業待ちだけ) で、裏で走っている物が無い = 青のリング、明滅しない (自分では起きない) */
+  #cchips .chip i.bg, #tstat i.bg { border: 2px solid #3584e4; animation: tblink 2s step-end infinite; } /* 裏で待ち (shell / monitor / subagent が走っていて、終わると起きる) = 青のリングがゆっくり明滅する。黄のリングだった頃は返事が要る黄の点と同じ色で、決めること待ちと作業待ちが見分けにくかった (2026-11-26 user)。黄 = 人の番、青 = 待つだけ。なめらかな明滅 (1.6s ease-in-out) は 10 秒で 600 回描き直した。0.5 秒ごとの 4 コマ (v0.21.16、25 回) は粗いと言われた (2026-11-16 user) ので、作業中の回転と同じ 1 秒 12 コマで刻み、同じ瞬間に描き直す。10 秒 125 回で、作業中の印と一緒に出ても 125 回のまま (headless 実測、test/bg-blink.test.sh) */
   @keyframes tblink { 4.167%, 95.833% { opacity: .987; } 8.333%, 91.667% { opacity: .950; } 12.5%, 87.5% { opacity: .890; } 16.667%, 83.333% { opacity: .812; } 20.833%, 79.167% { opacity: .722; } 25%, 75% { opacity: .625; } 29.167%, 70.833% { opacity: .528; } 33.333%, 66.667% { opacity: .438; } 37.5%, 62.5% { opacity: .360; } 41.667%, 58.333% { opacity: .300; } 45.833%, 54.167% { opacity: .263; } 50% { opacity: .250; } } /* 明るさを余弦の曲線で 24 コマに刻む (1 → .25 → 1)。コマの境目は 1/12 秒ごとで、作業中の回転 (1 秒 12 コマ) と同じ瞬間 */
   .hid #cchips .chip i.bg, .hid #tstat i.bg { animation: none; } /* タブが隠れている間は止める (visibilitychange) */
   @media (prefers-reduced-motion: reduce) { #cchips .chip i.busy, #tstat i.busy, #cchips .chip i.bg, #tstat i.bg { animation: none; } } /* 明滅の行より後ろに置く (同じ強さの指定は後ろが勝つ) */
@@ -197,7 +199,7 @@
     /* 狭い幅の進行状況: 送信の下に、作業中と許可待ちの端末だけ出す (全端末の一覧は高さを食う。2026-10-03 user: ぐるぐるが消えていた / 欄の上だと送り先の行と見分けにくい)。依頼文は既定で畳み、行を押すと開く */
     #cform, #cmsg { order: 1; }
     #tstat { order: 2; }
-    #tstat .trow:not(.perm, .note):not(:has(i.busy, i.bg, i.ng)), #tstat .trow:not(.perm, .note):not(:has(i.busy, i.bg, i.ng)) + .task { display: none; } /* 裏で待ちも出す (2026-10-15 user: monitor / shell で待っている画面が見えなかった)。返事が要る (終了: NG) も出す (2026-10-23) */
+    #tstat .trow:not(.perm, .note):not(:has(i.busy, i.bg, i.hold, i.ng)), #tstat .trow:not(.perm, .note):not(:has(i.busy, i.bg, i.hold, i.ng)) + .task { display: none; } /* 裏で待ちも出す (2026-10-15 user: monitor / shell で待っている画面が見えなかった)。返事が要る (終了: NG) も出す (2026-10-23) */
     #chat { grid-column: 1; grid-row: 1; gap: 4px; padding: 6px 12px; border-left: 0; border-bottom: 1px solid var(--line); }
     body.chat-closed #chat { padding: 4px 12px; }
     /* 返事の上の帯では、同じ行の真ん中に ▲ (上へ畳む) / ▼ (開く) を置く */
@@ -491,6 +493,7 @@
   }
   html.mob #dwait span { display: none; } /* 動作中の数は 2 列の時だけ */
   html.mob #ddot { flex: none; width: 10px; height: 10px; border-radius: 50%; box-sizing: border-box; border: 2px solid var(--line); } /* 状態の点は送り先の一覧と同じ見た目 */
+  html.mob #ddot:is(.bg, .hold) { border-color: #3584e4; }
   html.mob #ddot:is(.wait, .ng) { border: 0; background: #e5a50a; box-shadow: 0 0 0 3px rgb(229 165 10 / .25); }
   html.mob #ddot.perm { border: 0; background: #e01b24; box-shadow: 0 0 0 3px rgb(224 27 36 / .25); }
   html.mob #ddot.ok { border: 0; background: #2ec27e; }
@@ -1878,7 +1881,7 @@ function renderChat() {
   // スマホ: 送り先の一覧は 1 回だけ出す。下の状態行に出していた物は一覧の行に載せる: 2 行目 = 依頼文の冒頭・裏の待ち・経過時間、行を押すと依頼文の全文 (もう一度押すと畳む)
   const mobRow = (e) => {
     const { st, bg } = e.live ? stOf(e) : { st: "dead" };
-    const sub = (e.perm ? `${e.perm.tool} 許可待ち` : e.asking ? askText(e) : bg ? "裏で待ち: " + bgSum(bg) : agentTag(e) + (e.head || "")) + (e.live && e.lastOutputAt ? ` · ${ago(e.lastOutputAt)}` : "");
+    const sub = (e.perm ? `${e.perm.tool} 許可待ち` : e.asking ? askText(e) : bg && st !== "ng" ? "裏で待ち: " + bgSum(bg) : agentTag(e) + (e.head || "")) + (e.live && e.lastOutputAt ? ` · ${ago(e.lastOutputAt)}` : "");
     const ask = openAsk.has(e.session) && (e.asking?.prompt ?? e.prompt);
     return `<i class="${st}"></i><b>${esc(chipLabels.get(e.session) ?? (e.repo || "?"))}</b><time class="${st}">${esc(hhmm(new Date(e.ts)))}</time><span>${esc(sub)}</span>${ask ? `<span class="task">${esc(ask)}</span>` : ""}`;
   };
@@ -1899,7 +1902,7 @@ function renderChat() {
   renderTstat(isMobileUA ? alerts : [...alerts, ...shown.filter((e) => e.live && !perms.some((p) => p.session === e.session))]);
   if (isMobileUA) { // 下の帯: 送り先の名前と状態の点、返事を待っているセッションの数 (閉じていても分かるように)
     const sts = [...new Map([...perms, ...chipEntries.values()].filter((e) => e.live).map((e) => [e.session, stOf(e).st])).values()];
-    const wait = botPerms.length + botNotes.filter((e) => !e.notice.seen).length + sts.filter((x) => x === "ng" || x === "wait" || x === "perm").length, run = sts.filter((x) => x === "busy" || x === "bg").length;
+    const wait = botPerms.length + botNotes.filter((e) => !e.notice.seen).length + sts.filter((x) => x === "ng" || x === "wait" || x === "perm").length, run = sts.filter((x) => x === "busy" || x === "bg" || x === "hold").length;
     document.getElementById("dname").textContent = lbl ? (pin ? "📌 " : "") + lbl : "送り先なし"; // 幅が無いので矢印は付けない (点が送り先の印)
     document.getElementById("ddot").className = to?.live ? stOf(to).st : "";
     document.getElementById("dwait").innerHTML = (wait ? `<b>待ち </b>${wait}` : "") + (run ? `<span>${wait ? " / " : ""}動作中 ${run}</span>` : "");
@@ -1915,7 +1918,7 @@ function renderChat() {
 const tstat = document.getElementById("tstat");
 let tstatHtml = null, tstatList = [];
 const openAsk = new Set(); // 依頼文を開いている端末 (再描画しても開いたまま)
-// 端末の状態 1 語: perm 許可待ち / busy 作業中 / wait 入力待ち / idle 静か / bg 裏で待ち / ok 閉じてよい / ng 返事が要る。下の一覧と上の chip の時刻色で共用 (2026-10-25 user: 上でも稼働中を見分けたい)
+// 端末の状態 1 語: perm 許可待ち / busy 作業中 / wait 入力待ち / idle 静か / bg 裏で待ち / hold 作業待ち (裏で走っている物なし) / ok 閉じてよい / ng 返事が要る。下の一覧と上の chip の時刻色で共用 (2026-10-25 user: 上でも稼働中を見分けたい)
 function stOf(e) {
   const c = String(e.title ?? "").trim()[0] ?? "", wait = c === "✳", perm = e.perm;
   // 題名の記号は作業中でも付かない時がある (2026-09-29 実機) ので、記号が無ければ最終出力の新しさで見る
@@ -1925,8 +1928,10 @@ function stOf(e) {
   const st0 = e.codexPane ? (e.status === "working" ? "busy" : e.status === "blocked" ? "wait" : "idle")
     : perm ? "perm" : e.status ? (e.status === "working" || e.status === "blocked" ? "busy" : "wait") : wait ? "wait" : (c && "◑◐◓◒".includes(c)) || (e.lastOutputAt && Date.now() - e.lastOutputAt < 15000) ? "busy" : "idle";
   // 入力待ち・静かは、最後の返事の締め (終了: OK / NG) で『閉じてよい』『返事が要る』に分ける (2026-10-23 user: usher に集めたら repo の色で見分けられず、どれを閉じてよいかが見えない)
-  const st1 = bg && (st0 === "wait" || st0 === "idle") ? "bg" : st0;
-  const st = (st1 === "wait" || st1 === "idle") && e.end ? e.end : st1;
+  // 返事が要る (終了: NG、決めること待ち等) は裏で待ちより先に見る: 決めること待ちのまま裏で見張りを回している会話が、ただの作業待ちと同じ印になっていた (2026-11-26 user)
+  // 作業待ち (終了: NG の括弧が作業待ちだけ = end "work") は、裏で走っている物があれば裏で待ち、無ければ hold (起こす物が無いまま待っている)
+  const quiet = st0 === "wait" || st0 === "idle";
+  const st = !quiet ? st0 : e.end === "ng" ? "ng" : bg ? "bg" : e.end === "work" ? "hold" : e.end || st0;
   return { st, wait, perm, bg };
 }
 // 書き直しで回転が 0 コマ目に戻らないよう、全部の印を同じ時計 (ページを開いた時刻) に合わせる。印ごとにずれると描き直しが印の数だけ増える
@@ -1981,11 +1986,11 @@ function renderTstat(list) {
     if (e.name.startsWith("botitem-")) return noteRow(e);
     if (e.name.startsWith("botperm-") && e.perm) return `<div class="trow perm bot-perm" title="Orca の ${esc(e.bot)} の会話を開いて許可する"><i class="perm"></i><span>${esc(e.bot)} が許可待ち: ${esc(e.perm.tool)} ${esc(e.perm.detail)}</span></div>`;
     const { st, wait, perm, bg } = stOf(e);
-    const stTitle = { perm: "許可待ち", wait: "入力待ち", busy: "作業中", idle: "静か", bg: "裏で待ち", ok: "閉じてよい", ng: "返事が要る" }[st];
-    const bgText = bg ? " · 裏で待ち: " + bgSum(bg) : "";
+    const stTitle = { perm: "許可待ち", wait: "入力待ち", busy: "作業中", idle: "静か", bg: "裏で待ち", hold: "作業待ち (裏で走っている物なし)", ok: "閉じてよい", ng: "返事が要る" }[st];
+    const bgText = bg ? ` · ${st === "ng" ? "裏も稼働" : "裏で待ち"}: ` + bgSum(bg) : ""; // 返事が要る行は『待ち』と書かない (人の番なのに待つだけに読める)
     const ask = e.asking?.prompt ?? e.prompt; // 返事待ちの依頼、無ければ最新の返事を引き出した依頼
     if (perm) return `<div class="trow perm" data-s="${esc(e.session)}" style="--rc:${repoColor(e.repo)}" title="許可待ち"><i class="perm"></i><span>${esc(e.repo || "?")} · ${esc(perm.tool)} 許可待ち · ${esc(perm.detail)}</span><button data-approve="${esc(e.session)}" data-id="${esc(perm.id)}" title="許可する (y)">許可<sup>y</sup></button></div>`;
-    return `<div class="trow${st === "ng" || (wait && st !== "ok") ? " wait" : ""}" data-s="${esc(e.session)}" style="--rc:${repoColor(e.repo)}" title="${stTitle}${bg ? " · " + esc(bg.map((t) => t.description).join(" / ")) : ""} · 押すと依頼文を開き、この端末を送り先にする"><i class="${st}"></i><span>${e.ts ? esc(hhmm(new Date(e.ts))) + " " : ""}${esc(e.repo || "?")}${esc(bgText)} · ${e.asking ? esc(askText(e)) : esc((e.codexPane ? agentTag(e) : "") + (e.head || ""))}</span><time>${e.lastOutputAt ? ago(e.lastOutputAt) : ""}</time></div>` + (openAsk.has(e.session) && ask ? `<div class="task">${esc(ask)}</div>` : "");
+    return `<div class="trow${st === "ng" || st === "wait" ? " wait" : ""}" data-s="${esc(e.session)}" style="--rc:${repoColor(e.repo)}" title="${stTitle}${bg ? " · " + esc(bg.map((t) => t.description).join(" / ")) : ""} · 押すと依頼文を開き、この端末を送り先にする"><i class="${st}"></i><span>${e.ts ? esc(hhmm(new Date(e.ts))) + " " : ""}${esc(e.repo || "?")}${esc(bgText)} · ${e.asking ? esc(askText(e)) : esc((e.codexPane ? agentTag(e) : "") + (e.head || ""))}</span><time>${e.lastOutputAt ? ago(e.lastOutputAt) : ""}</time></div>` + (openAsk.has(e.session) && ask ? `<div class="task">${esc(ask)}</div>` : "");
   }).join("");
   if (html === tstatHtml) return; // chip と同じ: 同じ内容なら書き直さない
   tstatHtml = html;

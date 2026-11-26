@@ -64,10 +64,14 @@ async function readAsking(session: string, lastReplyTs: number): Promise<{ promp
 // 一覧のまとめ目印 (item.session) = state/perm・state/prompt のファイル名。hooks/stop-to-fragment.py の session_key と同じ式 (片方だけ直さない)。
 // herdr 配下の pane は Orca 端末 handle を共有するので、pane があれば `<handle>__<pane>` (":" は "-"、他の記号は捨てる) にして pane ごとに分ける。Orca 無し (terminal なし) の herdr だけの環境は handle の代わりに "herdr"。pane 無しは従来の handle || session_id
 const paneKey = (pane: string) => pane.replace(/:/g, "-").replace(/[^A-Za-z0-9_-]/g, "");
-// 返事の締め「終了: OK / NG (…)」(Low-Load 出力スタイル)。入力待ちを『閉じてよい』『返事が要る』に分けるのに使う。末尾 300 字の最後の 1 つを見る (本文中の引用より締めを正にする)
-function endOf(body: string): "ok" | "ng" | null {
-  const m = [...body.slice(-300).matchAll(/終了[:：]\s*(OK|NG)/g)].pop();
-  return m ? (m[1] === "OK" ? "ok" : "ng") : null;
+// 返事の締め「終了: OK / NG (…)」(Low-Load 出力スタイル)。入力待ちを『閉じてよい』『返事が要る』『作業待ち』に分けるのに使う。末尾 300 字の最後の 1 つを見る (本文中の引用より締めを正にする)
+// NG は括弧の中の語で分ける。work (作業待ち) = 裏や外の作業が終わるのを待つだけで、人の番ではない。そう言い切れる語 (END_WORK) があり、人の番の語 (END_ASK) が無い時だけ。
+// 括弧が作業待ちでも、締めの手前に『**決めること**』『**残タスク**』の段 (行頭の見出し) があれば人の番 (直近の作業待ち 132 件のうち 10 件がこの形だった)。
+// どちらにも当たらない NG は ng (返事が要る) のまま: 決めることを静かな印で出す方が、作業待ちを目立つ印で出すより困る (2026-11-26 user: 決めること待ちとただの作業待ちが同じに見える)
+const END_ASK = /決めること|残タスク|判断待ち|返事待ち|回答待ち|OK 待ち|確認待ち/, END_ASK_HEAD = /^ {0,3}\*\*(決めること|残タスク)\*\*/m, END_WORK = /稼働中|完了報告待ち|結果待ち|実装中|作業中|確認中|直し中|実行中/;
+function endOf(body: string): "ok" | "ng" | "work" | null {
+  const m = [...body.slice(-300).matchAll(/終了[:：]\s*(OK|NG)([^\n]*)/g)].pop();
+  return m ? (m[1] === "OK" ? "ok" : !END_ASK.test(m[2]) && END_WORK.test(m[2]) && !END_ASK_HEAD.test(body.slice(-1500)) ? "work" : "ng") : null;
 }
 // 返事の末尾の「話題: …」(Low-Load 出力スタイル) を本文から分ける。保存した返事は生のまま。
 // 見るのはコードブロックの外の、空行を除いた末尾 TOPIC_TAIL 行。当たりが 2 つあれば後ろの 1 行だけ分ける (前の行は例文かもしれない)
