@@ -225,6 +225,9 @@
   #bar button, #bar select { font: inherit; color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 2px 10px; cursor: pointer; }
   #bar button:disabled { opacity: .35; cursor: default; }
   #stamp { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 600; color: var(--fg); }
+  #stamp span { font-weight: 400; } /* 話題 (無ければ自動の題名)。時刻の後ろに続ける */
+  #topic { max-width: var(--measure); margin: -14px 0 18px; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; } /* 帯に入りきらない話題は、帯のすぐ下に全文 (2026-11-26 user) */
+  #topic[hidden] { display: none; }
   #filter { font-size: 12px; }
   /* セッション切替: 1 行・折り返さず横スクロール */
   #chips { max-width: var(--measure); display: flex; gap: 6px; overflow-x: auto; white-space: nowrap; margin: -8px 0 16px; padding-bottom: 2px; scrollbar-width: thin; }
@@ -236,6 +239,7 @@
   /* 返事: 型ごとに置き場所を固定する */
   /* 依頼文: 返事の真上に 1 行だけ (長文は省略記号)。押すと全文。返事の開始位置は 1 行ぶんしか動かさない */
   #ask { max-width: var(--measure); font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  #ask.prev { opacity: .75; } /* 依頼文の無い返事に持ち越した 1 つ前の依頼 */
   #ask summary { cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #ask div { white-space: pre-wrap; overflow-wrap: anywhere; margin-top: 4px; max-height: 40vh; overflow: auto; } /* 依頼文は 10 万字まで載るので、開いても返事を画面の外へ押し出さない */
   #reply { max-width: var(--measure); font-size: 16px; overflow-wrap: anywhere; }
@@ -354,6 +358,7 @@
   :where(html.xs) {
     main { padding: 10px 10px 0; }
     #bar { gap: 6px; font-size: 12px; margin-bottom: 12px; }
+    #topic { margin: -6px 0 10px; font-size: 12px; }
     #bar button, #bar select { padding: 0 6px; }
     #chips { margin: -4px 0 10px; }
     .chip { padding: 0 8px; }
@@ -659,6 +664,7 @@ if (isMobileUA && window.visualViewport) {
     <span id="filter"></span><span id="stamp"></span><span id="sent"></span>
     <button id="prev">◀<span class="lbl"> 前</span></button><span id="pos"></span><button id="next"><span class="lbl">次 </span>▶</button><button id="speak" title="返事を読み上げる (r)。読み上げ中は押すと一時停止 / 再開 (Shift+R)、長押しか r で止める">🔊</button><select id="rate" title="読み上げの速さ"><option value="1">1x</option><option value="1.5">1.5x</option><option value="2" selected>2x</option><option value="2.5">2.5x</option><option value="3">3x</option></select>
   </div>
+  <div id="topic" hidden></div>
   <nav id="chips"></nav>
   <details id="ask" hidden><summary></summary><div></div></details>
   <article id="reply"></article>
@@ -873,6 +879,29 @@ function renderLowLoad(md) {
 
 const shellArg = (arg) => /^[\w./-]+$/.test(arg) ? arg : "'" + arg.replaceAll("'", "'\\''") + "'";
 
+// 話題は帯の時刻の後ろに出し、1px でも省略される時は帯のすぐ下の行に全文を出す。幅の数字で切らない (話題と repo 名の長さ・送信済の表示でも変わる)
+function fitTopic() {
+  const stamp = document.getElementById("stamp"), row = document.getElementById("topic"), topic = cur?.topic ?? "";
+  stamp.querySelector("span")?.remove();
+  const span = Object.assign(document.createElement("span"), { textContent: ` · ${topic}` });
+  if (topic) stamp.append(span);
+  const drop = !!topic && span.getBoundingClientRect().right > stamp.getBoundingClientRect().right;
+  if (drop) span.remove();
+  row.hidden = !drop;
+  row.textContent = drop ? topic : "";
+}
+
+// 依頼の行。依頼文の無い返事には、同じ会話の 1 つ前の依頼を薄く出す (次に打つまで)。打った後は、返事を待つ間もその依頼に替える
+function renderPrompt(e) {
+  const ask = document.getElementById("ask"), own = e?.prompt || e?.next, q = own || (e?.askFrom && all.find((x) => x.name === e.askFrom)?.prompt) || "";
+  const line = q && (own ? "依頼: " : "1 つ前の依頼: ") + q.replace(/\s+/g, " ");
+  if (ask.firstChild.textContent === line && ask.lastChild.textContent === q) return; // 2 秒ごとに呼ばれる。選択中の文字を消さない
+  ask.hidden = !q;
+  ask.classList.toggle("prev", !own);
+  ask.firstChild.textContent = line;
+  ask.lastChild.textContent = q;
+}
+
 async function show(md, entry) {
   const el = document.getElementById("reply");
   stopSpeak(); // 返事が替わったら読み上げは止める
@@ -894,13 +923,12 @@ async function show(md, entry) {
     footer.append(button);
     el.append(footer);
   }
-  const ask = document.getElementById("ask"), q = entry?.prompt ?? "";
-  ask.hidden = !q; ask.open = false;
-  ask.firstChild.textContent = "依頼: " + q.replace(/\s+/g, " ");
-  ask.lastChild.textContent = q;
+  document.getElementById("ask").open = false;
+  renderPrompt(entry);
   const time = entry?.ts ? new Date(entry.ts).toLocaleTimeString("ja-JP", { hour12: false }) : "";
   document.getElementById("stamp").textContent = entry ? agentTag(entry) + (entry.codexPane ? [entry.label, entry.repo, entry.title] : [entry.notice ? `item ${entry.notice.number}` : entry.repo || "?", time]).filter(Boolean).join(" · ") : "";
   cur = entry;
+  fitTopic();
   renderChat();
   document.getElementById("sent").textContent = "";
   document.getElementById("akmsg").textContent = sendingNotes.has(curName()) ? "送信中…" : "";
@@ -955,6 +983,7 @@ async function showIdx(i) {
   following = idx === 0;
   const e = list[idx];
   renderBar();
+  if (e && e.name === cur?.name) renderPrompt(e);
   const samePaneBody = cur?.replyTurn === e?.replyTurn && (!!e?.replyTurn || cur?.status === e?.status);
   if (!e || (e.name === shownName && e.livePane === cur?.livePane && (!e.codexPane || samePaneBody))) return;
   const request = ++showRequest;
@@ -1676,7 +1705,8 @@ const pinFiles = (ev, files) => {
   el.addEventListener("compositionend", () => { composingPin = false; scheduleMargin(); });
 });
 marginResize.observe(mainEl);
-["bar", "chips", "ask", "reply"].forEach((id) => marginResize.observe(document.getElementById(id)));
+new ResizeObserver(fitTopic).observe(document.getElementById("stamp")); // 窓の幅・Fold の開閉・拡大・送信済の表示・件数の桁
+["bar", "topic", "chips", "ask", "reply"].forEach((id) => marginResize.observe(document.getElementById(id)));
 document.getElementById("ask").addEventListener("toggle", scheduleMargin);
 document.addEventListener("rmx-wide", scheduleMargin);
 document.fonts?.ready.then(scheduleMargin);
