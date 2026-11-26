@@ -3,7 +3,7 @@
 # 2026-11-19 user「こういう段落で赤ペンマークできないの直したいな」: 表の下の "d61: …" の段落 4 つが、直前の番号段落 "2." ごとにしか選べなかった。
 # 番号段落・ⅰ の項目・表の行・コードの印の付き方と名前が変わらないことも、印の名前の並び全体で見る。
 # 実行: bash rmv/test/para-pins.test.sh   (bun / uv / playwright の chromium が要る。SHOTS=<dir> で画面を png に残す)
-#   旧版で FAIL を見る: mkdir -p /tmp/old && cp server.ts screen.ts terminal.ts /tmp/old && git show <直す前の commit>:index.html > /tmp/old/index.html && RMV_DIR=/tmp/old bash test/para-pins.test.sh
+#   旧版で FAIL を見る: mkdir -p /tmp/old && cp *.ts /tmp/old && git show <直す前の commit>:index.html > /tmp/old/index.html && RMV_DIR=/tmp/old bash test/para-pins.test.sh
 set -u
 A="$(cd "$(dirname "$0")/.." && pwd)"
 RMV_DIR="${RMV_DIR:-$A}"

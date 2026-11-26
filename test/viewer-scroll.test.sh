@@ -4,7 +4,7 @@
 # (escaped-defects L202、harness bd harness-hk5)。本物の state は触らない (RMV_STATE_DIR を一時領域へ)。
 # 実行: bash rmv/test/viewer-scroll.test.sh   (bun / uv / playwright の chromium が要る)
 #   RMV_DIR=<dir> で server.ts + index.html の置き場を差し替えられる (旧 index.html に当てる negative control 用:
-#   mkdir -p /tmp/old && cp server.ts screen.ts terminal.ts /tmp/old && git show 5ea9b0d~1:index.html > /tmp/old/index.html && RMV_DIR=/tmp/old bash test/viewer-scroll.test.sh → FAIL になる)
+#   mkdir -p /tmp/old && cp *.ts /tmp/old && git show 5ea9b0d~1:index.html > /tmp/old/index.html && RMV_DIR=/tmp/old bash test/viewer-scroll.test.sh → FAIL になる)
 set -u
 A="$(cd "$(dirname "$0")/.." && pwd)"
 RMV_DIR="${RMV_DIR:-$A}"
