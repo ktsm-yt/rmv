@@ -41,7 +41,7 @@ printf '{"cwd":"/x/e","ts":"2026-11-19T10:00:00+00:00","session_id":"eeeeeeee-00
 echo "返事" > "$STATE/history/$NAME.md"
 
 # 一時 repo と、pull 元になる bare の remote。作業用の clone (dev) で commit を作る
-cp "$SERVER" "$R/server.ts"; cp "$A/terminal.ts" "$A/screen.ts" "$A/index.html" "$R/"; cp "$A/launchd/harness-rmv" "$R/launchd/"; echo base > "$R/README.md"
+cp "$A"/*.ts "$A/index.html" "$R/"; cp "$SERVER" "$R/server.ts"; cp "$A/launchd/harness-rmv" "$R/launchd/"; echo base > "$R/README.md"
 G() { git -C "$R" -c user.name=t -c user.email=t@example.invalid -c commit.gpgsign=false "$@"; }
 G init -q --template= -b main && G add . && G commit -qm base
 git init -q --bare --template= -b main "$TMP/remote.git"

@@ -3,7 +3,7 @@
 # カードの 📎 → 印『📎N』・下の列 (#fimgs) に札付きのサムネ・送る本文ではピンの行の直下にパスの行 (クリップボードには載せない) を見る。
 # 本物の state・herdr・Orca には繋がない (RMV_STATE_DIR は一時領域、orca は /usr/bin/true、herdr は呼ばれたら記録して空を返す stub)。/send は page.route で捕まえて server へは送らない。
 # 実行: bash test/pin-attach.test.sh   (bun / uv / playwright の chromium / sips が要る。SHOTS=<dir> で録画 (webm) と 344 幅の静止画を残す)
-#   旧版で FAIL を見る: mkdir -p /tmp/old && cp server.ts screen.ts terminal.ts /tmp/old && git show 436f508:index.html > /tmp/old/index.html && RMV_DIR=/tmp/old bash test/pin-attach.test.sh
+#   旧版で FAIL を見る: mkdir -p /tmp/old && cp *.ts /tmp/old && git show 436f508:index.html > /tmp/old/index.html && RMV_DIR=/tmp/old bash test/pin-attach.test.sh
 set -u
 A="$(cd "$(dirname "$0")/.." && pwd)"
 RMV_DIR="${RMV_DIR:-$A}"
