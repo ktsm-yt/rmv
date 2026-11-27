@@ -542,12 +542,10 @@
   html.mob #tray textarea { font-size: 16px; }
   html.mob #tray button { border-radius: 10px; }
   /* 1 列: 段の番号を押すと、ピンのひとこと欄 (赤ペン欄と同じ部品) を段の本文の末尾に『ひとこと + 📎 + 送信』の 1 行で出す。下は普段の帯のまま、帯の『赤N』で赤ペン欄を開く (下の欄と キーボードで刺した段が隠れた、2026-11-27 user「ピン刺した時画面占有が強くて」) */
-  .pin .ps { display: none; }
   html.mob:not(.split) #reply .pin { display: flex; gap: 6px; align-items: flex-end; margin: 10px 0 4px; scroll-margin-bottom: 14px; padding: 6px; background: var(--panel); border: 1.5px solid var(--red); border-radius: 12px; box-shadow: 0 2px 8px rgb(0 0 0 / .08); }
   html.mob:not(.split) #reply .pin > :is(b, .q, [data-x]) { display: none; }
   html.mob:not(.split) #reply .pin textarea { flex: 1; min-width: 0; min-height: 44px; max-height: 40vh; font: inherit; font-size: 16px; padding: 10px; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; resize: none; field-sizing: content; overflow-x: hidden; }
   html.mob:not(.split) #reply .pin button { flex: none; width: 44px; height: 44px; padding: 0; font: inherit; color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 10px; cursor: pointer; }
-  html.mob:not(.split) #reply .pin .ps { display: block; width: 56px; color: #fff; background: var(--red); border-color: var(--red); font-weight: 700; }
   html.mob:not(.split) #reply .pin button:disabled { opacity: .35; cursor: default; }
   /* ＋ の一覧: 下の帯のすぐ上 (下端は --vvh から測る。fixed の bottom は下に置いたアドレスバーに隠れる) */
   html.mob #newpop { top: calc(var(--vvh, 100dvh) - 62px); right: 8px; left: auto; transform: translateY(-100%); max-height: calc(var(--vvh, 100dvh) - 80px); }
@@ -1559,14 +1557,13 @@ const pinNode = (p, k) => {
   if (node) return node;
   node = document.createElement("div"); node.className = "pin";
   node.dataset.k = k;
-  const b = document.createElement("b"), q = document.createElement("span"), field = document.createElement("textarea"), a = document.createElement("button"), x = document.createElement("button"), s = document.createElement("button");
+  const b = document.createElement("b"), q = document.createElement("span"), field = document.createElement("textarea"), a = document.createElement("button"), x = document.createElement("button");
   b.textContent = p.anchor; b.title = b.textContent;
   q.className = "q"; q.textContent = `「${p.quote}」`;
   field.rows = 1; field.placeholder = "ひとこと"; field.value = p.comment;
   x.dataset.x = k; x.title = "外す"; x.textContent = "×";
   a.className = "pa"; a.dataset.pa = k; a.title = "写真・動画・PDF を添付 (欄に貼り付け・ドロップでも)"; a.textContent = "📎";
-  s.className = "ps"; s.textContent = "送信"; // 段の下 (スマホ 1 列) でだけ見える。押すと赤ペン欄の送信と同じ処理
-  node.append(b, q, field, a, x, s); pinNodes.set(p, node);
+  node.append(b, q, field, a, x); pinNodes.set(p, node);
   return node;
 };
 const movePin = (node, parent, before) => {
@@ -1643,7 +1640,6 @@ function renderTray() {
   const send = document.getElementById("send");
   send.disabled = sendingNotes.has(curName()) || !canSendNotes();
   send.title = cur?.bot ? "Bot の会話へ手紙で送る" : cur?.codex ? "Codex の会話のキューに積む (文字だけ)" : cur?.terminal ? "返事を出した端末へ打ち込む" : "この返事は Orca / herdr の外で出たので送れません。コピーして貼ってください";
-  d?.pins.forEach((p, k) => { const s = pinNode(p, k).querySelector(".ps"); s.disabled = send.disabled; s.title = send.title; }); // 段の下の送信も同じ時に押せなくする (二重送信を止める)
 }
 const refresh = () => { applyMarks(); renderTray(); };
 
@@ -1729,7 +1725,6 @@ const pinKeydown = (ev) => {
   refresh();
 };
 const pinClick = (ev) => {
-  if (ev.target.closest(".ps")) return sendNotes(); // 段の下の送信
   const pa = ev.target.closest("[data-pa]");
   if (pa) { const n = curName(), d = draftOf(n), k = pa.dataset.pa; fileTo = { n, d, k, p: d.pins.get(k) }; return ffile.click(); } // 押した時の下書きとピンに固定する
   const x = ev.target.closest("[data-x]");
@@ -1782,11 +1777,11 @@ document.getElementById("copy").onclick = async () => {
   catch (e) { say.textContent = `コピーできませんでした: ${e.message ?? e}`; }
 };
 const noteDraftState = (d) => JSON.stringify([[...d.pins], d.free, d.imgs]);
-async function sendNotes() { // 赤ペン欄の送信と段の下の送信 (スマホ 1 列) が呼ぶ
+document.getElementById("send").onclick = async () => {
   const say = document.getElementById("akmsg");
   const n = curName(), codex = cur?.codex, d = drafts.get(n);
   if (!canSendNotes() || !d || sendingNotes.has(n)) return;
-  if (codex && d.imgs.length) { say.textContent = "Codex には画像を送れません。画像を外してから送ってください"; penFold = false; refresh(); return; } // 段の下から送った時も赤ペン欄を開いて理由を見せる
+  if (codex && d.imgs.length) { say.textContent = "Codex には画像を送れません。画像を外してから送ってください"; return; }
   const before = noteDraftState(d);
   const body = JSON.stringify({ name: n, livePane: cur.livePane, text: message(d), images: d.imgs.filter((p) => p.pin == null).map((p) => p.path) }); // ピンの写真は本文のパスの行で送る
   sendingNotes.add(n);
@@ -1796,7 +1791,7 @@ async function sendNotes() { // 赤ペン欄の送信と段の下の送信 (ス�
     const r = await fetch("/send", { method: "POST", headers: { "content-type": "application/json" }, body });
     if (!r.ok) {
       const reason = await r.text();
-      if (curName() === n) { say.textContent = `送れませんでした: ${r.status} ${reason}`; penFold = false; }
+      if (curName() === n) say.textContent = `送れませんでした: ${r.status} ${reason}`;
       return;
     }
     const unchanged = drafts.get(n) === d && noteDraftState(d) === before;
@@ -1809,13 +1804,12 @@ async function sendNotes() { // 赤ペン欄の送信と段の下の送信 (ス�
       document.getElementById("sent").textContent = `${codex ? "キューに登録" : "送信済"} ${hhmm(new Date())}`;
     }
   } catch (e) {
-    if (curName() === n) { say.textContent = codex ? "通信が切れ、登録できたか分かりません。Codex のキューを確認してください" : `送れませんでした: ${e.message ?? e}`; penFold = false; }
+    if (curName() === n) say.textContent = codex ? "通信が切れ、登録できたか分かりません。Codex のキューを確認してください" : `送れませんでした: ${e.message ?? e}`;
   } finally {
     sendingNotes.delete(n);
     if (curName() === n) refresh();
   }
-}
-document.getElementById("send").onclick = sendNotes;
+};
 
 // チャット欄: ピン無しで自由文を送る。サーバーが履歴の name から Claude の端末か Codex の会話を決める。
 // focus:false = 端末タブへ切り替えず viewer に留まる。送信済みの履歴は持たない (2026-09-29 user: 再入力の用途が薄い)。

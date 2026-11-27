@@ -97,7 +97,9 @@ class Sends:  # /send を捕まえる (500 で返して下書きを残す)
     def __init__(self, pg): self.bodies = []; pg.route("**/send", self.h)
     def h(self, route): self.bodies.append(json.loads(route.request.post_data)); route.fulfill(status=500, body="captured")
 def send(pg, s):
-    k = len(s.bodies); pg.locator("#send:visible, #reply .pin .ps:visible").first.click() # スマホ 1 列は段の下の送信 (同じ処理)
+    k = len(s.bodies)
+    if pg.locator("#dpen:visible").count(): pg.locator("#dpen").click(); pg.wait_for_timeout(250) # スマホ 1 列: 送信は『赤N』で開く赤ペン欄
+    pg.locator("#send").click()
     for _ in range(50):
         if len(s.bodies) > k: return s.bodies[-1]
         pg.wait_for_timeout(100)
