@@ -136,7 +136,8 @@ else:
             mode.write_text("delayed")
             expected = {"name": f"botperm-{session}.md", "session": session, "bot": "試験 Bot", "repo": "試験 Bot",
                         "head": "", "ts": bot_record["ts"], "live": False, "terminal": False,
-                        "perm": {k: bot_record[k] for k in ("id", "tool", "detail", "ts")}}
+                        "perm": {k: bot_record[k] for k in ("id", "tool", "detail", "ts")},
+                        "can": {"send": False, "keys": True, "images": True, "media": True, "model": False, "commands": False, "alive": False}, "peer": "Orca Bot", "delivery": None}
             with ThreadPoolExecutor(max_workers=4) as pool:
                 results = list(pool.map(lambda _: alerts(), range(4)))
             assert results == [[expected]] * 4, f"Bot の許可待ちが必要: {results}"

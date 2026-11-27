@@ -974,6 +974,8 @@ let REPO = params.get("repo") || ""; // "" = すべて
 let MODE = ["bots", "agents"].includes(params.get("mode")) ? params.get("mode") : ""; // 知らない値はメイン
 const inMode = (e) => (!e.agent ? "" : e.bot ? "bots" : "agents") === MODE; // 窓口役でない Bot には server が bot と agent の両方を付ける
 const isMainBot = (e) => !!e?.bot && !e.agent; // 窓口役の Bot (RMV_MAIN_BOTS)。窓口役でない Bot には server が agent を付けて「Bot」タブに出す
+// 行の能力 (server が /history の各行に付ける can、docs/dev-notes.md)。can の無い行は今までの種類の判定から作る: merge の直後は新しい index.html を古い server が配る間がある
+const canOf = (e) => e.can ?? { send: !!(e.terminal || e.codex), keys: !e.codex, images: !e.codex, media: !e.codex, model: !e.codex && !e.bot, commands: !e.codex && !e.bot, alive: !e.codex && !e.bot };
 // 窓口役の Bot は会話がいくつあっても Bot ごとに 1 個 (一番新しい会話) だけ出す。es は新しい順
 const mainBots = (es) => es.filter((e, i) => isMainBot(e) && es.findIndex((x) => isMainBot(x) && x.bot === e.bot) === i);
 const agentTag = (e) => (e?.bot ? `${e.agent ? "🤖 " : ""}${e.bot}: ` : e?.agent ? `🤖 ${String(e.agent.type ?? "").split(":").pop() || "agent"}: ` : e?.codex ? "Codex: " : ""); // "claude-code-harness:worker" → "🤖 worker: "
@@ -1761,7 +1763,7 @@ document.getElementById("send").onclick = async () => {
   const say = document.getElementById("akmsg");
   const n = curName(), codex = cur?.codex, d = drafts.get(n);
   if (!canSendNotes() || !d || sendingNotes.has(n)) return;
-  if (codex && d.imgs.length) { say.textContent = "Codex には画像を送れません。画像を外してから送ってください"; return; }
+  if (!canOf(cur).images && d.imgs.length) { say.textContent = "Codex には画像を送れません。画像を外してから送ってください"; return; }
   const before = noteDraftState(d);
   const body = JSON.stringify({ name: n, livePane: cur.livePane, text: message(d), images: d.imgs.filter((p) => p.pin == null).map((p) => p.path) }); // ピンの写真は本文のパスの行で送る
   sendingNotes.add(n);
@@ -1835,7 +1837,7 @@ async function loadMedia(to) {
   let list = [], svgs = [];
   try {
     if (name) [list, svgs] = await Promise.all([
-      to.codex ? [] : fetch("/media?name=" + encodeURIComponent(name)).then((r) => r.json()),
+      !canOf(to).media ? [] : fetch("/media?name=" + encodeURIComponent(name)).then((r) => r.json()),
       sessionDiagrams(to),
     ]);
   } catch {}
@@ -1883,17 +1885,17 @@ function renderChat() {
   document.getElementById("cto").textContent = (isMobileUA ? "" : "→ ") + (lbl ? `${pin ? "📌 " : ""}${lbl}` : "(送り先なし)"); // スマホは名前に幅を回す (左の ▲▼ と点が送り先の印)
   const why = pane ? (codexPaneReady(pane) ? "" : "Codexが入力できる状態になるまで待ってください")
     : !to ? (codexPaneSession(pin || SESS) ? "選んだ端末が見つかりません" : pin ? "固定先のセッションの返事が一覧に無い (送れない)" : "表示中の返事が無い (送れない)")
-    : !to.terminal && !to.codex ? (pin ? "固定先は Orca / herdr 外の端末 (送れない)" : "この返事は Orca / herdr 外の端末 (送れない)") : "";
+    : !canOf(to).send ? (pin ? "固定先は Orca / herdr 外の端末 (送れない)" : "この返事は Orca / herdr 外の端末 (送れない)") : "";
   document.getElementById("cwhy").textContent = why;
   ctext.placeholder = (to?.bot ? "Bot へ送る" : pane && !pane.sid ? "Codexへ1行送る" : to?.codex ? "Codexへ文字を送る" : "端末へ送る") + (isMobileUA ? "" : " (⌘+Enter)");
   ctext.disabled = pane ? chatBusy : !!why || chatBusy;
   csend.disabled = !!why || chatBusy;
   if (to?.notice) { document.getElementById("cwhy").textContent = noteBack.why; ctext.placeholder = "知らせを表示中 (ここからは返せません)"; } // 案内の行を足しも消しもしない (下の知らせの行が動くため)
-  const terminalControlsDisabled = csend.disabled || !!to?.codex;
+  const terminalControlsDisabled = csend.disabled || (!!to && !canOf(to).keys);
   document.getElementById("cattach").disabled = terminalControlsDisabled;
   document.querySelectorAll("#cact .q, #cact .cpick").forEach((b) => { b.disabled = terminalControlsDisabled; });
-  if (to?.bot) document.querySelectorAll("#copt .q, #cact .cpick").forEach((b) => { b.disabled = true; });
-  cimgs.hidden = !to || to.codex || !pending.length;
+  if (to && !canOf(to).model) document.querySelectorAll("#copt .q, #cact .cpick").forEach((b) => { b.disabled = true; });
+  cimgs.hidden = !to || !canOf(to).images || !pending.length;
   csend.textContent = chatBusy ? "送信中…" : "送信";
   // 各行 = 時刻 + 最新返事の冒頭。同じ repo の chip は時刻だけでは見分けられない (2026-09-29 user)
   // 時刻の左に下の一覧と同じ丸、時刻の色も状態で変える (作業中 = 明るく太字 / 黄 = 返事が要る / 緑 = 閉じてよい / 灰 = 静か・終了)。2026-10-25 user
@@ -1906,7 +1908,7 @@ function renderChat() {
     const ask = openAsk.has(e.session) && (e.asking?.prompt ?? e.prompt);
     return `${dot(e, st)}<b>${esc(chipLabels.get(e.session) ?? (e.repo || "?"))}</b><time class="${st}">${esc(hhmm(new Date(e.ts)))}</time><span>${esc(sub)}</span>${ask ? `<span class="task">${esc(ask)}</span>` : ""}`;
   };
-  const entries = [...chipEntries.values()].filter((e) => e.live || e.codex || e.bot || showDead || e.session === pin);
+  const entries = [...chipEntries.values()].filter((e) => e.live || !canOf(e).alive || showDead || e.session === pin);
   // Bot の行は終了扱いにならないので、枠は端末の行が先に取り、Bot は余った分だけ (窓口役でない Bot の会話が増えても稼働中の端末の chip を押し出さない)
   // 窓口役の Bot は枠の外で『追従』のすぐ下に Bot ごとに 1 行 (端末の会話が 5 つ以上あっても押し出されない)
   const bots = mainBots(entries);
@@ -2060,9 +2062,9 @@ async function pickChip(s) {
 }
 async function sendText(text, clear) {
   const to = chatTo(), say = document.getElementById("cmsg");
-  if (!to || (to.codex ? !clear : !to.terminal) || chatBusy) return;
+  if (!to || (!canOf(to).send || (!clear && !canOf(to).keys)) || chatBusy) return;
   if (to.codexPane && !codexPaneReady(to)) return;
-  const attachments = clear && !to.codex ? [...pending] : [];
+  const attachments = clear && canOf(to).images ? [...pending] : [];
   if (!text.trim() && !attachments.length) return;
   const key = chatDraftKey(to);
   const sameTarget = () => {
@@ -2112,7 +2114,7 @@ const cimgs = document.getElementById("cimgs");
 const pending = []; // Claude の共有下書きに付ける [{ path, url }]
 function renderImgs() {
   const to = chatTo();
-  cimgs.hidden = !to || to.codex || !pending.length;
+  cimgs.hidden = !to || !canOf(to).images || !pending.length;
   cimgs.innerHTML = pending.map((p, i) => `<span class="cimg">${thumb(p)}<button data-i="${i}" title="外す">×</button></span>`).join("");
 }
 cimgs.addEventListener("click", (ev) => {
@@ -2151,7 +2153,7 @@ ctext.addEventListener("paste", (ev) => {
 const cfile = document.getElementById("cfile"), cattach = document.getElementById("cattach");
 function addChatImages(fs) {
   const to = chatTo();
-  if (!to?.terminal || to.codex || chatBusy || !fs.length) return;
+  if (!to?.terminal || !canOf(to).images || chatBusy || !fs.length) return;
   addImages(fs, pending, renderImgs, document.getElementById("cmsg"));
 }
 cattach.onclick = () => { if (!cattach.disabled) cfile.click(); };
@@ -2199,7 +2201,7 @@ function fillPick(sel) {
 async function switchTo(sel) {
   const to = chatTo(), say = document.getElementById("cmsg"), c = sel.dataset.cmd, v = sel.value;
   sel.blur(); // 選んだ後もフォーカスが残ると ↑↓ が送り先の切り替えと取り合う
-  if (!v || !to?.terminal || to.codex || to.bot || chatBusy) return fillPick(sel);
+  if (!v || !to?.terminal || !canOf(to).model || chatBusy) return fillPick(sel);
   chatBusy = true;
   say.textContent = "";
   renderChat();
@@ -2228,7 +2230,7 @@ async function loadNow(to) {
   if (name === nowFor) return;
   nowFor = name;
   let r = {};
-  try { if (name && !to.codex && !to.bot) r = await (await fetch("/now?name=" + encodeURIComponent(name))).json(); } catch {}
+  try { if (name && canOf(to).model) r = await (await fetch("/now?name=" + encodeURIComponent(name))).json(); } catch {}
   if (nowFor !== name) return; // 取っている間に送り先が変わった
   nowVal.model = r.model || null; nowVal.effort = r.effort || null;
   showCtx(r.ctx);
@@ -2243,7 +2245,7 @@ function renderKeys(m) {
   const label = (b, k) => { b.dataset.k = k; b.dataset.t = all[k]; b.title = `${all[k]} を送る (${k})`; b.replaceChildren(all[k], Object.assign(document.createElement("sup"), { textContent: k })); };
   document.querySelectorAll("#cact > .q").forEach((b) => ok(b.dataset.k) && label(b, b.dataset.k));
   const to = chatTo();
-  document.getElementById("copt").replaceChildren(...["6", "7", "8", "9", "0"].filter(ok).map((k) => { const b = Object.assign(document.createElement("button"), { className: "q", disabled: csend.disabled || !!(to?.codex || to?.bot) }); label(b, k); return b; }));
+  document.getElementById("copt").replaceChildren(...["6", "7", "8", "9", "0"].filter(ok).map((k) => { const b = Object.assign(document.createElement("button"), { className: "q", disabled: csend.disabled || (!!to && !canOf(to).model) }); label(b, k); return b; }));
 }
 renderKeys({});
 fetch("/keys").then((r) => r.json()).then(renderKeys).catch(() => {});
@@ -2252,7 +2254,7 @@ const sug = document.getElementById("sug");
 let skillList = [], skillCwd = null, skillAt = 0, sugItems = [], sugI = 0;
 async function loadSkills() {
   const to = chatTo();
-  if (!to?.terminal || to.codex || to.bot) return;
+  if (!to?.terminal || !canOf(to).commands) return;
   const cwd = to.cwd ?? "";
   if (skillCwd === cwd && Date.now() - skillAt < 60000) return;
   skillCwd = cwd; skillAt = Date.now();
@@ -2262,7 +2264,7 @@ async function loadSkills() {
 function renderSug() {
   const m = ctext.value.match(/^\/(\S*)$/);
   const to = chatTo();
-  if (!m || !to?.terminal || to.codex || to.bot) { sugItems = []; sug.hidden = true; return; }
+  if (!m || !to?.terminal || !canOf(to).commands) { sugItems = []; sug.hidden = true; return; }
   const q = m[1].toLowerCase();
   let hit = skillList.filter((s) => s.name.toLowerCase().startsWith(q));
   if (!hit.length) hit = skillList.filter((s) => s.name.toLowerCase().includes(q));
@@ -2314,7 +2316,7 @@ function renderChips() {
   chipEntries = seen;
   renderChat();
   // 既定は live なセッションだけ (終了したものは #pdead で出す)。選択中は live でなくても出す (消えると迷子)
-  const shown = ss.filter((e) => !isMainBot(e) && (e.live || e.codex || e.bot || showDead || e.session === SESS)); // Codex と Bot の返事は live にならないが終了扱いで隠さない
+  const shown = ss.filter((e) => !isMainBot(e) && (e.live || !canOf(e).alive || showDead || e.session === SESS)); // Codex と Bot の返事は live にならないが終了扱いで隠さない
   const note = noteSession(SESS) && botNotes.find((e) => e.session === SESS);
   // 窓口役の Bot は『最新』のすぐ隣に Bot ごとに 1 個。押すと一番新しい会話を開く (選んだ後に次の会話が来たら光が外れ、もう一度押すとそちらへ移る)
   const bots = mainBots(ss).map((e) => chipBtn(e.session, e.session === SESS, `🤖 ${esc(e.bot)} Bot${e.ts ? ` <time>${esc(hhmm(new Date(e.ts)))}</time>` : ""}`, `${e.bot} の一番新しい返事を開く`, true, null, " mbot")).join("");
@@ -2363,7 +2365,7 @@ function renderProjects() {
     if (!e.agent && !mainLatest.has(k)) mainLatest.set(k, e);
     if (!inMode(e)) continue;
     if (!latest.has(k)) latest.set(k, e);
-    if (e.live || e.codex || e.bot) alive.add(k);
+    if (e.live || !canOf(e).alive) alive.add(k);
   }
   if (!lastSeen) { lastSeen = Object.fromEntries([...mainLatest].map(([k, e]) => [k, tsOf(e)])); saveSeen(); } // 初回は全部既読から始める
   const sel = REPO.toLowerCase();
@@ -2379,7 +2381,7 @@ function renderProjects() {
     return `<button class="prow${k === sel ? " on" : ""}${dead ? " dead" : ""}" data-r="${esc(e.repo)}" title="${esc(e.repo)}"><span class="pn" style="--rc:${repoColor(e.repo)}">${dot ? '<i class="dot" title="未読"></i>' : ""}<b>${rcDot}${esc(e.repo || "?")}</b><time>${e.ts ? hhmm(new Date(e.ts)) : ""}</time></span><span class="ph">${esc(cut(agentTag(e) + (e.head ?? ""), 30))}</span></button>`;
   });
   if (sel && !latest.has(sel)) rows.push(`<button class="prow on" data-r="${esc(REPO)}"><span class="pn"><b>${esc(REPO)}</b></span><span class="ph">返事なし</span></button>`); // URL が履歴に無い repo を指している
-  const deadSess = judged && inRepo(all).some((e) => !e.live && !e.codex && !e.bot); // repo は活きていても、その中の終了したセッション (chip・送り先) を出すためのトグル
+  const deadSess = judged && inRepo(all).some((e) => !e.live && canOf(e).alive); // repo は活きていても、その中の終了したセッション (chip・送り先) を出すためのトグル
   const deadBtn = !hidden && !deadSess ? "" : showDead ? "終了したものを隠す" : `終了したものも表示${hidden ? ` (${hidden}${hiddenUnread ? "・未読あり" : ""})` : ""}`;
   const tabs = `<div class="ptabs"><button class="prow${sel || MODE ? "" : " on"}" data-r="" data-m=""><span class="pn"><b>メイン</b></span></button><button class="prow${MODE === "bots" ? " on" : ""}" data-r="" data-m="bots" title="窓口役でない Bot の返事を見る"><span class="pn"><b>Bot</b></span></button><button class="prow${MODE === "agents" ? " on" : ""}" data-r="" data-m="agents" title="subagent と作業役の端末の返事を見る"><span class="pn"><b>🤖 ワーカー</b></span></button></div>`;
   const html = tabs + rows.join("") + (deadBtn ? `<button id="pdead" title="Claude が走っている端末が無い repo / セッション">${deadBtn}</button>` : "");
