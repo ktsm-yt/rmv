@@ -228,7 +228,7 @@ def herdr_session_name(sock):
 
 
 def session_key(handle, pane, session_id, sock=None):
-    """返事・依頼文・許可待ちの state ファイル名 = server の item.session (sessionKey in server.ts と同じ式。片方だけ直さない)。
+    """返事・依頼文・許可待ちの state ファイル名 = server の item.session (sessionKey in core.ts と同じ式。片方だけ直さない)。
     herdr 配下の pane は Orca 端末 handle を共有するので、pane があれば `<handle>__<pane>` にして pane ごとに分ける。
     Orca 無し (handle なし) の herdr だけの環境は handle の代わりに固定の "herdr" を置く (`herdr__<pane>`)。
     名前付き herdr session の pane は pane id が既定 session と重なるので末尾に `__<session 名>` を足す (既定 session の key は変えない)。

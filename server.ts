@@ -8,7 +8,7 @@ import { ORCA, CLIP_CLASS, herdrSend, typeInto, attachImages, submit, inputDraft
 import { CODEX_QUEUE_TIMEOUT, DIR, EXT_ORIGINS, EXT_SID, FRAGMENT, HIST, HOSTS, LIVE_TTL, NAME, ORIGINS, PERM, PERM_ORPHAN, PERM_TTL, PORT, PROMPT, type Perm, STATE, type SendTarget, TEXT, endOf, herdrSessionName, isLocalRequest, labelOf, loadPerm, metaOf, readAsking, readBg, sessionKey, splitTopic } from "./core.ts";
 import { checkHerdrPane, herdrAgents, herdrFirstTabs, herdrPaneOf, herdrSockOf, movedPane, newInHerdr, paneView, subType } from "./peer-herdr.ts";
 import { ccSessionsDir, claudeProcs, claudeTerminals, envOf, focusTerminal, liveTerminals, loadWorkers, resolveTerminal, waitingSids, workerAsked, workers, worktreePaths, worktrees } from "./peer-orca-term.ts";
-import { cachedCodexPaneThread, codexPaneBackends, codexPaneFromName, codexPaneHistory, codexQueue, codexThreadChanged, completedCodexReply, liveCodexPanes, liveCodexThread, sendCodexPane } from "./peer-codex.ts";
+import { type ConfirmedCodexPane, cachedCodexPaneThread, codexPaneBackends, codexPaneFromName, codexPaneHistory, codexQueue, codexThreadChanged, completedCodexReply, confirmedCodexPanes, currentCodexPane, liveCodexPanes, liveCodexThread, sendCodexPane } from "./peer-codex.ts";
 import { MAIN_BOTS, blockedBotChats, botSend, noticeBody, noticeName, noticeRows, noticeSeenPost, notices } from "./peer-orca-bot.ts";
 const SIPS = "/usr/bin/sips"; // 貼った画像の縮小 (macOS 標準)
 const PROJECTS = process.env.RMV_PROJECTS_DIR || `${process.env.HOME}/.claude/projects`; // transcript の置き場 (同上)
@@ -76,7 +76,7 @@ async function historyItems() {
       // 名前付き herdr session は stop で socket が消える。list が取れず fail open で『稼働中』に残るので live にしない (一覧には残す。2026-11-16 rmp の試験の rmp-direct-demo が浮いて送れなかった)
       const gone = Boolean(sock && herdrSessionName(sock) && !existsSync(sock));
       const shown = paneView(pane, await agentsOf(sock), byHandle.get(meta.terminal));
-      const codex = meta.agent_kind === "codex"; // hooks/codex-stop.py の記録。端末を持たないので live にしない (稼働中・/sessions・/ext/deliver に出さない)
+      const codex = meta.agent_kind === "codex"; // hooks/codex-stop.py の記録。端末を持たないので live にしない (稼働中に出さない。/sessions・/ext/deliver の Codex の宛先はこの記録でなく pane から作る: confirmedCodexPanes)
       const bot = typeof meta.orca_bot?.name === "string" ? meta.orca_bot.name : null;
       const botChat = bot && typeof meta.orca_bot.chat === "string" ? meta.orca_bot.chat : null; // 知らせ (noticeRows) がどの会話の返事かを見る。/history には出さない
       const mainBot = bot && (MAIN_BOTS.has(bot.toLowerCase()) || MAIN_BOTS.has(String(meta.orca_bot.id).toLowerCase()));
@@ -203,7 +203,7 @@ async function history(repo: string | null, withNotices: boolean): Promise<Respo
   }
   // sub は出口でだけ agent にする (上の集計は sub を本体の返事として数える: 端末ごとの最新の返事・今のセッションの判定が pane ごとに要る)
   const replies = items.map(({ root, sub, botChat, ...e }) => ({ ...e, agent: sub ? { type: sub, id: e.session } : e.agent, asking: (e.name.startsWith("asking-") || curSid.get(e.session) === replySid.get(e.session) ? asking.get(e.session) : null) ?? null })); // 次のセッションの依頼は前のセッションの返事に付けない
-  // 本文のある履歴や /sessions・/ext/deliver には混ぜず、viewer の一覧だけに出す。
+  // 本文のある履歴には混ぜず、viewer の一覧だけに出す。/sessions・/ext/deliver の Codex の宛先はこの行でなく confirmedCodexPanes (RMV_CODEX_PANE_BACKENDS を設定した pane だけ) から作る。
   const livePanes = await Promise.all(panes.map(async (p) => {
     const session = `codex-pane-${p.pane.replace(":", "-")}-${p.terminal}`;
     const name = session + ".md";
@@ -244,6 +244,13 @@ async function sessions(): Promise<Response> {
     if (e.sub !== null) continue; // ワーカーかどうかは pane の今の最新の返事で決める (古い返事が tab 1 の頃の記録でも本体に戻さない)
     const sid = e.sid ?? askSid.get(e.session) ?? null;
     out.push({ sid, session: e.session, name: e.name, cwd: e.cwd, label: e.label, head: e.head, title: e.title, status: e.status, ts: e.ts, live: e.live, deliverable: e.terminal && e.live && !e.perm && e.status !== "blocked" && !(sid && waiting.has(sid)) });
+  }
+  // 専用 App Server (RMV_CODEX_PANE_BACKENDS) で会話 ID を一つに確かめられた Codex の pane だけを、agent: "codex" として足す。
+  // 端末には打たず /ext/deliver が `codex queue` で積むので、作業中でも deliverable (Codex が順番を待たせる)。確かめられない pane は出さない
+  for (const t of await confirmedCodexPanes()) {
+    if (seen.has(t.sid)) continue;
+    seen.add(t.sid);
+    out.push({ sid: t.sid, session: t.session, name: t.name, cwd: t.pane.cwd, label: `Codex · ${t.pane.label}`, head: "", title: t.pane.pane, status: t.pane.status, ts: null, live: true, deliverable: t.pane.status !== "blocked", agent: "codex" });
   }
   return Response.json(out, { headers: { "cache-control": "no-store", "x-rmv-live": live } });
 }
@@ -567,12 +574,14 @@ async function send(req: Request, opt: { exact?: boolean; check?: (t: SendTarget
 // ただし Orca の端末が閉じていた時の「同じフォルダの別の Claude の端末」への差し替えはしない (exact)。差し替え先は別の会話で、stale の保証が崩れる。
 // 送り先が決まった後、打つ直前に extCheck で端末の Claude の今の会話 (pid ごとの記録) と許可待ちを確かめる (check)
 const EXT_TICKET = /^\d{8}-\d{6}-\d{6}$/;
-async function extDeliver(req: Request): Promise<Response> {
+async function extDeliver(req: Request, opt: { extendCodexTimeout?: () => void } = {}): Promise<Response> {
   const body = await req.json().catch(() => null);
   if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).some((k) => k !== "sid" && k !== "ticket")) return new Response("body must be {sid, ticket}", { status: 400 });
   const { sid, ticket } = body as { sid?: unknown; ticket?: unknown };
   if (typeof ticket !== "string" || !EXT_TICKET.test(ticket)) return new Response("bad ticket", { status: 400 });
   if (typeof sid !== "string" || !EXT_SID.test(sid)) return new Response("bad sid", { status: 400 });
+  const codex = (await confirmedCodexPanes()).find((t) => t.sid === sid);
+  if (codex) return extDeliverCodex(req, codex, ticket, opt);
   const { items, curSid, askSid } = await historyItems();
   // items は新しい順。返事ゼロの仮 entry (asking-…) は依頼時に hook が記録した session_id で引く。subagent の返事は送り先にしない
   const e = items.find((x) => !x.agent && ("sid" in x && x.sid ? x.sid : x.name.startsWith("asking-") ? askSid.get(x.session) : null) === sid);
@@ -597,6 +606,26 @@ async function extDeliver(req: Request): Promise<Response> {
   const r = await send(new Request(`${own}/send`, { method: "POST", headers: { origin: own, host: `127.0.0.1:${PORT}`, "content-type": "application/json" }, body: JSON.stringify({ name: e.name, text: `/rmp ${ticket}`, focus: false, reset: false }) }), { exact: true, check: async (t) => (await extCheck(t, sid)) ?? aborted(req) });
   if (!r.ok) return r;
   return Response.json({ ok: true, via: e.session.includes("__") ? "herdr" : "orca" }, { headers: { "cache-control": "no-store" } });
+}
+
+// /ext/deliver の Codex 版: 端末には打たず、その pane の専用 App Server 経由で `codex queue` に合図を積む。
+// 一覧のキャッシュは使わず、積む直前に pane と会話 ID をもう一度確かめる (/resume で会話が変わっていたら stale)。
+// Codex には /rmp コマンドが無いので、Claude 用に入れた rmp スキルの手順書を読んでもらう文にする。
+// 409 の本文の頭は Claude の時と同じ語 (stale / permission pending / unverified)。504 は登録できたか分からない (再送しない)
+async function extDeliverCodex(req: Request, t: ConfirmedCodexPane, ticket: string, opt: { extendCodexTimeout?: () => void }): Promise<Response> {
+  const ref = codexPaneFromName(t.name);
+  if (!ref) return new Response("unknown session", { status: 404 });
+  const now = await liveCodexThread(ref, t.backend);
+  if (now !== t.sid) return new Response(now ? "stale: この端末では別の Codex の会話が開かれている" : "unverified: Codex の会話を確かめられない。積まない", { status: 409 });
+  const pane = await currentCodexPane(ref.pane, ref.terminal).catch(() => null);
+  if (pane?.status === "blocked") return new Response("permission pending: Codex が承認待ち。積まない", { status: 409 });
+  const abort = aborted(req);
+  if (abort) return abort;
+  opt.extendCodexTimeout?.();
+  const text = `rmp で赤ペンの注釈が届きました (チケット ${ticket})。~/.claude/skills/rmp/SKILL.md の手順で、このチケットの注釈を読んでください (Claude Code の /rmp ${ticket} にあたります)。`;
+  const r = await codexQueue(t.name, t.sid, text, [], false, t.backend);
+  if (!r.ok) return r;
+  return Response.json({ ok: true, via: "codex" }, { headers: { "cache-control": "no-store" } });
 }
 
 // POST /switch {name, cmd, value}: 送信欄のプルダウンから、その返事の会話の端末へ `/model <value>` / `/effort <value>` + Enter を打つ。
@@ -870,7 +899,9 @@ Bun.serve({
       // Firefox は拡張の fetch にも CORS をかける (2026-10-30 Zen で実測: 200 でも本文を捨てる)。許可した origin にだけ返し、JSON の事前確認に答える
       const cors = { "access-control-allow-origin": origin, vary: "Origin" };
       if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: { ...cors, "access-control-allow-methods": "POST", "access-control-allow-headers": "content-type", "access-control-max-age": "600" } });
-      const r = pathname === "/ext/deliver" && req.method === "POST" ? await extDeliver(req) : new Response("not found", { status: 404 });
+      const r = pathname === "/ext/deliver" && req.method === "POST" ? await extDeliver(req, {
+        extendCodexTimeout: () => server.timeout(req, CODEX_QUEUE_TIMEOUT / 1000 + 5),
+      }) : new Response("not found", { status: 404 });
       const headers = new Headers(r.headers);
       for (const [k, v] of Object.entries(cors)) headers.set(k, v);
       return new Response(r.body, { status: r.status, statusText: r.statusText, headers });
