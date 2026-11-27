@@ -69,7 +69,7 @@
   .prow .ph { display: block; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .prow.on time, .prow.on .ph { color: inherit; opacity: .7; }
   .prow.dead:not(.on) { opacity: .55; }
-  .ptabs { display: flex; gap: 2px; } /* 「メイン」 / 「🤖 ワーカー」(subagent) の 2 択 */
+  .ptabs { display: flex; gap: 2px; } /* 「メイン」 / 「Bot」(窓口役でない Bot) / 「🤖 ワーカー」(subagent と作業役の端末) の 3 択 */
   .ptabs .prow { width: auto; }
   .ptabs .prow + .prow { font-size: 12px; }
   #pdead { font: inherit; font-size: 11px; color: var(--muted); background: none; border: 0; padding: 6px 8px; cursor: pointer; text-decoration: underline; }
@@ -969,11 +969,11 @@ const shownNotes = () => {
 const params = new URLSearchParams(location.search);
 let SESS = params.get("s") || ""; // "" = 最新 (最後に返事したセッションを追う)
 let REPO = params.get("repo") || ""; // "" = すべて
-// モード: main = 本体の返事だけ / agents = subagent の返事 (entry.agent あり) だけ。混ぜない (2026-09-29 user)。
-// inRepo で落とす = 一覧・← →・追従・chip・送り先リスト・プロジェクト列がモードの entry だけを見る。?mode=agents に残す (localStorage には持たない = 開けば main)
-let AGENTS = params.get("mode") === "agents";
-const inMode = (e) => !!e.agent === AGENTS;
-const isMainBot = (e) => !!e?.bot && !e.agent; // 窓口役の Bot (RMV_MAIN_BOTS)。窓口役でない Bot には server が agent を付けて「🤖 ワーカー」側に出す
+// モード: "" = 本体の返事だけ / "bots" = 窓口役でない Bot の返事だけ / "agents" = subagent と作業役の端末の返事だけ。混ぜない (2026-09-29 user)。
+// inRepo で落とす = 一覧・← →・追従・chip・送り先リスト・プロジェクト列がモードの entry だけを見る。?mode=bots / ?mode=agents に残す (localStorage には持たない = 開けば main)
+let MODE = ["bots", "agents"].includes(params.get("mode")) ? params.get("mode") : ""; // 知らない値はメイン
+const inMode = (e) => (!e.agent ? "" : e.bot ? "bots" : "agents") === MODE; // 窓口役でない Bot には server が bot と agent の両方を付ける
+const isMainBot = (e) => !!e?.bot && !e.agent; // 窓口役の Bot (RMV_MAIN_BOTS)。窓口役でない Bot には server が agent を付けて「Bot」タブに出す
 // 窓口役の Bot は会話がいくつあっても Bot ごとに 1 個 (一番新しい会話) だけ出す。es は新しい順
 const mainBots = (es) => es.filter((e, i) => isMainBot(e) && es.findIndex((x) => isMainBot(x) && x.bot === e.bot) === i);
 const agentTag = (e) => (e?.bot ? `${e.agent ? "🤖 " : ""}${e.bot}: ` : e?.agent ? `🤖 ${String(e.agent.type ?? "").split(":").pop() || "agent"}: ` : e?.codex ? "Codex: " : ""); // "claude-code-harness:worker" → "🤖 worker: "
@@ -2367,7 +2367,7 @@ function renderProjects() {
   }
   if (!lastSeen) { lastSeen = Object.fromEntries([...mainLatest].map(([k, e]) => [k, tsOf(e)])); saveSeen(); } // 初回は全部既読から始める
   const sel = REPO.toLowerCase();
-  if (!AGENTS && mainLatest.has(sel) && tsOf(mainLatest.get(sel)) > (lastSeen[sel] ?? 0)) { lastSeen[sel] = tsOf(mainLatest.get(sel)); saveSeen(); } // main で選んでいる間は既読
+  if (!MODE && mainLatest.has(sel) && tsOf(mainLatest.get(sel)) > (lastSeen[sel] ?? 0)) { lastSeen[sel] = tsOf(mainLatest.get(sel)); saveSeen(); } // main で選んでいる間は既読
   const judged = liveState === "ok";
   let unread = false, hidden = 0, hiddenUnread = false;
   const rows = [...latest].map(([k, e]) => {
@@ -2381,7 +2381,7 @@ function renderProjects() {
   if (sel && !latest.has(sel)) rows.push(`<button class="prow on" data-r="${esc(REPO)}"><span class="pn"><b>${esc(REPO)}</b></span><span class="ph">返事なし</span></button>`); // URL が履歴に無い repo を指している
   const deadSess = judged && inRepo(all).some((e) => !e.live && !e.codex && !e.bot); // repo は活きていても、その中の終了したセッション (chip・送り先) を出すためのトグル
   const deadBtn = !hidden && !deadSess ? "" : showDead ? "終了したものを隠す" : `終了したものも表示${hidden ? ` (${hidden}${hiddenUnread ? "・未読あり" : ""})` : ""}`;
-  const tabs = `<div class="ptabs"><button class="prow${sel || AGENTS ? "" : " on"}" data-r="" data-m=""><span class="pn"><b>メイン</b></span></button><button class="prow${AGENTS ? " on" : ""}" data-r="" data-m="agents" title="ワーカーと窓口役以外の Bot の返事を見る"><span class="pn"><b>🤖 ワーカー</b></span></button></div>`;
+  const tabs = `<div class="ptabs"><button class="prow${sel || MODE ? "" : " on"}" data-r="" data-m=""><span class="pn"><b>メイン</b></span></button><button class="prow${MODE === "bots" ? " on" : ""}" data-r="" data-m="bots" title="窓口役でない Bot の返事を見る"><span class="pn"><b>Bot</b></span></button><button class="prow${MODE === "agents" ? " on" : ""}" data-r="" data-m="agents" title="subagent と作業役の端末の返事を見る"><span class="pn"><b>🤖 ワーカー</b></span></button></div>`;
   const html = tabs + rows.join("") + (deadBtn ? `<button id="pdead" title="Claude が走っている端末が無い repo / セッション">${deadBtn}</button>` : "");
   document.getElementById("plist").title = judged ? "" : "端末の生死を判定できないので全部表示中";
   document.getElementById("ptoggle").classList.toggle("unread", unread); // 畳んでいても未読が分かるように
@@ -2400,7 +2400,7 @@ document.getElementById("plist").addEventListener("click", async (ev) => {
   if (!b) return;
   REPO = b.dataset.r;
   SESS = ""; // セッションはプロジェクトをまたがない
-  if ("m" in b.dataset) { AGENTS = b.dataset.m === "agents"; setParam("mode", b.dataset.m); } // タブ = モード切り替え + repo 絞り込み解除
+  if ("m" in b.dataset) { MODE = b.dataset.m; setParam("mode", b.dataset.m); } // タブ = モード切り替え + repo 絞り込み解除
   setParam("repo", REPO);
   setParam("s", "");
   renderFilter();
@@ -2535,7 +2535,7 @@ async function poll() {
     renderChips();
     renderProjects();
     const next = scope();
-    if (!next.length && (REPO || SESS || AGENTS)) { list = []; idx = 0; shownName = null; renderBar(); await show("", null); return; } // 絞り込み中・agents モードは他 repo / 他セッション / 本体の latest.html を映さない
+    if (!next.length && (REPO || SESS || MODE)) { list = []; idx = 0; shownName = null; renderBar(); await show("", null); return; } // 絞り込み中・Bot / ワーカーのモードは他 repo / 他セッション / 本体の latest.html を映さない
     if (!next.length) { // 履歴導入前の state: latest.html だけ映す
       const r = await fetch("/fragment", { cache: "no-store" });
       const mod = r.headers.get("last-modified");
