@@ -21,7 +21,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # RMV_STATE_DIR はテストが本物の rmv/state を触らないための上書き口 (prompt-state.py と同じ)
 STATE = os.environ.get("RMV_STATE_DIR") or os.path.join(os.path.dirname(HERE), "state")
 PROMPT = os.path.join(STATE, "prompt")
-WAIT_TTL = 24 * 3600  # server.ts の WAIT_TTL と同じ (待機中が一覧に出る長さ = ファイルを残す長さ。片方だけ直さない)
+WAIT_TTL = 24 * 3600  # core.ts の WAIT_TTL と同じ (待機中が一覧に出る長さ = ファイルを残す長さ。片方だけ直さない)
 
 
 def fragment():

@@ -17,7 +17,7 @@ export function codexPaneFromName(name: string): CodexPaneRef | null {
   const pane = parts[1] + ":" + parts[2], terminal = parts[3];
   return codexPaneRef(pane, terminal) ? { pane, terminal } : null;
 }
-type CodexPane = { pane: string; terminal: string; label: string; repo: string; status: string };
+type CodexPane = { pane: string; terminal: string; label: string; repo: string; cwd: string; status: string };
 function codexPaneRef(pane: unknown, terminal: unknown): pane is string {
   return typeof pane === "string" && pane.length <= 64 && CODEX_PANE_ID.test(pane) && !/\s/.test(pane)
     && typeof terminal === "string" && terminal.length <= 100 && PANE_TERMINAL_ID.test(terminal) && !/\s/.test(terminal);
@@ -25,8 +25,9 @@ function codexPaneRef(pane: unknown, terminal: unknown): pane is string {
 function codexPaneInfo(p: HerdrPane | null | undefined): CodexPane | null {
   if (p?.agent !== "codex" || !codexPaneRef(p.pane_id, p.terminal_id)) return null;
   const label = typeof p.label === "string" ? p.label.trim() : "";
-  const repo = typeof p.cwd === "string" ? p.cwd.split("/").filter(Boolean).at(-1) ?? "" : "";
-  return { pane: p.pane_id, terminal: String(p.terminal_id), label: label || p.pane_id, repo, status: typeof p.agent_status === "string" ? p.agent_status : "unknown" };
+  const cwd = typeof p.cwd === "string" ? p.cwd : "";
+  const repo = cwd.split("/").filter(Boolean).at(-1) ?? "";
+  return { pane: p.pane_id, terminal: String(p.terminal_id), label: label || p.pane_id, repo, cwd, status: typeof p.agent_status === "string" ? p.agent_status : "unknown" };
 }
 let codexPaneCache: { at: number; panes: Promise<CodexPane[] | null> } | null = null;
 export async function liveCodexPanes(): Promise<CodexPane[]> {
@@ -36,7 +37,7 @@ export async function liveCodexPanes(): Promise<CodexPane[]> {
   }
   return (await codexPaneCache.panes) ?? [];
 }
-async function currentCodexPane(pane: string, terminal: string): Promise<CodexPane | null> {
+export async function currentCodexPane(pane: string, terminal: string): Promise<CodexPane | null> {
   const r = await herdrRun(["pane", "get", pane]);
   const p = r.code === 0 ? codexPaneInfo(JSON.parse(r.out)?.result?.pane) : null;
   return p?.pane === pane && p.terminal === terminal ? p : null;
@@ -127,6 +128,20 @@ async function codexPaneThread(pane: string, { url, tokenEnv }: CodexPaneBackend
 }
 export async function liveCodexThread({ pane, terminal }: CodexPaneRef, backend: CodexPaneBackend): Promise<string | null> {
   return await currentCodexPane(pane, terminal).catch(() => null) ? codexPaneThread(pane, backend) : null;
+}
+// 外部ツール (/sessions・/ext/deliver) に見せる Codex の会話: 専用 App Server を割り当てた pane のうち、対話の会話 ID を一つに確かめられたもの
+export type ConfirmedCodexPane = { sid: string; name: string; session: string; pane: CodexPane; backend: CodexPaneBackend };
+export async function confirmedCodexPanes(): Promise<ConfirmedCodexPane[]> {
+  if (!codexPaneBackends.size) return [];
+  const found = await Promise.all((await liveCodexPanes()).map(async (pane) => {
+    const session = `codex-pane-${pane.pane.replace(":", "-")}-${pane.terminal}`, name = session + ".md";
+    const backend = codexPaneBackends.get(name);
+    const sid = backend ? await cachedCodexPaneThread(name, pane.pane, backend) : null;
+    return sid && backend ? { sid, name, session, pane, backend } : null;
+  }));
+  const confirmed = found.filter((t): t is ConfirmedCodexPane => t !== null);
+  // 同じ会話 ID が二つの pane に出たら、どちらに送るか決められないので両方とも出さない
+  return confirmed.filter((t) => confirmed.filter((u) => u.sid === t.sid).length === 1);
 }
 
 type CompletedReply = { identity: string; text: string };
@@ -239,7 +254,7 @@ export async function sendCodexPane(req: Request, { pane, terminal }: { pane: st
 // Codex の会話の返事 (hooks/codex-stop.py が agent_kind: "codex" で記録) への赤ペン: 端末には打たず、Codex 自身のキューに積む (`codex queue`)。
 // 赤ペンの宛先は返事に保存された UUID。稼働ペインから送る時も App Server が確認した UUID と一致する必要がある。
 // 成功 = キューに積めた。Codex が実行中・承認待ちなら Codex 側で順番を待ち、読み込み済みで手が空いた会話なら Codex が次の turn を始める (2026-11-18 隔離 app-server で実測)。
-// 画像・数字キーの reset・内部呼び出し (/ext/deliver と /switch の exact / check) は Codex に通さない (黙って捨てずに断る)。shell を通さず argv で渡す
+// 画像・数字キーの reset・send() の内部呼び出し (/switch と Claude 宛ての /ext/deliver が渡す exact / check) は Codex に通さない (黙って捨てずに断る)。/ext/deliver の Codex 宛ては server.ts の extDeliverCodex が確かめ直してから直接ここを呼ぶ。shell を通さず argv で渡す
 export function codexThreadChanged(): Response {
   return new Response("選んだCodexの会話が変わったか確認できません。送り先を選び直してください", { status: 409 });
 }
