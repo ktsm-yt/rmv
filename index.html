@@ -70,7 +70,7 @@
   .prow.on time, .prow.on .ph { color: inherit; opacity: .7; }
   .prow.dead:not(.on) { opacity: .55; }
   .ptabs { display: flex; gap: 2px; } /* 「メイン」 / 「Bot」(窓口役でない Bot) / 「🤖 ワーカー」(subagent と作業役の端末) の 3 択 */
-  .ptabs .prow { width: auto; }
+  .ptabs .prow { width: auto; text-align: center; } /* 中央揃え: スマホは button が最低 44px 幅で、短い『Bot』が左に寄るため */
   .ptabs .prow + .prow { font-size: 12px; }
   #pdead { font: inherit; font-size: 11px; color: var(--muted); background: none; border: 0; padding: 6px 8px; cursor: pointer; text-decoration: underline; }
   .rc { flex: none; font-style: normal; font-size: 10px; margin-right: 4px; color: var(--rc); } /* repo 色の丸: プロジェクト列・上の chip で同じ色 = 同じ repo */
