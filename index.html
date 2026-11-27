@@ -420,6 +420,7 @@
   html.mob:not(.split) :is(#cbar, #dock) { --g: 6px; gap: var(--g); flex-wrap: nowrap; }
   @media (max-width: 400px) { html.mob:not(.split) :is(#cbar, #dock) { --g: 4px; } }
   html.mob:not(.split) :is(#cbar, #dock) > #chead { flex: 0 0 calc(100% - 200px - 4 * var(--g)); }
+  html.mob:not(.split) body.dsend :is(#cbar, #dock) > #chead { flex-basis: calc(100% - 232px - 5 * var(--g)); } /* 帯に『送信』(44px) が出ている間は、送り先を右端そのままで左から縮める (232 = ◀ ▶ 赤N 送信 の 44 × 4 + ☰ 56)。送信欄を開いても同じ幅なので ▲ / ▼ は動かない (送信欄ではその分が空く) */
   html.mob:not(.split) :is(#cbar, #dock) > #chead { margin-left: auto; }
   html.mob:not(.split) #dock > #chead { flex-shrink: 1; } /* ☰ の一覧を開いて ＋ が出た間だけ縮む (一覧の幕の下) */
   html.mob:not(.split) #dock > #dto { display: none; }
@@ -472,8 +473,10 @@
   /* 赤ペン欄を畳む (▼): 書いた分は残したまま元の帯・送信欄に戻し、帯の赤い『赤ペン N』で戻る (ピンを全部消さないと戻れなかった、2026-11-13 user) */
   #pfold { display: none; } html.mob #pfold { display: block; }
   html.mob:not(.split) #tray .row { position: relative; gap: 6px; } @media (max-width: 400px) { html.mob:not(.split) #tray .row { gap: 4px; } } /* 間隔は帯と同じ (帯から赤N で開くと ▶ が 4px 右にずれた) */ html.mob:not(.split) #pfold { position: absolute; left: 50%; transform: translateX(-50%); } /* 1 列は段の中央 (2 列の右の列は狭く、コピーと重なるので並びのまま) */
-  html.mob body:not(.pen) #chat > #tray, html.mob #dock > #dpen[hidden] { display: none; }
+  html.mob body:not(.pen) #chat > #tray, html.mob #dock > :is(#dpen, #dsend)[hidden] { display: none; }
   html.mob #dock > #dpen { display: flex; align-items: center; gap: 1px; width: auto; padding: 0 8px; white-space: nowrap; color: #fff; background: var(--red); border-color: var(--red); }
+  html.mob:not(.split) #dock > #dpen { justify-content: center; width: 44px; padding: 0; } /* 1 列は幅 44 に固定 (ピンが 2 桁になっても右の送信・送り先を押さない) */
+  html.mob #dock > #dsend { font-size: 14px; font-weight: 700; color: #fff; background: var(--red); border-color: var(--red); }
   html.mob body.pen #chat { border-top: 3px solid var(--red); max-height: calc(var(--vvh, 100dvh) * .62); } /* 赤ペン中も返事を 4 割は見せる。ピンが増えたらピンの段だけスクロールする */
   html.mob #tstat { order: -3; }
   html.mob #cmsg { order: 2; } /* 開いている時は送信の近く (最下段のすぐ下) */
@@ -726,7 +729,7 @@ function placeNav() { // ◀ ▶ の置き場: 2 列の時は上の行 (元の�
 if (isMobileUA) {
   const $ = (id) => document.getElementById(id);
   const dock = Object.assign(document.createElement("div"), { id: "dock" });
-  dock.innerHTML = '<button id="dpen" hidden title="赤ペン欄を開く: 全体へのひとこと・コピー・ピンの一覧 (数字はピンの数)">赤<b></b></button><button id="dto" title="送信欄を開く"><i id="ddot"></i><span id="dname"></span><small id="dwait"></small></button>'; // 赤N は送り先の左 (送り先の位置を送信欄とそろえるため)
+  dock.innerHTML = '<button id="dpen" hidden title="赤ペン欄を開く: 全体へのひとこと・コピー・ピンの一覧 (数字はピンの数)">赤<b></b></button><button id="dsend" hidden title="赤ペンを送る (赤ペン欄の送信と同じ)">送信</button><button id="dto" title="送信欄を開く"><i id="ddot"></i><span id="dname"></span><small id="dwait"></small></button>'; // 赤N は送り先の左 (送り先の位置を送信欄とそろえるため)
   dock.append($("newbtn"), $("ptoggle")); // ☰ は帯の右端。＋ はその左で、☰ の一覧を開いている間だけ出す (2026-11-13 user)
   $("chat").prepend(dock);
   $("chat").append($("tray"));
@@ -1624,6 +1627,8 @@ function renderTray() {
     if (tray.hidden) penFold = !document.documentElement.classList.contains("split"); // ピンが無くなったら初めの形に戻す: 1 列は畳んだ形 (段の下に書く)、2 列は赤ペン欄を開く形
     document.body.classList.toggle("pen", !tray.hidden && !penFold);
     const dpen = document.getElementById("dpen"); dpen.hidden = !penFold || tray.hidden; dpen.querySelector("b").textContent = d ? d.pins.size : "";
+    const one = dpen.hidden || document.documentElement.classList.contains("split"); // 帯の送信は 1 列の畳んだ間だけ (赤ペン欄を開くと欄の送信 1 つ、2 列は今までどおり)
+    document.getElementById("dsend").hidden = one; document.body.classList.toggle("dsend", !one);
     placeNav();
     backSync(); // ピンの数だけ戻るの印を積む
   } // スマホ: 赤ペン中は下の欄を赤ペン欄に入れ替える (送信欄と 2 段に積まない)
@@ -1639,6 +1644,7 @@ function renderTray() {
   fimgs.innerHTML = d?.imgs.map((p, i) => `<span class="cimg">${thumb(p)}${p.pin != null ? `<i class="pk">${esc(d.pins.get(p.pin)?.anchor ?? "")}</i>` : ""}<button data-i="${i}" title="外す">×</button></span>`).join("") ?? "";
   const send = document.getElementById("send");
   send.disabled = sendingNotes.has(curName()) || !canSendNotes();
+  if (isMobileUA) document.getElementById("dsend").disabled = send.disabled;
   send.title = cur?.bot ? "Bot の会話へ手紙で送る" : cur?.codex ? "Codex の会話のキューに積む (文字だけ)" : cur?.terminal ? "返事を出した端末へ打ち込む" : "この返事は Orca / herdr の外で出たので送れません。コピーして貼ってください";
 }
 const refresh = () => { applyMarks(); renderTray(); };
@@ -2185,6 +2191,10 @@ const droppedImages = (ev) => [...(ev.dataTransfer?.files ?? [])].filter(isMedia
 ctext.addEventListener("drop", (ev) => addChatImages(droppedImages(ev)));
 document.getElementById("pfold").onclick = () => { penFold = true; document.activeElement?.blur(); refresh(); };
 if (isMobileUA) document.getElementById("dpen").onclick = () => { penFold = false; refresh(); };
+if (isMobileUA) document.getElementById("dsend").onclick = async () => { // 帯の送信 = 赤ペン欄の送信と同じ処理。送れずに下書きが残ったら (失敗・送信中の編集) 赤ペン欄を開いて理由を見せる
+  await document.getElementById("send").onclick();
+  if (drafts.get(curName())?.pins.size && document.getElementById("akmsg").textContent) { penFold = false; refresh(); }
+};
 document.addEventListener("rmx-split", () => { penFold = !document.documentElement.classList.contains("split"); refresh(); }); // Fold を開くと右の列の赤ペン欄、閉じると段の下の欄に移す (書きかけと焦点はそのまま)
 const ffile = document.getElementById("ffile");
 // 赤ペンの写真: t = { n: 返事の名前, d: 下書き, k?: ピンのキー, p?: ピンの実体 } (押した・貼った時の値)。ピンと全体で合わせて 10 枚まで (server の images の上限と同じ)
