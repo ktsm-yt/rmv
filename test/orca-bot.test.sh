@@ -193,6 +193,9 @@ Bun.serve = (options) => realServe({ ...options, fetch(req, server) {
             worker.write_text("隠した Bot の返事", encoding="utf-8")
             write_json(worker_meta, {**meta, "session_id": "44444444-4444-4444-8444-444444444444", "name": worker.name,
                                      "orca_bot": {**meta["orca_bot"], "name": "Reviewer", "id": "66383e77-ea45-4f17-9bd6-5b6698528645"}})
+            explore = hist / "20261122T000000000-explore.md"
+            explore.write_text("subagent の報告", encoding="utf-8")
+            write_json(explore.with_suffix(".json"), {"cwd": "/x/demo", "session_id": "55555555-5555-4555-8555-555555555555", "ts": meta["ts"], "terminal": None, "agent": {"type": "Explore", "id": "x1"}})
             write_json(state / "keys.json", {"9": "/help"})
             # 返事がまだ無い会話の依頼 (仮の行)。窓口役でない Reviewer の分が一番新しい
             replied = datetime.fromisoformat(meta["ts"])
@@ -212,7 +215,7 @@ Bun.serve = (options) => realServe({ ...options, fetch(req, server) {
             assert all(row.get("name") not in (entry.name, worker.name) for row in json.loads(http("/sessions")[1]))
             subprocess.run(["uv", "run", "--with", "playwright", "python", "-", url], check=True, text=True, input='''
 from playwright.sync_api import sync_playwright, expect
-import sys
+import re, sys
 with sync_playwright() as p:
     browser = p.chromium.launch()
     page = browser.new_page()
@@ -224,16 +227,49 @@ with sync_playwright() as p:
     expect(page.locator("#cact > .q:enabled")).to_have_count(5)
     expect(page.locator('#copt [data-k="9"]')).to_be_disabled()
     expect(page.locator("#cact .cpick:disabled")).to_have_count(2)
-    page.goto(sys.argv[1] + "/?mode=agents", wait_until="domcontentloaded")
+    page.add_init_script("localStorage.setItem('rmx.projR', 'open')")  # PC はプロジェクト列が既定で閉じている
+    page.goto(sys.argv[1], wait_until="domcontentloaded")
+    expect(page.locator(".ptabs .prow")).to_have_text(["メイン", "Bot", "🤖 ワーカー"])
+    page.locator('.ptabs [data-m="bots"]').click()
+    expect(page).to_have_url(re.compile(r"[?&]mode=bots"))
+    expect(page.locator("#stamp")).to_contain_text("🤖 Reviewer:")
+    page.goto(sys.argv[1] + "/?mode=bots", wait_until="domcontentloaded")
+    expect(page.locator('.ptabs [data-m="bots"].on')).to_have_count(1)
     expect(page.locator("#stamp")).to_contain_text("🤖 Reviewer:")
     expect(page.locator('#plist [data-r="Manager"]')).to_have_count(0)
+    page.goto(sys.argv[1] + "/?mode=agents", wait_until="domcontentloaded")
+    expect(page.locator("#stamp")).to_contain_text("🤖 Explore:")
+    expect(page.locator("#stamp")).not_to_contain_text("Reviewer")
+    expect(page.locator('#plist [data-r="Reviewer"]')).to_have_count(0)
+    page.goto(sys.argv[1] + "/?mode=xyz", wait_until="domcontentloaded")
+    expect(page.locator('.ptabs [data-m=""].on')).to_have_count(1)
+    expect(page.locator("#stamp")).to_contain_text("Manager:")
+    # タブの行: PC の列 (200px) とスマホの ☰ の一覧で、3 つが 1 行に並び列の右端から 4px 以上内側
+    TABS = "(() => { const p = document.querySelector('#plist').getBoundingClientRect(), b = [...document.querySelectorAll('.ptabs .prow')].map((e) => e.getBoundingClientRect()); return { n: b.length, right: b.at(-1)?.right, max: p.right - 4, tops: b.map((r) => Math.round(r.top)) }; })()"
+    page.set_viewport_size({"width": 1280, "height": 800})
+    page.goto(sys.argv[1], wait_until="domcontentloaded")
+    expect(page.locator(".ptabs .prow")).to_have_count(3)
+    g = page.evaluate(TABS)
+    assert g["right"] <= g["max"] and len(set(g["tops"])) == 1, g
+    print("     PC 1280x800 のタブの行:", g, flush=True)
+    ANDROID = "Mozilla/5.0 (Linux; Android 16; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36"
+    m = browser.new_context(viewport={"width": 384, "height": 800}, user_agent=ANDROID, is_mobile=True, has_touch=True, device_scale_factor=2).new_page()
+    m.goto(sys.argv[1], wait_until="domcontentloaded")
+    expect(m.locator(".ptabs .prow")).to_have_count(3)
+    m.locator("#ptoggle").tap()
+    expect(m.locator("#proj")).to_be_visible()
+    g = m.evaluate(TABS)
+    assert g["right"] <= g["max"] and len(set(g["tops"])) == 1, g
+    print("     スマホ 384x800 のタブの行:", g, flush=True)
     browser.close()
 ''')
             worker.unlink()
             worker_meta.unlink()
+            explore.unlink()
+            explore.with_suffix(".json").unlink()
             for ask_sid in asks.values():
                 (prompt / f"{ask_sid}.json").unlink()
-            print("ok   画面: メインは窓口役、他はワーカー (返事待ちも)。Bot では 1〜5 だけ有効", flush=True)
+            print("ok   画面: メインは窓口役、他は Bot タブ (返事待ちも)。Bot では 1〜5 だけ有効", flush=True)
 
             annotation = "-先頭の指摘\n\n2 行目の指摘"
             response = send(annotation)
