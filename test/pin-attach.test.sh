@@ -78,7 +78,7 @@ PASTE_FREE = """async (n) => {
   document.getElementById('free').dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
 }"""
 
-def card(pg, a, where=".pin"):  # 見出し (anchor) が a のピンのカード (広い幅は #margin、細い幅・スマホは #tray)
+def card(pg, a, where=".pin"):  # 見出し (anchor) が a のピンのカード (広い幅は #margin、細い幅は #tray、スマホ 1 列は段の下 = #reply)
     return pg.locator(where).filter(has=pg.locator("b", has_text=re.compile("^" + re.escape(a) + "$")))
 def tap(loc):
     loc.click(); loc.page.wait_for_timeout(250)
@@ -97,7 +97,7 @@ class Sends:  # /send を捕まえる (500 で返して下書きを残す)
     def __init__(self, pg): self.bodies = []; pg.route("**/send", self.h)
     def h(self, route): self.bodies.append(json.loads(route.request.post_data)); route.fulfill(status=500, body="captured")
 def send(pg, s):
-    k = len(s.bodies); pg.locator("#send").click()
+    k = len(s.bodies); pg.locator("#send:visible, #reply .pin .ps:visible").first.click() # スマホ 1 列は段の下の送信 (同じ処理)
     for _ in range(50):
         if len(s.bodies) > k: return s.bodies[-1]
         pg.wait_for_timeout(100)
@@ -264,7 +264,7 @@ with sync_playwright() as p:
             tap(pg.locator('#reply [data-anchor="2"] > .num'))
             bb = pa(pg, "2").bounding_box() if pa(pg, "2").count() else None
             ta = card(pg, "2").locator("textarea").bounding_box() if card(pg, "2").count() else None
-            check(f"9 {w}x{h}: #tray のピンに 📎 が見え、44x44 以上", card(pg, "2", "#tray .pin").locator(".pa").count() == 1 and bb and bb["width"] >= 43.5 and bb["height"] >= 43.5, bb)
+            check(f"9 {w}x{h}: 段の下のひとこと欄に 📎 が見え、44x44 以上", card(pg, "2", "#reply .pin").locator(".pa").count() == 1 and bb and bb["width"] >= 43.5 and bb["height"] >= 43.5, bb)
             check(f"9 {w}x{h}: ひとこと欄の幅が 120px 以上", bool(ta) and ta["width"] >= 120, ta)
             attach(pg, "2")
             check(f"9 {w}x{h}: 印『📎1』と札付きのサムネ", patext(pg, "2") == "📎1" and thumbs(pg) == ["2"], [patext(pg, "2"), thumbs(pg)])
@@ -280,6 +280,7 @@ with sync_playwright() as p:
             s = Sends(pg); slow = lambda: pg.wait_for_timeout(900)
             slow(); tap(pg.locator('#reply [data-anchor="2"] > .num')); slow()
             attach(pg, "2"); slow(); slow()
+            if mob: tap(pg.locator("#dpen")); slow() # スマホ 1 列: サムネは帯の『赤N』で開く赤ペン欄にある
             tap(pg.locator("#fimgs .cimg:has(.pk) button")); slow()
             attach(pg, "2"); slow()
             body = send(pg, s); slow()
