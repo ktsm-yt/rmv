@@ -8,8 +8,8 @@ import { ORCA, CLIP_CLASS, herdrSend, typeInto, attachImages, submit, inputDraft
 import { CODEX_QUEUE_TIMEOUT, DIR, EXT_ORIGINS, EXT_SID, FRAGMENT, HIST, HOSTS, LIVE_TTL, NAME, ORIGINS, PERM, PERM_ORPHAN, PERM_TTL, PORT, PROMPT, type Perm, STATE, type SendTarget, TEXT, endOf, herdrSessionName, isLocalRequest, labelOf, loadPerm, metaOf, readAsking, readBg, sessionKey, splitTopic } from "./core.ts";
 import { checkHerdrPane, herdrAgents, herdrFirstTabs, herdrPaneOf, herdrSockOf, movedPane, newInHerdr, paneView, subType } from "./peer-herdr.ts";
 import { ccSessionsDir, claudeProcs, claudeTerminals, envOf, focusTerminal, liveTerminals, loadWorkers, resolveTerminal, waitingSids, workerAsked, workers, worktreePaths, worktrees } from "./peer-orca-term.ts";
-import { type ConfirmedCodexPane, cachedCodexPaneThread, codexPaneBackends, codexPaneFromName, codexPaneHistory, codexQueue, codexThreadChanged, completedCodexReply, confirmedCodexPanes, currentCodexPane, liveCodexPanes, liveCodexThread, sendCodexPane } from "./peer-codex.ts";
-import { MAIN_BOTS, blockedBotChats, botSend, noticeBody, noticeName, noticeRows, noticeSeenPost, notices } from "./peer-orca-bot.ts";
+import { type ConfirmedCodexPane, cachedCodexPaneThread, codexPaneBackends, codexPaneFromName, codexPaneHistory, codexQueue, codexThreadChanged, completedCodexReply, codexPeer, confirmedCodexPanes, currentCodexPane, liveCodexPanes, liveCodexThread, sendCodexPane } from "./peer-codex.ts";
+import { MAIN_BOTS, blockedBotChats, botPeer, botSend, noticeBody, noticeName, noticeRows, noticeSeenPost, notices } from "./peer-orca-bot.ts";
 const SIPS = "/usr/bin/sips"; // 貼った画像の縮小 (macOS 標準)
 const PROJECTS = process.env.RMV_PROJECTS_DIR || `${process.env.HOME}/.claude/projects`; // transcript の置き場 (同上)
 const MONO_FONT = process.env.RMV_MONO_FONT || `${process.env.HOME}/Library/Fonts/HackGenConsole-Regular.ttf`; // スマホに配る等幅フォント (罫線図用)。テストの差し替え口
@@ -191,6 +191,8 @@ async function historyItems() {
   for (const e of own) if (workers.has(e.session)) e.sub = "worker";
   return { items, curSid, replySid, asking, askSid, botPerms, live: terms || agents || named ? "ok" : "unknown" };
 }
+// /history の行の can・peer・delivery (docs/dev-notes.md)。Claude Code の会話 (herdr / Orca の端末) は全部の操作が効く。端末の無い会話 (Orca / herdr の外) は送れない
+const claudePeer = (e: { terminal?: boolean }) => ({ can: { send: !!e.terminal, keys: true, images: true, media: true, model: true, commands: true, alive: true }, peer: "Claude Code", delivery: e.terminal ? "terminal" : null });
 async function history(repo: string | null, withNotices: boolean): Promise<Response> {
   const [{ items, curSid, replySid, asking, askSid, botPerms, live }, panes] = await Promise.all([historyItems(), liveCodexPanes()]);
   const blocked = botPerms.size ? await blockedBotChats() : null;
@@ -220,7 +222,9 @@ async function history(repo: string | null, withNotices: boolean): Promise<Respo
     const sid = e.live ? curSid.get(e.session) ?? askSid.get(e.session) : undefined;
     if (sid && !sidAt.has(sid)) sidAt.set(sid, e.session); // items は新しい順
   }
-  const out = [...replies, ...livePanes, ...botAlerts, ...(withNotices ? noticeRows(items, sidAt) : [])];
+  // can・peer・delivery は全部の行にここで付ける (作る所を足しても漏れない)。Codex・Bot の値はそれぞれのつなぎ役、残り (Claude Code の会話) はここ
+  const withPeer = (e: { name: string; codex?: boolean; codexPane?: boolean; sid?: string | null; bot?: string | null; terminal?: boolean }) => ({ ...e, ...(e.codex ? codexPeer(e) : e.bot ? botPeer(e) : claudePeer(e)) });
+  const out = [...replies, ...livePanes, ...botAlerts, ...(withNotices ? noticeRows(items, sidAt) : [])].map(withPeer);
   const want = repo?.toLowerCase();
   return Response.json(want ? out.filter((e) => e.repo.toLowerCase() === want) : out, { headers: { "cache-control": "no-store", "x-rmv-live": live } });
 }

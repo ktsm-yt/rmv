@@ -6,6 +6,8 @@ import { codexDraftOnScreen } from "./screen.ts";
 import { herdrRun } from "./terminal.ts";
 import { type HerdrPane, readHerdrPanes } from "./peer-herdr.ts";
 const CODEX = process.env.RMV_CODEX_BIN || "codex"; // 同上。Codex の会話への赤ペンを `codex queue` で積む (launchd の PATH では /opt/homebrew/bin/codex)
+// /history の行の can・peer・delivery (docs/dev-notes.md)。Codex の会話と pane は文字だけを送れる。会話 ID の分からない pane だけ端末へ打ち、ほかはキューに積む
+export const codexPeer = (e: { codexPane?: boolean; sid?: string | null }) => ({ can: { send: true, keys: false, images: false, media: false, model: false, commands: false, alive: false }, peer: "Codex", delivery: e.codexPane && !e.sid ? "terminal" : "queue" });
 
 // Herdr の pane は端末の ID と組み合わせて選ぶ。Codex の会話 ID は従来どおり履歴のメタデータから取る。
 const CODEX_PANE_ID = /^w[\da-z]+:p[\da-z]+$/i;
