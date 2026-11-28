@@ -49,7 +49,7 @@ else: ok({"terminals": [{"handle": "term_last", "connected": True, "writable": T
 '''); stub.chmod(0o700)
     no = tmp / "no"; no.write_text("#!/bin/sh\nexit 1\n"); no.chmod(0o700)
     with socket.socket() as s: s.bind(("127.0.0.1", 0)); port = s.getsockname()[1]
-    env = {"PATH": os.environ["PATH"], "HOME": str(tmp), "RMV_STATE_DIR": str(state), "RMV_PORT": str(port), "RMV_ORCA_BIN": str(stub), "RMV_PROJECTS_DIR": f"{tmp}/p", "RMV_SESSIONS_DIR": f"{tmp}/s", "RMV_CC_SETTINGS": f"{tmp}/n.json", "RMV_TTS_KEYCHAIN_SERVICE": "rmv-test-none", "RMV_VOICEVOX_URL": "http://127.0.0.1:9", **{f"RMV_{k}_BIN": str(no) for k in ("HERDR", "PS", "CODEX", "OPEN", "OSASCRIPT", "PBCOPY", "PBPASTE")}}
+    env = {"PATH": os.environ["PATH"], "HOME": str(tmp), "RMV_NOTICE_BOT": "Manager", "RMV_STATE_DIR": str(state), "RMV_PORT": str(port), "RMV_ORCA_BIN": str(stub), "RMV_PROJECTS_DIR": f"{tmp}/p", "RMV_SESSIONS_DIR": f"{tmp}/s", "RMV_CC_SETTINGS": f"{tmp}/n.json", "RMV_TTS_KEYCHAIN_SERVICE": "rmv-test-none", "RMV_VOICEVOX_URL": "http://127.0.0.1:9", **{f"RMV_{k}_BIN": str(no) for k in ("HERDR", "PS", "CODEX", "OPEN", "OSASCRIPT", "PBCOPY", "PBPASTE")}}
     p = subprocess.Popen(["bun", "run", server], env=env, cwd=tmp, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     base = f"http://127.0.0.1:{port}"
     get = lambda u, **h: urllib.request.urlopen(urllib.request.Request(base + u, headers=h), timeout=5).read().decode()

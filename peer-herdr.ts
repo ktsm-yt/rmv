@@ -1,16 +1,17 @@
-import { HIST, PROMPT, type Term, paneKey, sessionKey } from "./core.ts";
+import { CONFIG, HIST, PROMPT, type Term, paneKey, sessionKey } from "./core.ts";
 import { readdir } from "node:fs/promises";
 import { HERDR_PANE, herdrRun } from "./terminal.ts";
 
-// sub (ワーカー) なら一覧に出す名前 (pane 名 "foyer" / herdr の pane 名 / "worker")、メインなら null。sub の返事はメインに出さず「🤖 ワーカー」側に出す (2026-10-16 user)。
-// sub = herdr の pane 名が "foyer" (foyer runner が立てた) か、その workspace の最初の tab 以外に居る (2026-10-17 user「tab 1 のメイン会話以外はワーカー tab に」。
+const WORKER_LABELS = new Set(CONFIG.workerLabels ?? []); // ワーカーに回す pane 名 (state/config.json の workerLabels)。既定は無し
+// sub (ワーカー) なら一覧に出す名前 (herdr の pane 名 / "worker")、メインなら null。sub の返事はメインに出さず「🤖 ワーカー」側に出す (2026-10-16 user)。
+// sub = herdr の pane 名が設定の workerLabels にある (例: foyer runner が立てた pane) か、その workspace の最初の tab 以外に居る (2026-10-17 user「tab 1 のメイン会話以外はワーカー tab に」。
 // 10-15 は user の画面が w1:t2 / w5:t2 にもあったので tab では落とさなかったが、今は最初の tab = メインで統一。Crewforce は tab 1 を閉じて t2 だけなので「t1」でなく「最初の tab」)。
 // tab は hook が記録した herdr_tab、無い古い記録は今の herdr agent list の tab。どちらも無ければ pane 名だけで決める。最初の tab は herdr tab list (取れない時は ":t1")。
 // Orca の作業役 (worker-start が作った端末) は herdr の tab を持たないので、ここでなく historyItems の最後で Orca の起動記録 (loadWorkers) を見て "worker" にする。
 // 記録自体は残す (foyer runner が history を読んで返事にする)。許可待ちの状態行は従来どおりメインにも出る (index.html の perms は全モードから拾う)。
 export function subType(meta: { herdr_label?: unknown; herdr_tab?: unknown } | null | undefined, liveTab: string | null, firstTabs: Map<string, string> | null): string | null {
   const label = typeof meta?.herdr_label === "string" && meta.herdr_label ? meta.herdr_label : null;
-  if (label === "foyer") return "foyer";
+  if (label && WORKER_LABELS.has(label)) return label;
   const tab = typeof meta?.herdr_tab === "string" && meta.herdr_tab ? meta.herdr_tab : liveTab;
   if (tab === null) return null;
   const ws = tab.split(":")[0];
@@ -91,7 +92,7 @@ export async function herdrOrder(paths: string[]): Promise<Map<string, number> |
 
 // POST /new {cwd}: まっさらな Claude Code セッションを herdr の pane で起動する (newInHerdr)。herdr が止まっている・失敗した時は Orca に落とさず理由付きの 500。
 // cwd は worktreePaths (orca worktree list、取れなければ herdr の pane の cwd) に載っている path と完全一致する時だけ (任意の dir で任意の command を走らせない)。command は RMV_NEW_CMD (既定 claude)。shell は通さない
-const NEW_CMD = process.env.RMV_NEW_CMD || "claude";
+const NEW_CMD = process.env.RMV_NEW_CMD || (CONFIG.newCommand ?? "claude");
 // herdr が動いていれば選んだ cwd と同じフォルダの pane を下に分割して NEW_CMD を起動し、その pane id を返す。herdr は「フォルダごとに workspace」で使うので、
 // 別フォルダの pane を分割すると新 pane がそのフォルダの画面の中に入り、選んだフォルダで立ち上がったように見えない (2026-10-13 実機)。
 // 分割元 = pane list (素の shell も含む) のうち cwd 一致 → near の pane → focused → 先頭。一致する pane が無ければ workspace を新設してその root pane を使う。

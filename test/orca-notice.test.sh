@@ -21,6 +21,7 @@ NOW = time.time()
 ms = lambda ago: int((NOW - ago) * 1000)
 with tempfile.TemporaryDirectory(prefix="rmv-notice-") as tmp:
     tmp = Path(tmp); state = tmp / "state"; hist = state / "history"; hist.mkdir(parents=True)
+    (state / "config.json").write_text(json.dumps({"noticeBot": "Manager"}))  # 知らせの Bot は設定から (既定は無し)。下の RMV_NOTICE_BOT="" は空の環境変数がこれに勝つのを見る
     def reply(ago, chat, body, bot="Manager"):
         t = dt.datetime.fromtimestamp(NOW - ago).astimezone(); name = f"{t.strftime('%Y%m%dT%H%M%S000')}-{chat[:8]}-bot.md"
         (hist / name).write_text(body); (hist / (name[:-3] + ".json")).write_text(json.dumps({"session_id": f"s-{chat[:8]}", "ts": t.isoformat(timespec="seconds"), "name": name, "cwd": "/work/bot", "orca_bot": {"id": BOT, "name": bot, "chat": chat, "home": "/work/bot"}}))

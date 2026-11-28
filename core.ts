@@ -1,6 +1,7 @@
 
 // 旧名 RMX_* (2026-10 まで) も読む: RMV_* が未設定なら写す。RMX_ は harness-rmx 時代の名残で v0.19.0 に改名した
 for (const [k, v] of Object.entries(process.env)) if (k.startsWith("RMX_") && process.env["RMV_" + k.slice(4)] === undefined && v !== undefined) process.env["RMV_" + k.slice(4)] = v;
+import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 export const DIR = import.meta.dir;
 export const STATE = process.env.RMV_STATE_DIR || `${DIR}/state`; // RMV_STATE_DIR はテスト用の上書き口
 export const FRAGMENT = `${STATE}/latest.html`;
@@ -81,6 +82,45 @@ export const TEXT = { "content-type": "text/plain; charset=utf-8", "cache-contro
 export function labelOf(meta: { herdr_label?: unknown } | null | undefined): string | null {
   return typeof meta?.herdr_label === "string" && meta.herdr_label ? meta.herdr_label : null;
 }
+
+// 設定 1 枚 (state/config.json、docs/config.md)。起動の時に 1 回読む。各項目は 環境変数 → config.json (空でも) → 既定 の順で、どの順で読むかは使う所に書く。
+// 読めない (JSON でない・型の違う項目がある) 時は前に読めた控え (config.last-good.json) を使い、ログに 1 行。無いのは読めないでなく全部既定 (何も書かない)。
+// hooks/perm-state.py も同じ順 (config.json → 控え → 既定) で読む。項目と型を片方だけ直さない
+export type PeerConf = { name: string; tokenEnv: string; send: string[] };
+export type Config = { mainBots?: string[]; noticeBot?: string; workerLabels?: string[]; permNotifyLabels?: string[]; keys?: Record<string, unknown>; editorApp?: string; newCommand?: string;
+  ttsProvider?: string; ttsKeychainService?: string; ttsModel?: string; ttsVoice?: string; ttsStyle?: string; voicevoxUrl?: string; voicevoxSpeaker?: number; peers?: unknown[] };
+const strs = (v: unknown) => Array.isArray(v) && v.every((x) => typeof x === "string");
+const CONFIG_TYPES: Record<string, (v: unknown) => boolean> = {
+  mainBots: strs, workerLabels: strs, permNotifyLabels: strs, peers: Array.isArray,
+  keys: (v) => !!v && typeof v === "object" && !Array.isArray(v),
+  voicevoxSpeaker: (v) => typeof v === "number",
+  ...Object.fromEntries(["noticeBot", "editorApp", "newCommand", "ttsProvider", "ttsKeychainService", "ttsModel", "ttsVoice", "ttsStyle", "voicevoxUrl"].map((k) => [k, (v: unknown) => typeof v === "string"])),
+};
+// 読めた中身を返す。読めない時は理由 (文字列)
+function parseConfig(text: string): Config | string {
+  let c: unknown;
+  try { c = JSON.parse(text); } catch { return "JSON として読めない"; }
+  if (!c || typeof c !== "object" || Array.isArray(c)) return "中身が {…} でない";
+  const bad = Object.entries(c).find(([k, v]) => CONFIG_TYPES[k] && !CONFIG_TYPES[k](v));
+  return bad ? `${bad[0]} の型が違う` : (c as Config);
+}
+function loadConfig(): Config {
+  const file = `${STATE}/config.json`, good = `${STATE}/config.last-good.json`;
+  let text: string;
+  try { text = readFileSync(file, "utf8"); } catch { return {}; } // 無い = 全部既定
+  const c = parseConfig(text);
+  if (typeof c !== "string") {
+    for (const k of Object.keys(c)) if (!CONFIG_TYPES[k]) console.error(`config.json: 知らない項目 ${k} は読まない`); // 打ち間違いに気づくため
+    try {
+      if ((existsSync(good) ? readFileSync(good, "utf8") : null) !== text) { writeFileSync(good + ".tmp", text); renameSync(good + ".tmp", good); }
+    } catch (e) { console.error(`config.json: 控えを書けない (${e})`); }
+    return c;
+  }
+  const last = existsSync(good) ? parseConfig(readFileSync(good, "utf8")) : "控えが無い";
+  console.error(typeof last === "string" ? `config.json が読めない (${c})。控えも使えない (${last}) ので既定で動く` : `config.json が読めない (${c})。前に読めた控えを使う`);
+  return typeof last === "string" ? {} : last;
+}
+export const CONFIG = loadConfig();
 
 export const PORT = Number(process.env.RMV_PORT ?? 4310);
 // RMV_ORIGINS: 中継越しに開く時の origin (カンマ区切り、例 https://mac.tailXXXX.ts.net)。中継が Host を書き換えても残しても通るよう、Host は origin の host 部と照合する
