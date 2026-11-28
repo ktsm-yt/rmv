@@ -247,7 +247,13 @@ else: ok({"terminals": f["terminals"]})
                 has = lambda t: f"document.querySelector('#reply').innerText.includes({json.dumps(t)})"
                 row = lambda k: f"""document.querySelector('[data-note="botitem-{UID(k)}"]')"""
                 off = lambda: g.evaluate("[csend.disabled, ctext.disabled, document.querySelector('#cattach').disabled, [...document.querySelectorAll('#cact .q, #cact .cpick')].every((e) => e.disabled), document.querySelectorAll('#reply [data-pin]').length === 0]")
-                g.goto(url); until(has("表示中の返事")); ok = until(f"!!{row(21)} && !!{row(22)}", 12)
+                g.goto(url); until(has("表示中の返事"))
+                one = mob and w < 720 # スマホ 1 列は知らせを 1 行に畳む。開いてから下の項目を見る
+                if one:
+                    ok = until("document.querySelector('#tstat [data-more]')?.textContent.includes('Bot の知らせ 2 件') && !document.querySelector('[data-note]')", 12)
+                    check(at + "スマホ 1 列は知らせを『Bot の知らせ 2 件』の 1 行に畳む", ok, g.evaluate("document.querySelector('#tstat').innerText"))
+                    g.locator("[data-more]").click(timeout=2000); g.wait_for_timeout(400)
+                ok = until(f"!!{row(21)} && !!{row(22)}", 12)
                 check(at + "usher の会話が閉じていても、判断待ちと完了の行が出る", ok and not next((e for e in rows() if e["repo"] == "usher"), {"live": True})["live"], ok)
                 if not ok: c.close(); continue
                 t = g.evaluate("[...document.querySelectorAll('[data-note]')].map((e) => e.textContent)")
@@ -286,14 +292,16 @@ else: ok({"terminals": f["terminals"]})
                 check(at + "閉じると完了の行が消え、見ていた前の返事に戻る", ok and text() == old, text()[:80])
                 # 3 件を超えた時
                 for k in range(31, 45): reply(690 + k, CHAT(k), f"返事 {k}"); item(k, "needs_you" if k % 2 else "done", 700 + k, CHAT(k), question=f"問い {k}", title=f"sample: 知らせの {k} 番目の題はこのくらいの長さで 2 行に折り返す")
-                ok = until("document.querySelectorAll('[data-note]').length === 3 && document.querySelector('[data-more]')?.textContent.includes('ほか 11 件')", 12)
-                check(at + "3 件を超えた分は『ほか 11 件』に畳む", ok, g.evaluate("document.querySelector('#tstat').innerText"))
+                if one and until("document.querySelector('[data-more]')?.textContent.includes('畳む')", 12): g.locator("[data-more]").click(timeout=2000); g.wait_for_timeout(400) # 開いたままなので畳んだ形に戻す
+                shown, more = (0, "Bot の知らせ 14 件") if one else (3, "ほか 11 件")
+                ok = until(f"document.querySelectorAll('[data-note]').length === {shown} && document.querySelector('[data-more]')?.textContent.includes('{more}')", 12)
+                check(at + f"畳んだ分は『{more}』の行になる", ok, g.evaluate("document.querySelector('#tstat').innerText"))
                 a = g.evaluate(J); g.locator("[data-more]").click(timeout=2000); g.wait_for_timeout(400); z = g.evaluate(J)
                 keep = [k for k in a if k.startswith(("#tstat [data-more]", "#cform", "#csend", "#dock", "#chead"))]
                 inview = g.evaluate("(() => { const b = document.querySelector('[data-more]').getBoundingClientRect(), e = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2); return !!e?.closest('[data-more]') && b.bottom <= innerHeight; })()")
                 check(at + "『ほか』を押すと全部出て、ボタンと送信欄・帯は動かない", sum("data-note" in k for k in z) == 14 and not (m := moved({k: a[k] for k in keep}, {k: z.get(k, [0] * 4) for k in keep})) and inview, (len(z), m[:3], inview))
                 if mob: check(at + "全部出しても返事と帯が画面に残る", g.evaluate("document.querySelector('main').getBoundingClientRect().height") > 200 and g.evaluate("[...document.querySelectorAll('#dock > *, #csend')].filter((e) => e.checkVisibility()).every((e) => e.getBoundingClientRect().bottom <= innerHeight)"))
-                g.locator("[data-more]").click(timeout=2000); g.wait_for_timeout(400); check(at + "もう一度押すと 3 件に戻る", g.evaluate("document.querySelectorAll('[data-note]').length") == 3)
+                g.locator("[data-more]").click(timeout=2000); g.wait_for_timeout(400); check(at + f"もう一度押すと {shown} 件に戻る", g.evaluate("document.querySelectorAll('[data-note]').length") == shown)
                 if w != 360: # 1 列のスマホは畳んでも行が見えるので、枠は PC だけ
                     g.locator("#ctoggle").evaluate("e => e.click()"); g.wait_for_timeout(300); sh = g.evaluate("getComputedStyle(document.querySelector('#ctoggle')).boxShadow")
                     check(at + ("右の列を畳むと ◀ に黄色の枠が付く" if not mob else "スマホの ▼ には枠が付かない"), ("229, 165, 10" in sh) == (not mob), sh)
@@ -302,7 +310,9 @@ else: ok({"terminals": f["terminals"]})
                 for who, sid, term in (("同じ会話", "bbbbbbbb", "term_b"), ("別の会話", "aaaaaaaa", "term_a")):
                     scene(); c = b.new_context(viewport={"width": w, "height": h}, **({"user_agent": ANDROID, "has_touch": True, "is_mobile": True} if mob else {})); g = c.new_page(); g.route("**/send", lambda r: r.fulfill(status=200, body="{}")); g.goto(url)
                     try:
-                        g.wait_for_function(has("表示中の返事"), timeout=8000); g.wait_for_selector("[data-note]", timeout=12000); g.locator("#reply [data-pin]").first.click(); g.wait_for_timeout(500); g.keyboard.type("ここを直して"); g.wait_for_timeout(300)
+                        g.wait_for_function(has("表示中の返事"), timeout=8000)
+                        if one: g.wait_for_selector("[data-more]", timeout=12000); g.locator("[data-more]").click(timeout=2000)
+                        g.wait_for_selector("[data-note]", timeout=12000); g.locator("#reply [data-pin]").first.click(); g.wait_for_timeout(500); g.keyboard.type("ここを直して"); g.wait_for_timeout(300)
                         tap(21); ok = until(has("色はどちらにしますか")); say(-1, sid, "sample", "1\\. 開いている間の新着です。", term); g.wait_for_timeout(4500); tap(21); g.wait_for_timeout(3000)
                         left = g.evaluate("[...document.querySelectorAll('textarea')].filter((e) => e.checkVisibility() && e.value).map((e) => e.value)")
                         check(at + f"書きかけの赤ペンがあれば、{who}の新着が来ても、閉じた時にその返事と書きかけへ戻る", ok and "表示中の返事" in text() and left == ["ここを直して"], (ok, text()[:30], left))
@@ -341,6 +351,9 @@ else: ok({"terminals": f["terminals"]})
                     g.goto(url + (f"/?s={s}" if s else "/"))
                     if pin is not None: g.evaluate(f"localStorage.setItem('rmx.chat.pin', JSON.stringify({json.dumps({'': pin} if pin else {})}))"); g.reload() # 送り先の固定 ("" = 外す)
                     js = "[...document.querySelectorAll('#tstat [data-note]')].map((e) => e.dataset.note)"
+                    if mob: # スマホ 1 列は畳んだ 1 行を開く
+                        try: g.wait_for_selector("#tstat [data-more]", timeout=15000); g.locator("#tstat [data-more]").click(timeout=2000)
+                        except Exception: pass
                     try: g.wait_for_function(f"(() => {{ const n = {js}; return {json.dumps(sorted(NUM_INV[k] for k in want))}.every((x) => n.includes(x)); }})()", timeout=15000); g.wait_for_timeout(2500)
                     except Exception: pass
                     return state141(g)
