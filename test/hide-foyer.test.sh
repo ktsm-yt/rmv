@@ -11,6 +11,7 @@ unset ORCA_TERMINAL_HANDLE HERDR_SESSION
 TMP="$(mktemp -d)"
 export RMV_SESSIONS_DIR="$TMP/no-sessions"
 STATE="$TMP/state"; mkdir -p "$STATE/history" "$STATE/perm"
+echo '{"workerLabels":["foyer"]}' > "$STATE/config.json" # pane 名 foyer をワーカーに回すのは設定から (既定は無し)
 PORT="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')"
 BASE="http://127.0.0.1:$PORT"
 FAIL=0

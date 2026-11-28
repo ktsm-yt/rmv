@@ -3,15 +3,50 @@
 README の続きです。
 どれも入れなくても rmv は使えます。
 
+## 設定 1 枚 (state/config.json)
+
+下の設定は `state/config.json` の 1 枚にまとめて書けます。
+`state/` は git に入りません。
+rmv は起動の時に 1 回読むので、書き換えたら rmv を起動し直します (`permNotifyLabels` だけは許可待ちのたびに読みます)。
+
+```json
+{
+  "mainBots": ["Front"],
+  "noticeBot": "Planner",
+  "workerLabels": ["runner"],
+  "permNotifyLabels": ["runner"]
+}
+```
+
+| 項目 | 書く物 | 勝つ環境変数 | 書かない時 |
+|---|---|---|---|
+| `mainBots` | 『メイン』に出す Bot (窓口役) の名前か ID の配列 | `RMV_MAIN_BOTS` (カンマ区切り) | 全部の Bot が『Bot』タブ |
+| `noticeBot` | 判断待ちと完了を出す Bot の名前 | `RMV_NOTICE_BOT` | 出さない |
+| `workerLabels` | 『🤖 ワーカー』に回す herdr の pane 名の配列 | なし | pane 名では回さない |
+| `permNotifyLabels` | 許可待ちを外へ知らせる herdr の pane 名の配列 (`state/perm-notify` を置いた時) | なし | herdr の pane の許可待ちを全部知らせる |
+| `keys` | 数字キーの割り当て (下の『キーの割り当て』と同じ形) | なし | `state/keys.json` |
+| `editorApp` | スクリプトを開くアプリ | `RMV_EDITOR_APP` | `Visual Studio Code` |
+| `newCommand` | ＋ で herdr の pane に起こすコマンド | `RMV_NEW_CMD` | `claude` |
+| `ttsProvider` `ttsKeychainService` `ttsModel` `ttsVoice` `ttsStyle` `voicevoxUrl` `voicevoxSpeaker` | 読み上げの声 (下の『読み上げの声』) | `RMV_TTS_PROVIDER` `RMV_TTS_KEYCHAIN_SERVICE` `RMV_TTS_MODEL` `RMV_TTS_VOICE` `RMV_TTS_STYLE` `RMV_VOICEVOX_URL` `RMV_VOICEVOX_SPEAKER` | 下の節のとおり |
+| `peers` | 汎用の口の相手 (下の『HTTP で受ける口』) | なし | なし |
+
+- 環境変数 (`state/env` を含む) があれば、それが config.json より勝ちます。
+- `RMV_MAIN_BOTS` と `RMV_NOTICE_BOT` は空でも勝ちます (`RMV_NOTICE_BOT=` と書くと、config.json に `noticeBot` があっても出しません)。ほかの環境変数は、空なら無いのと同じです。
+- config.json に項目があれば、空の値でもそれを使います。
+- JSON として読めない時と、型の違う項目が 1 つでもある時は、前に読めた中身 (rmv が書く `state/config.last-good.json`) を使い、ログ (`~/Library/Logs/harness-rmv.log`) に 1 行出します。控えも無ければ、書かない時と同じに動きます。
+- 知らない項目は読まずに、ログに 1 行出します。
+
 ## キーの割り当て
 
-`state/keys.json` に書くと、数字キーとボタンを置き換えられます。
+数字キーとボタンは、`state/config.json` の `keys` か `state/keys.json` に書くと置き換えられます。
+config.json に `keys` があればそれだけを使い、`state/keys.json` は読みません (2 つを混ぜません)。
+config.json に `keys` が無ければ、今までどおり `state/keys.json` を読みます。
 
 ```json
 {"6": "/cf down", "7": "/compact", "8": "/exit"}
 ```
 
-ページを開き直すと反映されます。
+`state/keys.json` はページを開き直すと反映されます。config.json の `keys` は rmv を起動し直すと反映されます。
 `""` を書くと、その番号の既定を消します。
 `1`〜`5` も同じ書き方で置き換えられます。
 `"models": ["sonnet[1m]", "opus[1m]"]` と書くと、モデルのプルダウンの候補がその並びになります (既定は sonnet / opus / haiku / fable)。
@@ -98,7 +133,7 @@ herdr が止まっている時や、分割・起動に失敗した時は、Orca 
 どの workspace にも無いフォルダは後ろに置き、その中は最近返事があった順です。
 herdr が動いておらず Orca だけの時は、Orca が返す順のままです。
 
-- `RMV_NEW_CMD`: herdr の pane で走らせるコマンド (既定 `claude`)
+- `RMV_NEW_CMD` (config.json の `newCommand`): herdr の pane で走らせるコマンド (既定 `claude`)
 
 ## スマホなど別の端末から開く
 
@@ -206,7 +241,7 @@ Codexの返事を一覧に出せます。段落に付けた赤ペンも、右の
 
 ## Orca Bot の返事をメインに出す
 
-Claude Code で動く Orca Bot の返事は、既定で窓口役の `Usher` が『メイン』に、他の Bot が『Bot』タブに出ます。窓口役を変えるには `state/env` の `RMV_MAIN_BOTS` に Bot の名前または ID をカンマ区切りで書き、rmv を起動し直します。名前は大文字小文字を区別しません。送り先を Bot の返事にすると、数字キー 1〜5 と赤ペンは Orca の同じ会話に届きます。窓口役の Bot は、上の並びの『最新』の隣と送り先の一覧の『追従』の下に、紫の札 (🤖) で Bot ごとに 1 個だけ出ます。プロジェクトで絞っていても出ます。押すと一番新しい会話を開きます。
+Claude Code で動く Orca Bot の返事は、既定では全部『Bot』タブに出ます。窓口役の Bot を『メイン』に出すには、`state/config.json` の `mainBots` (または `state/env` の `RMV_MAIN_BOTS` にカンマ区切り) に Bot の名前または ID を書き、rmv を起動し直します。名前は大文字小文字を区別しません。送り先を Bot の返事にすると、数字キー 1〜5 と赤ペンは Orca の同じ会話に届きます。窓口役の Bot は、上の並びの『最新』の隣と送り先の一覧の『追従』の下に、紫の札 (🤖) で Bot ごとに 1 個だけ出ます。プロジェクトで絞っていても出ます。押すと一番新しい会話を開きます。
 
 Orca の Claude の作業役 (`orca orchestration worker-start` が新しく作った端末の Claude の会話) も『🤖 ワーカー』に出ます (端末のある作業役の許可待ちは、今までどおりメインにも出ます)。Codex の返事は端末を記録しないので、作業役でも今までどおりメインに出ます。
 
@@ -214,7 +249,7 @@ Orca の Claude の作業役 (`orca orchestration worker-start` が新しく作�
 
 Orca の Bot の item が判断待ち (Needs you) か完了・取り下げになると、許可待ちの行と同じ所 (PC は送信欄の下、スマホは下の帯のすぐ上、開いた Fold は右の列の上) に 1 件 1 行で出ます。押すと問いの全文と Bot の返事が開き、もう一度押すと元の表示に戻ります。判断待ちは Orca で item が動くまで残り、完了・取り下げは 1 回開くと消えます。開いている間は、固定した送り先へも送れません。
 
-対象の Bot は既定で `Manager` です。変えるには `state/env` に `RMV_NOTICE_BOT=<Bot の名前>` を書き、rmv を起動し直します。`RMV_NOTICE_BOT=` と空にすると出しません。その Bot の返事が rmv に一度も無い間は、Orca に問い合わせません。一度でも問い合わせられた後は、その Bot の返事が古くなって記録から消えても続けます。
+対象の Bot は `state/config.json` の `noticeBot` (または `state/env` の `RMV_NOTICE_BOT=<Bot の名前>`) に書き、rmv を起動し直します。書かなければ出しません。`RMV_NOTICE_BOT=` と空にすると、config.json に書いてあっても出しません。その Bot の返事が rmv に一度も無い間は、Orca に問い合わせません。一度でも問い合わせられた後は、その Bot の返事が古くなって記録から消えても続けます。
 
 行は、その仕事を頼んだ会話を開いている時だけ出ます。頼んだ会話は、item を作った Bot の会話に最初に届いた依頼の本文の最後の 1 行 `頼んだ会話: <依頼した会話の CLAUDE_CODE_SESSION_ID>` で決まります。次の行は、どの会話を開いていても出ます。
 
@@ -224,11 +259,53 @@ Orca の Bot の item が判断待ち (Needs you) か完了・取り下げにな
 
 開いている会話は、本文に出している返事の会話です。送り先を別の会話に固定していても、固定先の行は出ません。最新の返事を追っている時は、最後に返事した会話です。右の列を畳んだ時の印とスマホの『待ち』の数も、出ている行だけを数えます。
 
+## HTTP で受ける口
+
+Orca の外で動く Bot などの返事を、HTTP で rmv の一覧に載せます。
+相手は `state/config.json` の `peers` に書いた物だけです。
+
+```json
+{"peers": [{"name": "mybot", "tokenEnv": "RMV_PEER_TOKEN_MYBOT", "send": ["/usr/local/bin/mybot-send", "--chat", "{chat}"]}]}
+```
+
+- `name`: 英小文字・数字・`-` で 32 字まで。知らせの Bot (`noticeBot`) と同じ名前は使えません。
+- `tokenEnv`: 合言葉を入れた環境変数の名前 (`RMV_PEER_TOKEN_` で始まる英大文字・数字・`_`)。合言葉そのものは config.json に書かず、`state/env` に書きます。
+- `send`: 下の『コマンドで送る口』のコマンド。
+
+```bash
+echo "RMV_PEER_TOKEN_MYBOT=$(openssl rand -hex 32)" >> state/env
+chmod 600 state/env
+```
+
+相手は返事を 1 件ずつ送ります。
+
+```bash
+curl -X POST http://127.0.0.1:4310/peer/mybot/reply -H "x-rmv-token: <合言葉>" -H 'content-type: application/json' \
+  -d '{"id": "r1", "chat": "c1", "text": "返事の本文 (markdown)"}'
+```
+
+- `id`・`chat` は英数字・`_`・`-` (先頭は英数字) で、`id` は 64 字、`chat` は 128 字まで。`text` は 10 万字まで。
+- 同じ `id` を送り直しても、行は増えません。
+- 合言葉が違う・無い・知らない名前の時は、何も書かずに 403 を返します。
+- 中継 (`RMV_ORIGINS`) 越しでも、合言葉が合えば受けます。tailnet の外へ開く (funnel など) なら、回数の制限を足してから使ってください。
+- 返事は Bot の返事と同じく『Bot』タブに出ます (`mainBots` に名前を書けば『メイン』)。行の札と送信の文言は、今は Bot 向けの物のままです。
+- 記録は Orca Bot の返事と同じ枠 (直近 100 件) に入ります。相手の返事が多いと、Orca Bot の古い返事が先に消えます。
+
+## コマンドで送る口
+
+『HTTP で受ける口』の相手の行に送信欄か赤ペンで送ると、`send` のコマンドを起こし、本文を標準入力に渡します。
+
+- `send` は配列のまま起こします (shell は通しません)。先頭は絶対パスです。各要素の `{chat}` はその行の `chat` に置き換わります。
+- コマンドに渡す環境変数は `PATH` と `HOME` だけです。
+- 送れるのは文字だけです (画像・数字キー・モデルの切り替えは使えません)。同じ会話へは 1 本ずつ送ります。
+- 30 秒で終わらなければ止めて『届いたか分かりません』と出します。rmv は送り直しません。
+- 設定から外した相手の行には送れません。
+
 ## 返事に出てきたファイルの扱い
 
 画像・動画・PDF などは、ホーム配下と一時ディレクトリにあればページの中に表示します。
 `.md` や `.code-workspace` などは読まずに、Mac の既定アプリで開きます。
-スクリプト (`.sh` `.py`、実行ビット付き、`#!` 始まり) は実行させないよう、`RMV_EDITOR_APP` (既定 `Visual Studio Code`) で開きます。
+スクリプト (`.sh` `.py`、実行ビット付き、`#!` 始まり) は実行させないよう、`RMV_EDITOR_APP` (config.json の `editorApp`、既定 `Visual Studio Code`) で開きます。
 
 ## ポート
 

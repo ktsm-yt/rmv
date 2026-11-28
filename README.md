@@ -164,6 +164,9 @@ commit していない新しい `.ts` を直下に置いた時も、置く・書
 
 許可ボタン、依頼文の表示、スマホから開く、読み上げの声などの任意の機能は、[docs/config.md](docs/config.md) に入れ方があります。
 
+窓口役としてメインに出す Bot、判断待ちを出す Bot、ワーカーに回す pane 名、数字キーなどの設定は `state/config.json` の 1 枚に書けます ([設定 1 枚](docs/config.md#設定-1-枚-stateconfigjson))。
+何も書かなければ、Bot の返事は全部『Bot』タブに出て、判断待ちと完了の行は出ません。
+
 ## rmp とつなぐ
 
 兄弟の [rmp (Red Marker Page)](https://github.com/ktsm-yt/rmp) は、見ているページや PDF に赤を入れて Claude Code へ送る Chrome 拡張です。
@@ -197,7 +200,7 @@ curl -s http://127.0.0.1:4310/sessions
 ```
 
 - 1 セッション 1 行で、最新の返事のセッション ID・端末・フォルダ・herdr の pane 名・冒頭 40 字・状態・時刻と、その端末へ送れるかどうか (許可のダイアログや質問への答えを待っている間は送れない扱い) を返します。
-- 「🤖 ワーカー」側に出る会話 (foyer の画面・herdr の tab 2 以降・Orca の Claude の作業役) は載せません。
+- 「🤖 ワーカー」側に出る会話 (`workerLabels` に書いた pane 名の画面・herdr の tab 2 以降・Orca の Claude の作業役) は載せません。
 - 依頼文は返しません。
 - 応答ヘッダの `x-rmv-live` が `unknown` の時は、Orca と herdr の一覧が取れず、生死を確かめられていません。
 - 他の口と同じく、Host が `127.0.0.1:4310` / `localhost:4310` (と `RMV_ORIGINS`) 以外なら 403 です。

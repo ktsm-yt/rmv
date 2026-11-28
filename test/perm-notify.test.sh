@@ -4,6 +4,7 @@ set -euo pipefail
 HOOK=${HOOK:-$(cd "$(dirname "$0")/.." && pwd)/hooks/perm-state.py}
 T=$(mktemp -d)
 mkdir -p "$T/state"
+echo '{"permNotifyLabels":["foyer"]}' > "$T/state/config.json" # 知らせる pane 名は設定から (書かなければ全部)
 fail=0
 
 run() { # $1 = herdr が返す label

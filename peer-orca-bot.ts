@@ -1,9 +1,10 @@
-import { CODEX_QUEUE_TIMEOUT, EXT_SID, HIST, LIVE_TTL, ORIGINS, STATE, splitTopic } from "./core.ts";
+import { CODEX_QUEUE_TIMEOUT, CONFIG, EXT_SID, HIST, LIVE_TTL, ORIGINS, STATE, splitTopic } from "./core.ts";
 import { appendFile, rename } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { ORCA } from "./terminal.ts";
-export const MAIN_BOTS = new Set((process.env.RMV_MAIN_BOTS ?? "Usher").split(",").map((name) => name.trim().toLowerCase()).filter(Boolean));
-const NOTICE_BOT = (process.env.RMV_NOTICE_BOT ?? "Manager").trim(); // 完了と判断待ちをメインに 1 行出す Bot の名前。空なら出さない
+// 窓口役 (メインに出す Bot) と、完了と判断待ちをメインに 1 行出す Bot の名前。環境変数が空でも勝つ (空 = 窓口役なし・知らせを出さない)。どちらも既定は無し
+export const MAIN_BOTS = new Set((process.env.RMV_MAIN_BOTS?.split(",") ?? CONFIG.mainBots ?? []).map((name) => name.trim().toLowerCase()).filter(Boolean));
+export const NOTICE_BOT = (process.env.RMV_NOTICE_BOT ?? CONFIG.noticeBot ?? "").trim();
 // /history の行の can・peer・delivery (docs/dev-notes.md)。Bot の会話は手紙で送る (モデル・/ コマンドは効かない)。返事前の仮の行は端末へ打つ。許可待ち・知らせの行は送らない
 export const botPeer = (e: { name: string; terminal?: boolean }) => ({ can: { send: !!e.terminal, keys: true, images: true, media: true, model: false, commands: false, alive: false }, peer: "Orca Bot", delivery: !e.terminal ? null : e.name.startsWith("asking-") ? "terminal" : "letter" });
 

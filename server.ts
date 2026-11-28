@@ -5,10 +5,11 @@ import { existsSync } from "node:fs";
 import { extname, normalize } from "node:path";
 import { homedir } from "node:os";
 import { ORCA, CLIP_CLASS, herdrSend, typeInto, attachImages, submit, inputDraft, failure } from "./terminal.ts";
-import { CODEX_QUEUE_TIMEOUT, DIR, EXT_ORIGINS, EXT_SID, FRAGMENT, HIST, HOSTS, LIVE_TTL, NAME, ORIGINS, PERM, PERM_ORPHAN, PERM_TTL, PORT, PROMPT, type Perm, STATE, type SendTarget, TEXT, endOf, herdrSessionName, isLocalRequest, labelOf, loadPerm, metaOf, readAsking, readBg, sessionKey, splitTopic } from "./core.ts";
+import { CODEX_QUEUE_TIMEOUT, CONFIG, DIR, EXT_ORIGINS, EXT_SID, FRAGMENT, HIST, HOSTS, LIVE_TTL, NAME, ORIGINS, PERM, PERM_ORPHAN, PERM_TTL, PORT, PROMPT, type Perm, STATE, type SendTarget, TEXT, endOf, herdrSessionName, isLocalRequest, labelOf, loadPerm, metaOf, readAsking, readBg, sessionKey, splitTopic } from "./core.ts";
 import { checkHerdrPane, herdrAgents, herdrFirstTabs, herdrPaneOf, herdrSockOf, movedPane, newInHerdr, paneView, subType } from "./peer-herdr.ts";
 import { ccSessionsDir, claudeProcs, claudeTerminals, envOf, focusTerminal, liveTerminals, loadWorkers, resolveTerminal, waitingSids, workerAsked, workers, worktreePaths, worktrees } from "./peer-orca-term.ts";
 import { type ConfirmedCodexPane, cachedCodexPaneThread, codexPaneBackends, codexPaneFromName, codexPaneHistory, codexQueue, codexThreadChanged, completedCodexReply, codexPeer, confirmedCodexPanes, currentCodexPane, liveCodexPanes, liveCodexThread, sendCodexPane } from "./peer-codex.ts";
+import { peerReply, peerSend } from "./peer-generic.ts";
 import { MAIN_BOTS, blockedBotChats, botPeer, botSend, noticeBody, noticeName, noticeRows, noticeSeenPost, notices } from "./peer-orca-bot.ts";
 const SIPS = "/usr/bin/sips"; // 貼った画像の縮小 (macOS 標準)
 const PROJECTS = process.env.RMV_PROJECTS_DIR || `${process.env.HOME}/.claude/projects`; // transcript の置き場 (同上)
@@ -69,7 +70,9 @@ async function historyItems() {
       // repo (プロジェクト列・?repo= 絞り込み・live のグループ鍵) の基準: 端末が生きていれば Orca の worktreePath (セッション内で cd しても動かない)、無ければ cwd。cwd 自体は送信先解決と /skills 用に残す
       const wt = byHandle.get(meta.terminal)?.worktreePath;
       const root = typeof wt === "string" && wt ? wt : cwd;
-      const session = sessionKey(meta);
+      // 汎用の口の相手の返事 (peer-generic.ts の peerReply が書く)。Bot と同じ行に作り、session は相手と会話から (端末も session_id も無いので sessionKey は空になる)
+      const gen = typeof meta.peer?.name === "string" && typeof meta.peer.chat === "string" ? meta.peer as { name: string; chat: string } : null;
+      const session = gen ? `peer.${gen.name}.${gen.chat}` : sessionKey(meta);
       const perm = perms.get(session);
       const pane = herdrPaneOf(meta);
       const sock = herdrSockOf(meta);
@@ -77,11 +80,11 @@ async function historyItems() {
       const gone = Boolean(sock && herdrSessionName(sock) && !existsSync(sock));
       const shown = paneView(pane, await agentsOf(sock), byHandle.get(meta.terminal));
       const codex = meta.agent_kind === "codex"; // hooks/codex-stop.py の記録。端末を持たないので live にしない (稼働中に出さない。/sessions・/ext/deliver の Codex の宛先はこの記録でなく pane から作る: confirmedCodexPanes)
-      const bot = typeof meta.orca_bot?.name === "string" ? meta.orca_bot.name : null;
-      const botChat = bot && typeof meta.orca_bot.chat === "string" ? meta.orca_bot.chat : null; // 知らせ (noticeRows) がどの会話の返事かを見る。/history には出さない
-      const mainBot = bot && (MAIN_BOTS.has(bot.toLowerCase()) || MAIN_BOTS.has(String(meta.orca_bot.id).toLowerCase()));
+      const bot = gen ? gen.name : typeof meta.orca_bot?.name === "string" ? meta.orca_bot.name : null;
+      const botChat = bot && !gen && typeof meta.orca_bot.chat === "string" ? meta.orca_bot.chat : null; // 知らせ (noticeRows) がどの会話の返事かを見る。/history には出さない
+      const mainBot = bot && (MAIN_BOTS.has(bot.toLowerCase()) || (!gen && MAIN_BOTS.has(String(meta.orca_bot.id).toLowerCase())));
       const sub = bot ? (mainBot ? null : bot) : subType(meta, shown.tab, await firstTabsOf(herdrSockOf(meta)));
-      return { name, codex, bot, botChat, prompt: typeof meta.prompt === "string" ? meta.prompt : null, ts: meta.ts ?? null, cwd, root, label: shown.label !== undefined ? shown.label : labelOf(meta), repo: bot ?? (root.split("/").filter(Boolean).pop() ?? ""), head: said.body.replace(/\s+/g, " ").trim().slice(0, 40), end: endOf(body), topic: said.topic.slice(0, 200) || (typeof meta.session_title === "string" ? meta.session_title : ""), askFrom: null as string | null, next: null as string | null, sid: typeof meta.session_id === "string" && meta.session_id ? meta.session_id : null, terminal: !!bot || Boolean(meta.terminal) || pane !== null, live: bot || codex || gone ? false : shown.herdr ? shown.alive : (pane !== null && !meta.terminal ? true : terms ? Boolean(meta.terminal) && handles.has(meta.terminal) : claude ? Boolean(meta.terminal) && claude.has(meta.terminal) : true) && shown.alive, session, perm: perm ? { id: perm.id, tool: perm.tool, detail: perm.detail, ts: perm.ts } : null, agent: meta.agent ?? null, sub, title: shown.title, status: shown.status, lastOutputAt: shown.lastOutputAt, bg: await readBg(session, typeof meta.session_id === "string" ? meta.session_id : null) };
+      return { name, gen: !!gen, codex, bot, botChat, prompt: typeof meta.prompt === "string" ? meta.prompt : null, ts: meta.ts ?? null, cwd, root, label: shown.label !== undefined ? shown.label : labelOf(meta), repo: bot ?? (root.split("/").filter(Boolean).pop() ?? ""), head: said.body.replace(/\s+/g, " ").trim().slice(0, 40), end: endOf(body), topic: said.topic.slice(0, 200) || (typeof meta.session_title === "string" ? meta.session_title : ""), askFrom: null as string | null, next: null as string | null, sid: typeof meta.session_id === "string" && meta.session_id ? meta.session_id : null, terminal: !!bot || Boolean(meta.terminal) || pane !== null, live: bot || codex || gone ? false : shown.herdr ? shown.alive : (pane !== null && !meta.terminal ? true : terms ? Boolean(meta.terminal) && handles.has(meta.terminal) : claude ? Boolean(meta.terminal) && claude.has(meta.terminal) : true) && shown.alive, session, perm: perm ? { id: perm.id, tool: perm.tool, detail: perm.detail, ts: perm.ts } : null, agent: meta.agent ?? null, sub, title: shown.title, status: shown.status, lastOutputAt: shown.lastOutputAt, bg: await readBg(session, typeof meta.session_id === "string" ? meta.session_id : null) };
     }),
   )).filter((e): e is NonNullable<typeof e> => e !== null);
   // 1 つの端末で順に別の repo を開くと、端末が生きている限り昔の repo まで live になる (2026-09-29 実機: 1 端末で 4 repo)。
@@ -192,6 +195,8 @@ async function historyItems() {
   return { items, curSid, replySid, asking, askSid, botPerms, live: terms || agents || named ? "ok" : "unknown" };
 }
 // /history の行の can・peer・delivery (docs/dev-notes.md)。Claude Code の会話 (herdr / Orca の端末) は全部の操作が効く。端末の無い会話 (Orca / herdr の外) は送れない
+// 汎用の相手の行は送信欄と赤ペンで文字だけ送れる (送るコマンドに本文を渡す)。数字キー・画像・モデルは出さない
+const genericPeer = (e: { bot?: string | null }) => ({ can: { send: true, keys: false, images: false, media: false, model: false, commands: false, alive: false }, peer: e.bot, delivery: "command" });
 const claudePeer = (e: { terminal?: boolean }) => ({ can: { send: !!e.terminal, keys: true, images: true, media: true, model: true, commands: true, alive: true }, peer: "Claude Code", delivery: e.terminal ? "terminal" : null });
 async function history(repo: string | null, withNotices: boolean): Promise<Response> {
   const [{ items, curSid, replySid, asking, askSid, botPerms, live }, panes] = await Promise.all([historyItems(), liveCodexPanes()]);
@@ -223,7 +228,8 @@ async function history(repo: string | null, withNotices: boolean): Promise<Respo
     if (sid && !sidAt.has(sid)) sidAt.set(sid, e.session); // items は新しい順
   }
   // can・peer・delivery は全部の行にここで付ける (作る所を足しても漏れない)。Codex・Bot の値はそれぞれのつなぎ役、残り (Claude Code の会話) はここ
-  const withPeer = (e: { name: string; codex?: boolean; codexPane?: boolean; sid?: string | null; bot?: string | null; terminal?: boolean }) => ({ ...e, ...(e.codex ? codexPeer(e) : e.bot ? botPeer(e) : claudePeer(e)) });
+  // 汎用の相手の行は bot も持つので、印 (gen) で先に分けてから印を落とす
+  const withPeer = ({ gen, ...e }: { gen?: boolean; name: string; codex?: boolean; codexPane?: boolean; sid?: string | null; bot?: string | null; terminal?: boolean }) => ({ ...e, ...(gen ? genericPeer(e) : e.codex ? codexPeer(e) : e.bot ? botPeer(e) : claudePeer(e)) });
   const out = [...replies, ...livePanes, ...botAlerts, ...(withNotices ? noticeRows(items, sidAt) : [])].map(withPeer);
   const want = repo?.toLowerCase();
   return Response.json(want ? out.filter((e) => e.repo.toLowerCase() === want) : out, { headers: { "cache-control": "no-store", "x-rmv-live": live } });
@@ -284,7 +290,7 @@ async function file(p: string | null): Promise<Response> {
 //   実行されうるバイナリ・一覧外のバイナリ・ディレクトリは 403: 素の `open` に任せると .app や実行ファイル (.command 等) を起動してしまうための守り。
 //   開けるかの判定は server だけが持つ (index.html に拡張子一覧は置かない)。GET /file の FILE_EXT とは別物 (そちらは中身を配信する)
 const OPEN = process.env.RMV_OPEN_BIN || "open"; // env はテストの stub 差し替え用
-const EDITOR_APP = process.env.RMV_EDITOR_APP || "Visual Studio Code";
+const EDITOR_APP = process.env.RMV_EDITOR_APP || (CONFIG.editorApp ?? "Visual Studio Code");
 const DEFAULT_APP_EXT = new Set("code-workspace xmind xlsx docx pptx".split(" "));
 const EXEC_EXT = new Set("sh bash zsh fish ksh csh command tool terminal py pyw rb pl applescript scpt workflow".split(" ")); // Mac の既定アプリが実行してしまう型
 async function head8k(path: string): Promise<Uint8Array | null> {
@@ -520,6 +526,14 @@ async function send(req: Request, opt: { exact?: boolean; check?: (t: SendTarget
     opt.extendCodexTimeout?.();
     return codexQueue(name, sid, text, images, reset, backend);
   }
+  if (meta.peer) { // 汎用の口の相手 (peer-generic.ts)。文字だけを送るコマンドに渡す
+    if (opt.exact || opt.check) return new Response("汎用の相手の会話へは外部配送・モデル切り替えを使えません", { status: 409 });
+    if (images.length || reset) return new Response("汎用の相手へは文字だけ送れます (画像・数字キーは使えません)", { status: 400 });
+    if (!(await Bun.file(`${HIST}/${name}`).exists())) return new Response("not found", { status: 404 });
+    if (req.signal.aborted) return new Response("送信は中断されました", { status: 499 });
+    opt.extendCodexTimeout?.();
+    return peerSend(name, meta.peer, text);
+  }
   if (meta.orca_bot && !name.startsWith("asking-")) {
     if (opt.exact || opt.check) return new Response("Bot の会話へは外部配送・モデル切り替えを使えません", { status: 409 });
     if (!(await Bun.file(`${HIST}/${name}`).exists())) return new Response("not found", { status: 404 });
@@ -738,13 +752,13 @@ async function approve(req: Request): Promise<Response> {
 // キーは env GEMINI_API_KEY → 無ければ macOS キーチェーンを毎回引く。キーはログにもレスポンスにも出さない。
 // Origin 必須は /send と同じ理由 (他サイトから有料 API を叩かせない)。
 // 既定を 3.1 にした理由: 3.8 の無料枠は 1 日 10 回で、1 返事 3〜5 回呼ぶと 2〜3 返事で尽きる (2026-09-30 実測の 429)
-const TTS_PROVIDER = process.env.RMV_TTS_PROVIDER || "gemini";
-const TTS_SERVICE = process.env.RMV_TTS_KEYCHAIN_SERVICE || "rmv-gemini";
-const TTS_MODEL = process.env.RMV_TTS_MODEL || "gemini-3.1-flash-tts-preview";
-const TTS_VOICE = process.env.RMV_TTS_VOICE || "Kore";
-const TTS_STYLE = process.env.RMV_TTS_STYLE || "落ち着いて、はっきりと";
-const VOICEVOX_URL = process.env.RMV_VOICEVOX_URL || "http://127.0.0.1:50021";
-const VOICEVOX_SPEAKER = Number(process.env.RMV_VOICEVOX_SPEAKER || 3);
+const TTS_PROVIDER = process.env.RMV_TTS_PROVIDER || (CONFIG.ttsProvider ?? "gemini");
+const TTS_SERVICE = process.env.RMV_TTS_KEYCHAIN_SERVICE || (CONFIG.ttsKeychainService ?? "rmv-gemini");
+const TTS_MODEL = process.env.RMV_TTS_MODEL || (CONFIG.ttsModel ?? "gemini-3.1-flash-tts-preview");
+const TTS_VOICE = process.env.RMV_TTS_VOICE || (CONFIG.ttsVoice ?? "Kore");
+const TTS_STYLE = process.env.RMV_TTS_STYLE || (CONFIG.ttsStyle ?? "落ち着いて、はっきりと");
+const VOICEVOX_URL = process.env.RMV_VOICEVOX_URL || (CONFIG.voicevoxUrl ?? "http://127.0.0.1:50021");
+const VOICEVOX_SPEAKER = Number(process.env.RMV_VOICEVOX_SPEAKER || (CONFIG.voicevoxSpeaker ?? 3));
 async function ttsKey(): Promise<string> {
   if (process.env.GEMINI_API_KEY) return process.env.GEMINI_API_KEY;
   try {
@@ -910,6 +924,9 @@ Bun.serve({
       for (const [k, v] of Object.entries(cors)) headers.set(k, v);
       return new Response(r.body, { status: r.status, statusText: r.statusText, headers });
     }
+    // 汎用の相手の返事を受ける口。Origin でなく合言葉で守る (中継越しも受ける、peer-generic.ts)
+    const peer = pathname.match(/^\/peer\/([^/]+)\/reply$/);
+    if (peer && req.method === "POST") return peerReply(req, peer[1]);
     if (pathname === "/send" && req.method === "POST") return send(req, {
       extendCodexTimeout: () => server.timeout(req, CODEX_QUEUE_TIMEOUT / 1000 + 5), // CLI の打ち切りを待って 504 を返せるようにする
     });
@@ -926,7 +943,8 @@ Bun.serve({
     if (pathname === "/now") return now(searchParams.get("name"));
     if (pathname === "/skills") return skills(searchParams.get("cwd"));
     // GET /keys: 数字キー 1〜0 の送る文 (既定は index.html の KEYS_DEFAULT) を手元で上書きする ({"6": "/cf down"})。state/ は公開しないので個人のコマンドを書ける
-    if (pathname === "/keys") { const f = Bun.file(`${STATE}/keys.json`); return (await f.exists()) ? new Response(f, { headers: { "content-type": "application/json" } }) : Response.json({}); }
+    // config.json に keys があればそれだけを返す (keys.json とキーごとに混ぜない: "" と models の意味が 2 つのファイルで分かれるため)。無ければ今どおり state/keys.json
+    if (pathname === "/keys") { if (CONFIG.keys) return Response.json(CONFIG.keys); const f = Bun.file(`${STATE}/keys.json`); return (await f.exists()) ? new Response(f, { headers: { "content-type": "application/json" } }) : Response.json({}); }
     if (pathname === "/file") return file(searchParams.get("p"));
     const m = pathname.match(/^\/history\/(.+)$/);
     if (m && NAME.test(m[1])) {

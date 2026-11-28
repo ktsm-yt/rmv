@@ -100,7 +100,7 @@ print(json.dumps({"result": {"panes": [pane], "pane": pane, "agents": [], "tabs"
     no = stub("no", "sys.exit(1)\n")
     with socket.socket() as s: s.bind(("127.0.0.1", 0)); port = s.getsockname()[1]
     assert port not in (4310, 4311)
-    env = {"PATH": os.environ["PATH"], "HOME": tmp, "RMV_STATE_DIR": str(S), "RMV_PORT": str(port), "RMV_ORCA_BIN": orca, "RMV_HERDR_BIN": herdr, "RMV_MAIN_BOTS": "Manager", "RMV_PROJECTS_DIR": f"{tmp}/p", "RMV_SESSIONS_DIR": f"{tmp}/s", "RMV_CC_SETTINGS": f"{tmp}/n.json", "RMV_TTS_KEYCHAIN_SERVICE": "rmv-test-none", "RMV_VOICEVOX_URL": "http://127.0.0.1:9", **{f"RMV_{k}_BIN": no for k in ("PS", "CODEX", "OPEN", "OSASCRIPT", "PBCOPY", "PBPASTE")}}
+    env = {"PATH": os.environ["PATH"], "HOME": tmp, "RMV_STATE_DIR": str(S), "RMV_PORT": str(port), "RMV_ORCA_BIN": orca, "RMV_HERDR_BIN": herdr, "RMV_MAIN_BOTS": "Manager", "RMV_NOTICE_BOT": "Manager", "RMV_PROJECTS_DIR": f"{tmp}/p", "RMV_SESSIONS_DIR": f"{tmp}/s", "RMV_CC_SETTINGS": f"{tmp}/n.json", "RMV_TTS_KEYCHAIN_SERVICE": "rmv-test-none", "RMV_VOICEVOX_URL": "http://127.0.0.1:9", **{f"RMV_{k}_BIN": no for k in ("PS", "CODEX", "OPEN", "OSASCRIPT", "PBCOPY", "PBPASTE")}}
     p = subprocess.Popen(["bun", "run", server], env=env, cwd=tmp, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     B = f"http://127.0.0.1:{port}"; get = lambda u: urllib.request.urlopen(urllib.request.Request(B + u, headers={"x-rmv-notices": "1"}), timeout=5).read().decode()
     history = lambda: json.loads(get("/history"))

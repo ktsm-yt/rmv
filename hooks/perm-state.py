@@ -7,7 +7,7 @@
                             (毎ツール呼び出しで走るので is_interactive は呼ばない。ps は bg session の key 解決だけ)
 key = stop-to-fragment.py の session_key (端末 handle、herdr 配下なら handle + pane。無ければ session_id。server の item.session と同じ集合)。
 server の /history が perm を各 entry に付け、/approve が id を照合して端末へ "1" を送る。
-許可待ちを書いた時、state/perm-notify があれば外へ知らせる (notify、foyer の画面だけ)。
+許可待ちを書いた時、state/perm-notify があれば外へ知らせる (notify。知らせる画面は state/config.json の permNotifyLabels)。
 stdout には何も出さない (hook 出力は user 画面に出る)。exit 0 固定。
 """
 import importlib.util
@@ -87,22 +87,63 @@ def main():
     notify(rec)
 
 
+LIST_KEYS = ("mainBots", "workerLabels", "permNotifyLabels")
+STR_KEYS = ("noticeBot", "editorApp", "newCommand", "ttsProvider", "ttsKeychainService", "ttsModel", "ttsVoice", "ttsStyle", "voicevoxUrl")
+
+
+def config_ok(c):
+    """core.ts の parseConfig と同じ型の確かめ (型の違う項目が 1 つでもあれば読めない)。片方だけ直さない"""
+    if not isinstance(c, dict):
+        return False
+    for k, v in c.items():
+        if k in LIST_KEYS and not (isinstance(v, list) and all(isinstance(x, str) for x in v)):
+            return False
+        if k in STR_KEYS and not isinstance(v, str):
+            return False
+        if (k == "peers" and not isinstance(v, list)) or (k == "keys" and not isinstance(v, dict)):
+            return False
+        if k == "voicevoxSpeaker" and (isinstance(v, bool) or not isinstance(v, (int, float))):
+            return False
+    return True
+
+
+def notify_labels():
+    """state/config.json の permNotifyLabels (知らせる herdr の pane 名)。None = 書いていない = 全部の許可待ちを知らせる。
+    読む順は server (core.ts の loadConfig) と同じ: config.json → 読めなければ server が書いた控え → 既定。ファイルが無いのは既定。控えは書かない"""
+    for name in ("config.json", "config.last-good.json"):
+        try:
+            with open(os.path.join(STATE, name), encoding="utf-8") as f:
+                c = json.load(f)
+        except FileNotFoundError:
+            if name == "config.json":
+                return None
+            continue
+        except ValueError:
+            continue
+        if config_ok(c):
+            return c.get("permNotifyLabels")
+    return None
+
+
 def notify(rec):
-    """state/perm-notify (1 行目 = シェルのコマンド) があれば、foyer の画面 (herdr の label が foyer) の許可待ちだけ、
-    文面を stdin で渡して送る。例: `ssh <Air> hermes send -t slack:<宛先> -q`。送り終わりは待たない (hook の timeout 5 秒)。"""
+    """state/perm-notify (1 行目 = シェルのコマンド) があれば、permNotifyLabels にある herdr の pane 名の画面の許可待ちだけ
+    (permNotifyLabels を書いていなければ herdr の pane の許可待ち全部)、文面を stdin で渡して送る。
+    例: `ssh <Air> hermes send -t slack:<宛先> -q`。送り終わりは待たない (hook の timeout 5 秒)。"""
     try:
         with open(os.path.join(STATE, "perm-notify"), encoding="utf-8") as f:
             cmd = f.readline().strip()
     except FileNotFoundError:
         return
-    if not cmd or not rec["herdr_pane"]:
+    if not cmd or not rec["herdr_pane"]:  # 文面に herdr の pane を書くので、pane の無い許可待ちは今も送らない
         return
-    env = dict(os.environ, HERDR_SOCKET_PATH=rec["herdr_socket"]) if rec["herdr_socket"] else None
-    out = subprocess.run([os.environ.get("RMV_HERDR_BIN") or "/opt/homebrew/bin/herdr", "pane", "get", rec["herdr_pane"]],
-                         capture_output=True, text=True, timeout=3, env=env).stdout
-    # ponytail: foyer の画面 (Hermes などから頼まれた作業) だけ。手元の画面は目の前で見えるので送らない。全部送りたくなったら label の条件を外す
-    if (json.loads(out).get("result") or {}).get("pane", {}).get("label") != "foyer":
-        return
+    labels = notify_labels()
+    if labels is not None:
+        env = dict(os.environ, HERDR_SOCKET_PATH=rec["herdr_socket"]) if rec["herdr_socket"] else None
+        out = subprocess.run([os.environ.get("RMV_HERDR_BIN") or "/opt/homebrew/bin/herdr", "pane", "get", rec["herdr_pane"]],
+                             capture_output=True, text=True, timeout=3, env=env).stdout
+        # ponytail: 名前を書いた画面 (user は foyer = Hermes などから頼まれた作業) だけ。手元の画面は目の前で見えるので送らない
+        if (json.loads(out).get("result") or {}).get("pane", {}).get("label") not in labels:
+            return
     repo = os.path.basename(re.sub(r"/\.worktrees/.*", "", rec["cwd"] or ""))
     msg = f"🔴 許可待ち: {repo} · {rec['tool']} · {rec['detail']}\nrmv か herdr の画面 {rec['herdr_pane']} で許可してください\n"
     p = subprocess.Popen(cmd, shell=True, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
